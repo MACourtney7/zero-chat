@@ -87,6 +87,9 @@ pub enum MeshRelaySignal {
         peer_id: String,
         public_key: [u8; 32],
     },
+    PeerLeft {
+        peer_id: String,
+    },
     RelaySdpOffer {
         from_peer_id: String,
         to_peer_id: String,
@@ -110,6 +113,25 @@ pub struct MeshRelayMessage {
     pub frame_id: String,
     pub ttl: u8,
     pub signal: MeshRelaySignal,
+}
+
+impl MeshRelayMessage {
+    pub fn new(frame_id: impl Into<String>, ttl: u8, signal: MeshRelaySignal) -> Self {
+        Self {
+            frame_id: frame_id.into(),
+            ttl,
+            signal,
+        }
+    }
+
+    /// Decrements the TTL by 1. Returns `true` if TTL remains > 0 (can be forwarded),
+    /// or `false` if the TTL has expired (must be dropped).
+    pub fn decrement_ttl(&mut self) -> bool {
+        if self.ttl > 0 {
+            self.ttl -= 1;
+        }
+        self.ttl > 0
+    }
 }
 
 pub fn to_json_string<T: Serialize>(value: &T) -> Result<String, ProtocolError> {
@@ -220,5 +242,42 @@ mod tests {
         let decoded_bytes: MeshRelayMessage =
             from_json_bytes(&bytes).expect("deserialize from bytes");
         assert_eq!(relay, decoded_bytes);
+    }
+
+    #[test]
+    fn test_mesh_relay_peer_left_roundtrip() {
+        let relay = MeshRelayMessage::new(
+            "frame-100",
+            3,
+            MeshRelaySignal::PeerLeft {
+                peer_id: "peer-b".to_string(),
+            },
+        );
+        let json = to_json_string(&relay).expect("serialize to string");
+        let decoded: MeshRelayMessage = from_json_str(&json).expect("deserialize from str");
+        assert_eq!(relay, decoded);
+
+        let bytes = to_json_bytes(&relay).expect("serialize to bytes");
+        let decoded_bytes: MeshRelayMessage =
+            from_json_bytes(&bytes).expect("deserialize from bytes");
+        assert_eq!(relay, decoded_bytes);
+    }
+
+    #[test]
+    fn test_mesh_relay_decrement_ttl() {
+        let mut relay = MeshRelayMessage::new(
+            "frame-101",
+            2,
+            MeshRelaySignal::PeerLeft {
+                peer_id: "peer-c".to_string(),
+            },
+        );
+        assert_eq!(relay.ttl, 2);
+        assert!(relay.decrement_ttl());
+        assert_eq!(relay.ttl, 1);
+        assert!(!relay.decrement_ttl());
+        assert_eq!(relay.ttl, 0);
+        assert!(!relay.decrement_ttl());
+        assert_eq!(relay.ttl, 0);
     }
 }
