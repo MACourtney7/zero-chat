@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check code formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint with Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run workspace tests
+        run: cargo test --workspace
+
+      - name: Validate WASM compilation (zero_client)
+        run: cargo build -p zero_client --target wasm32-unknown-unknown
+
+      - name: Validate WASM check (zero_network)
+        run: cargo check -p zero_network --target wasm32-unknown-unknown
