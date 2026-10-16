@@ -1,14 +1,14 @@
 # factory.yaml - Host Project Configuration for Agentic Software Factory
 project_name: "zero_chat"
 base_branch: "main"
-tech_stack: "To be configured" # e.g., Rust, TypeScript / Node.js, Python, Go
+tech_stack: "Rust (WASM wasm32-unknown-unknown & Cloudflare Workers workers-rs) / WebRTC DataChannel / HTML5"
 
 # Automation commands executed by Validator workers in isolated worktrees:
 commands:
-  build: "echo 'No build command configured yet'"
-  test: "echo 'No test command configured yet'"
-  lint: "echo 'No lint command configured yet'"
-  format_check: "echo 'No format check configured yet'"
+  build: "cargo check --workspace"
+  test: "cargo test --workspace"
+  lint: "cargo clippy --workspace -- -D warnings"
+  format_check: "cargo fmt --check"
 
 # Paths to relevant host project documentation for Architect and Reviewer:
 documentation:

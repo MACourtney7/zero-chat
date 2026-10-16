@@ -4,3 +4,4 @@ paths:
   specs: "openspec/specs"
   changes: "openspec/changes"
   archive: "openspec/changes/archive"
+  roadmaps: "openspec/roadmaps"
