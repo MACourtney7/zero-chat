@@ -1,8 +1,14 @@
 {
   "mcpServers": {
     "software-factory": {
-      "args": [],
-      "command": "/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/software_factory/target/release/factory-mcp"
+      "command": "/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/software_factory/target/release/factory-mcp",
+      "args": [
+        "--root",
+        "/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/zero_chat"
+      ],
+      "env": {
+        "FACTORY_REPO_ROOT": "/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/zero_chat"
+      }
     }
   }
 }

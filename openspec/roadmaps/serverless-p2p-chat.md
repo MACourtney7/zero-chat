@@ -30,8 +30,8 @@ Build an entirely serverless, zero-footprint, real-time peer-to-peer (P2P) commu
 | `ticket-001` | Workspace Architecture, Protocol Envelope & Crypto Primitives | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-002` | WebRTC PeerConnection & DataChannel WASM Engine | `HIGH` | `["ticket-001"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-003` | Cloudflare Worker Hibernating Durable Object Dead-Drop | `HIGH` | `["ticket-001"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
-| `ticket-004` | Stateless HMAC Invite Generator & URL Fragment Auto-Drop Joiner | `MEDIUM` | `["ticket-002", "ticket-003"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
-| `ticket-005` | Ephemeral Chat UI, Cryptographic Payload Sealing & E2E Validation | `MEDIUM` | `["ticket-004"]` | `BLOCKED_ON_ticket-004` | `PLANNED` |
+| `ticket-004` | Stateless HMAC Invite Generator & URL Fragment Auto-Drop Joiner | `MEDIUM` | `["ticket-002", "ticket-003"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-005` | Ephemeral Chat UI, Cryptographic Payload Sealing & E2E Validation | `MEDIUM` | `["ticket-004"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
 | `ticket-006` | In-Band Gossip Signaling Relay & Multi-Peer Mesh Topology | `HIGH` | `["ticket-005"]` | `BLOCKED_ON_ticket-005` | `PLANNED` |
 | `ticket-007` | CI/CD Automation: GitHub Actions & Cloudflare Deployment Pipeline | `LOW` | `["ticket-003", "ticket-005"]` | `BLOCKED_ON_ticket-003,ticket-005` | `PLANNED` |
 
@@ -88,7 +88,7 @@ flowchart TD
 - [x] Ticket-001 completed and merged to `main`.
 - [x] Ticket-002 completed and merged to `main`.
 - [x] Ticket-003 completed and merged to `main`.
-- [ ] Ticket-004 completed and merged to `main`.
+- [x] Ticket-004 completed and merged to `main`.
 - [ ] Ticket-005 completed and merged to `main`.
 - [ ] Ticket-006 completed and merged to `main`.
 - [ ] Ticket-007 completed and merged to `main`.
