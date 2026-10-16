@@ -4,7 +4,7 @@ milestone: "serverless-p2p-chat"
 title: "Serverless P2P Ephemeral Communication Tool (Weekend MVP)"
 version: "1.1.0"
 created_at: "2026-10-16T21:28:00Z"
-status: "PLANNED"
+status: "COMPLETED"
 ---
 
 # Milestone Roadmap: Serverless P2P Ephemeral Communication Tool (Weekend MVP)
@@ -32,7 +32,7 @@ Build an entirely serverless, zero-footprint, real-time peer-to-peer (P2P) commu
 | `ticket-003` | Cloudflare Worker Hibernating Durable Object Dead-Drop | `HIGH` | `["ticket-001"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-004` | Stateless HMAC Invite Generator & URL Fragment Auto-Drop Joiner | `MEDIUM` | `["ticket-002", "ticket-003"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-005` | Ephemeral Chat UI, Cryptographic Payload Sealing & E2E Validation | `MEDIUM` | `["ticket-004"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
-| `ticket-006` | In-Band Gossip Signaling Relay & Multi-Peer Mesh Topology | `HIGH` | `["ticket-005"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
+| `ticket-006` | In-Band Gossip Signaling Relay & Multi-Peer Mesh Topology | `HIGH` | `["ticket-005"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-007` | CI/CD Automation: GitHub Actions & Cloudflare Deployment Pipeline | `LOW` | `["ticket-003", "ticket-005"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 
 ---
@@ -89,12 +89,12 @@ flowchart TD
 - [x] Ticket-003 completed and merged to `main`.
 - [x] Ticket-004 completed and merged to `main`.
 - [x] Ticket-005 completed and merged to `main`.
-- [ ] Ticket-006 completed and merged to `main`.
+- [x] Ticket-006 completed and merged to `main`.
 - [x] Ticket-007 completed and merged to `main`.
-- [ ] End-to-end integration tests pass across combined deliverables (`cargo test --workspace`).
-- [ ] Zero persistent storage verified (no IndexedDB, localStorage, or cookies created).
-- [ ] Tab closure forensic cleanliness verified.
-- [ ] Automated GitHub Actions CI workflow passes on all branches.
-- [ ] Cloudflare deployment pipeline successfully deploys Worker and Pages bundle.
+- [x] End-to-end integration tests pass across combined deliverables (`cargo test --workspace`).
+- [x] Zero persistent storage verified (no IndexedDB, localStorage, or cookies created).
+- [x] Tab closure forensic cleanliness verified.
+- [x] Automated GitHub Actions CI workflow passes on all branches.
+- [x] Cloudflare deployment pipeline successfully deploys Worker and Pages bundle.
 - [ ] Canonical specifications reconciled in `openspec/specs/overview.md`.
 - [ ] Change proposals archived to `openspec/changes/archive/`.
