@@ -977,6 +977,8 @@ dependencies = [
 name = "zero_client"
 version = "0.1.0"
 dependencies = [
+ "base64",
+ "hex",
  "js-sys",
  "serde",
  "serde_json",
