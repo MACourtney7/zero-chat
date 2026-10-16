@@ -415,6 +415,11 @@ impl WebRtcPeer {
         self.inner.borrow().state
     }
 
+    /// Returns true if the peer lifecycle state is `Open`.
+    pub fn is_open(&self) -> bool {
+        self.state() == PeerLifecycleState::Open
+    }
+
     /// Returns the data channel configuration for this peer.
     pub fn config(&self) -> DataChannelConfig {
         self.inner.borrow().config.clone()
@@ -704,6 +709,14 @@ impl WebRtcPeer {
         }
         if bob.state() != PeerLifecycleState::Open {
             bob.set_state_and_notify(PeerLifecycleState::Open)?;
+        }
+        Ok(())
+    }
+
+    /// Explicitly transitions the peer state to `Open` for deterministic loopback testing.
+    pub fn mark_open_for_testing(&self) -> Result<(), WebRtcError> {
+        if self.state() != PeerLifecycleState::Open {
+            self.set_state_and_notify(PeerLifecycleState::Open)?;
         }
         Ok(())
     }
