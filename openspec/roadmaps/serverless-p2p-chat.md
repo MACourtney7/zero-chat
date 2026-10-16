@@ -31,9 +31,9 @@ Build an entirely serverless, zero-footprint, real-time peer-to-peer (P2P) commu
 | `ticket-002` | WebRTC PeerConnection & DataChannel WASM Engine | `HIGH` | `["ticket-001"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-003` | Cloudflare Worker Hibernating Durable Object Dead-Drop | `HIGH` | `["ticket-001"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-004` | Stateless HMAC Invite Generator & URL Fragment Auto-Drop Joiner | `MEDIUM` | `["ticket-002", "ticket-003"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
-| `ticket-005` | Ephemeral Chat UI, Cryptographic Payload Sealing & E2E Validation | `MEDIUM` | `["ticket-004"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
-| `ticket-006` | In-Band Gossip Signaling Relay & Multi-Peer Mesh Topology | `HIGH` | `["ticket-005"]` | `BLOCKED_ON_ticket-005` | `PLANNED` |
-| `ticket-007` | CI/CD Automation: GitHub Actions & Cloudflare Deployment Pipeline | `LOW` | `["ticket-003", "ticket-005"]` | `BLOCKED_ON_ticket-003,ticket-005` | `PLANNED` |
+| `ticket-005` | Ephemeral Chat UI, Cryptographic Payload Sealing & E2E Validation | `MEDIUM` | `["ticket-004"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-006` | In-Band Gossip Signaling Relay & Multi-Peer Mesh Topology | `HIGH` | `["ticket-005"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
+| `ticket-007` | CI/CD Automation: GitHub Actions & Cloudflare Deployment Pipeline | `LOW` | `["ticket-003", "ticket-005"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
 
 ---
 
@@ -74,8 +74,7 @@ flowchart TD
 
     classDef parallel fill:#059669,stroke:#047857,stroke-width:2px,color:#ffffff;
     classDef blocked fill:#1e293b,stroke:#475569,stroke-width:1px,color:#94a3b8;
-    class T001 parallel;
-    class T002,T003,T004,T005,T006,T007 blocked;
+    class T001,T002,T003,T004,T005,T006,T007 parallel;
 ```
 
 > **Concurrency Highlights**:
@@ -89,7 +88,7 @@ flowchart TD
 - [x] Ticket-002 completed and merged to `main`.
 - [x] Ticket-003 completed and merged to `main`.
 - [x] Ticket-004 completed and merged to `main`.
-- [ ] Ticket-005 completed and merged to `main`.
+- [x] Ticket-005 completed and merged to `main`.
 - [ ] Ticket-006 completed and merged to `main`.
 - [ ] Ticket-007 completed and merged to `main`.
 - [ ] End-to-end integration tests pass across combined deliverables (`cargo test --workspace`).
