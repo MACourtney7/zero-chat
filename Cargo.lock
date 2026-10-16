@@ -977,6 +977,12 @@ dependencies = [
 name = "zero_client"
 version = "0.1.0"
 dependencies = [
+ "js-sys",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
  "zero_protocol",
 ]
 
