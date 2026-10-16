@@ -27,9 +27,9 @@ Build an entirely serverless, zero-footprint, real-time peer-to-peer (P2P) commu
 
 | Ticket ID | Title | Thinking Level | Depends On | Concurrency Track | State |
 | :--- | :--- | :---: | :--- | :--- | :--- |
-| `ticket-001` | Workspace Architecture, Protocol Envelope & Crypto Primitives | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `PLANNED` |
-| `ticket-002` | WebRTC PeerConnection & DataChannel WASM Engine | `HIGH` | `["ticket-001"]` | `BLOCKED_ON_ticket-001` | `PLANNED` |
-| `ticket-003` | Cloudflare Worker Hibernating Durable Object Dead-Drop | `HIGH` | `["ticket-001"]` | `BLOCKED_ON_ticket-001` | `PLANNED` |
+| `ticket-001` | Workspace Architecture, Protocol Envelope & Crypto Primitives | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-002` | WebRTC PeerConnection & DataChannel WASM Engine | `HIGH` | `["ticket-001"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
+| `ticket-003` | Cloudflare Worker Hibernating Durable Object Dead-Drop | `HIGH` | `["ticket-001"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
 | `ticket-004` | Stateless HMAC Invite Generator & URL Fragment Auto-Drop Joiner | `MEDIUM` | `["ticket-002", "ticket-003"]` | `BLOCKED_ON_ticket-002,ticket-003` | `PLANNED` |
 | `ticket-005` | Ephemeral Chat UI, Cryptographic Payload Sealing & E2E Validation | `MEDIUM` | `["ticket-004"]` | `BLOCKED_ON_ticket-004` | `PLANNED` |
 | `ticket-006` | In-Band Gossip Signaling Relay & Multi-Peer Mesh Topology | `HIGH` | `["ticket-005"]` | `BLOCKED_ON_ticket-005` | `PLANNED` |
@@ -85,7 +85,7 @@ flowchart TD
 ---
 
 ## 5. Progress & Milestone Completion Criteria
-- [ ] Ticket-001 completed and merged to `main`.
+- [x] Ticket-001 completed and merged to `main`.
 - [ ] Ticket-002 completed and merged to `main`.
 - [ ] Ticket-003 completed and merged to `main`.
 - [ ] Ticket-004 completed and merged to `main`.
