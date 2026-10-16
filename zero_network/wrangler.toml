@@ -1,0 +1,21 @@
+name = "zero_network"
+main = "build/worker/shim.mjs"
+compatibility_date = "2025-01-01"
+
+[build]
+command = "cargo install -q worker-build && worker-build --release"
+
+[[durable_objects.bindings]]
+name = "DEAD_DROP_ROOM"
+class_name = "DeadDropRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["DeadDropRoom"]
+
+[env.production]
+name = "zero_network"
+
+[[env.production.durable_objects.bindings]]
+name = "DEAD_DROP_ROOM"
+class_name = "DeadDropRoom"
