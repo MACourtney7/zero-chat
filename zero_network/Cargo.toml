@@ -3,5 +3,14 @@ name = "zero_network"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
+base64 = "0.22"
+hex = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+url = "2.5"
+worker = "0.7"
 zero_protocol = { path = "../crates/zero_protocol" }
