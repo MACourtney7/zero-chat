@@ -8,6 +8,8 @@ license.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+base64 = "0.22"
+hex = "0.4"
 js-sys = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -18,10 +20,18 @@ zero_protocol = { path = "../crates/zero_protocol" }
 [dependencies.web-sys]
 version = "0.3"
 features = [
+    "BinaryType",
+    "CloseEvent",
     "DomException",
     "ErrorEvent",
     "Event",
+    "Headers",
+    "Location",
     "MessageEvent",
+    "Request",
+    "RequestInit",
+    "RequestMode",
+    "Response",
     "RtcConfiguration",
     "RtcDataChannel",
     "RtcDataChannelEvent",
@@ -39,4 +49,6 @@ features = [
     "RtcSessionDescription",
     "RtcSessionDescriptionInit",
     "RtcSignalingState",
+    "WebSocket",
+    "Window",
 ]
