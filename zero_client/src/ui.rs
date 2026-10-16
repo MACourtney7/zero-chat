@@ -70,6 +70,10 @@ pub struct ChatUi {
     #[cfg(target_arch = "wasm32")]
     status_badge: web_sys::Element,
     #[cfg(target_arch = "wasm32")]
+    peer_list: web_sys::Element,
+    #[cfg(target_arch = "wasm32")]
+    peer_count: web_sys::Element,
+    #[cfg(target_arch = "wasm32")]
     messages_feed: web_sys::Element,
     #[cfg(target_arch = "wasm32")]
     input_field: web_sys::HtmlInputElement,
@@ -82,6 +86,8 @@ pub struct ChatUi {
     alerts: std::sync::RwLock<Vec<String>>,
     #[cfg(not(target_arch = "wasm32"))]
     invite_url: std::sync::RwLock<Option<String>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    peers: std::sync::RwLock<Vec<String>>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -116,6 +122,8 @@ impl ChatUi {
       </div>
     </div>
     <div class="header-controls">
+      <div id="peer-count" class="peer-count-badge">0 peers</div>
+      <div id="peer-list" class="peer-list"></div>
       <div id="connection-status-pill" class="status-pill status-disconnected">
         <span class="status-indicator-dot"></span>
         <span id="connection-status-label" class="status-label">Disconnected</span>
@@ -153,6 +161,14 @@ impl ChatUi {
             .get_element_by_id("connection-status-pill")
             .ok_or_else(|| UiError::DomElementNotFound("connection-status-pill".into()))?;
 
+        let peer_list = document
+            .get_element_by_id("peer-list")
+            .ok_or_else(|| UiError::DomElementNotFound("peer-list".into()))?;
+
+        let peer_count = document
+            .get_element_by_id("peer-count")
+            .ok_or_else(|| UiError::DomElementNotFound("peer-count".into()))?;
+
         let messages_feed = document
             .get_element_by_id("messages-container")
             .ok_or_else(|| UiError::DomElementNotFound("messages-container".into()))?;
@@ -170,6 +186,8 @@ impl ChatUi {
         Ok(Self {
             container,
             status_badge,
+            peer_list,
+            peer_count,
             messages_feed,
             input_field,
         })
@@ -345,6 +363,8 @@ impl ChatUi {
         use wasm_bindgen::JsCast;
 
         self.messages_feed.set_inner_html("");
+        self.peer_list.set_inner_html("");
+        self.peer_count.set_text_content(Some("0 peers"));
         self.input_field.set_value("");
         self.set_status(ConnectionStatus::Disconnected)?;
 
@@ -403,6 +423,121 @@ impl ChatUi {
         Ok(())
     }
 
+    /// Dynamically adds a peer pill element (.peer-pill) inside #peer-list, displaying
+    /// a shortened peer ID (first 8 chars or full string) and an online dot indicator. Updates #peer-count.
+    pub fn add_peer(&self, peer_id: &str) -> Result<(), UiError> {
+        use wasm_bindgen::JsCast;
+
+        let mut curr = self.peer_list.first_child();
+        while let Some(node) = curr {
+            let next = node.next_sibling();
+            if let Ok(el) = node.dyn_into::<web_sys::Element>() {
+                if el.get_attribute("data-peer-id").as_deref() == Some(peer_id) {
+                    return Ok(());
+                }
+            }
+            curr = next;
+        }
+
+        let document = self
+            .container
+            .owner_document()
+            .ok_or_else(|| UiError::DomOperationFailed("no owner document on container".into()))?;
+
+        let pill = document
+            .create_element("div")
+            .map_err(|e| UiError::DomOperationFailed(format!("{e:?}")))?;
+        pill.set_class_name("peer-pill");
+        pill.set_attribute("data-peer-id", peer_id)
+            .map_err(|e| UiError::DomOperationFailed(format!("{e:?}")))?;
+
+        let dot = document
+            .create_element("span")
+            .map_err(|e| UiError::DomOperationFailed(format!("{e:?}")))?;
+        dot.set_class_name("peer-indicator-dot");
+        pill.append_child(&dot)
+            .map_err(|e| UiError::DomOperationFailed(format!("{e:?}")))?;
+
+        let label = document
+            .create_element("span")
+            .map_err(|e| UiError::DomOperationFailed(format!("{e:?}")))?;
+        label.set_class_name("peer-label");
+        let display_id = if peer_id.len() > 8 {
+            &peer_id[..8]
+        } else {
+            peer_id
+        };
+        label.set_text_content(Some(display_id));
+        pill.append_child(&label)
+            .map_err(|e| UiError::DomOperationFailed(format!("{e:?}")))?;
+
+        self.peer_list
+            .append_child(&pill)
+            .map_err(|e| UiError::DomOperationFailed(format!("{e:?}")))?;
+
+        self.update_peer_count();
+        Ok(())
+    }
+
+    /// Removes the peer pill element with matching data attribute from #peer-list. Updates #peer-count.
+    pub fn remove_peer(&self, peer_id: &str) -> Result<(), UiError> {
+        use wasm_bindgen::JsCast;
+
+        let mut curr = self.peer_list.first_child();
+        while let Some(node) = curr {
+            let next = node.next_sibling();
+            if let Ok(el) = node.clone().dyn_into::<web_sys::Element>() {
+                if el.get_attribute("data-peer-id").as_deref() == Some(peer_id) {
+                    self.peer_list
+                        .remove_child(&node)
+                        .map_err(|e| UiError::DomOperationFailed(format!("{e:?}")))?;
+                    break;
+                }
+            }
+            curr = next;
+        }
+        self.update_peer_count();
+        Ok(())
+    }
+
+    /// Synchronizes the #peer-list to match the given list of peer IDs.
+    pub fn set_peers(&self, peers: &[String]) -> Result<(), UiError> {
+        self.peer_list.set_inner_html("");
+        for peer_id in peers {
+            self.add_peer(peer_id)?;
+        }
+        self.update_peer_count();
+        Ok(())
+    }
+
+    /// Reads the list of currently rendered peer IDs from the DOM.
+    pub fn peers(&self) -> Vec<String> {
+        use wasm_bindgen::JsCast;
+
+        let mut result = Vec::new();
+        let mut curr = self.peer_list.first_child();
+        while let Some(node) = curr {
+            let next = node.next_sibling();
+            if let Ok(el) = node.dyn_into::<web_sys::Element>() {
+                if let Some(id) = el.get_attribute("data-peer-id") {
+                    result.push(id);
+                }
+            }
+            curr = next;
+        }
+        result
+    }
+
+    fn update_peer_count(&self) {
+        let count = self.peers().len();
+        let text = if count == 1 {
+            "1 peer".to_string()
+        } else {
+            format!("{count} peers")
+        };
+        self.peer_count.set_text_content(Some(&text));
+    }
+
     /// Reference to the container element.
     pub fn container(&self) -> &web_sys::Element {
         &self.container
@@ -411,6 +546,16 @@ impl ChatUi {
     /// Reference to the status badge element.
     pub fn status_badge(&self) -> &web_sys::Element {
         &self.status_badge
+    }
+
+    /// Reference to the peer list element.
+    pub fn peer_list(&self) -> &web_sys::Element {
+        &self.peer_list
+    }
+
+    /// Reference to the peer count badge element.
+    pub fn peer_count(&self) -> &web_sys::Element {
+        &self.peer_count
     }
 
     /// Reference to the messages feed container.
@@ -459,6 +604,7 @@ impl ChatUi {
             messages: std::sync::RwLock::new(Vec::new()),
             alerts: std::sync::RwLock::new(Vec::new()),
             invite_url: std::sync::RwLock::new(None),
+            peers: std::sync::RwLock::new(Vec::new()),
         })
     }
 
@@ -508,6 +654,43 @@ impl ChatUi {
         Ok(())
     }
 
+    /// Dynamically adds a peer ID to the active peer list if not already present.
+    pub fn add_peer(&self, peer_id: &str) -> Result<(), UiError> {
+        let mut guard = self
+            .peers
+            .write()
+            .map_err(|e| UiError::DomOperationFailed(e.to_string()))?;
+        if !guard.iter().any(|p| p == peer_id) {
+            guard.push(peer_id.to_string());
+        }
+        Ok(())
+    }
+
+    /// Removes the peer with matching ID from the active peer list.
+    pub fn remove_peer(&self, peer_id: &str) -> Result<(), UiError> {
+        let mut guard = self
+            .peers
+            .write()
+            .map_err(|e| UiError::DomOperationFailed(e.to_string()))?;
+        guard.retain(|p| p != peer_id);
+        Ok(())
+    }
+
+    /// Synchronizes the active peer list with the given slice of peer IDs.
+    pub fn set_peers(&self, peers: &[String]) -> Result<(), UiError> {
+        let mut guard = self
+            .peers
+            .write()
+            .map_err(|e| UiError::DomOperationFailed(e.to_string()))?;
+        *guard = peers.to_vec();
+        Ok(())
+    }
+
+    /// Returns a snapshot clone of the currently active peer IDs.
+    pub fn peers(&self) -> Vec<String> {
+        self.peers.read().expect("peers lock poisoned").clone()
+    }
+
     /// Wipes all messages and destroys the ephemeral session (REQ-005.4 zero-footprint).
     pub fn destroy_session(&self) -> Result<(), UiError> {
         let mut msgs = self
@@ -521,6 +704,12 @@ impl ChatUi {
             .write()
             .map_err(|e| UiError::DomOperationFailed(e.to_string()))?;
         alerts.clear();
+
+        let mut peers = self
+            .peers
+            .write()
+            .map_err(|e| UiError::DomOperationFailed(e.to_string()))?;
+        peers.clear();
 
         let mut status = self
             .status
@@ -736,5 +925,62 @@ mod tests {
 
         let op_err = UiError::DomOperationFailed("failed op".to_string());
         assert_eq!(format!("{op_err}"), "DOM operation failed: failed op");
+    }
+
+    #[test]
+    fn test_peer_list_add_and_remove() {
+        let ui = ChatUi::mount("app").expect("mount failed");
+        assert!(ui.peers().is_empty());
+
+        ui.add_peer("peer-bob").expect("add peer-bob failed");
+        assert_eq!(ui.peers(), vec!["peer-bob".to_string()]);
+
+        // Duplicate add is idempotent
+        ui.add_peer("peer-bob").expect("add duplicate failed");
+        assert_eq!(ui.peers(), vec!["peer-bob".to_string()]);
+
+        ui.add_peer("peer-charlie")
+            .expect("add peer-charlie failed");
+        assert_eq!(
+            ui.peers(),
+            vec!["peer-bob".to_string(), "peer-charlie".to_string()]
+        );
+
+        ui.remove_peer("peer-bob").expect("remove peer-bob failed");
+        assert_eq!(ui.peers(), vec!["peer-charlie".to_string()]);
+
+        ui.remove_peer("non-existent")
+            .expect("remove non-existent ok");
+        assert_eq!(ui.peers(), vec!["peer-charlie".to_string()]);
+    }
+
+    #[test]
+    fn test_set_peers_synchronization() {
+        let ui = ChatUi::mount("app").expect("mount failed");
+        let initial_peers = vec![
+            "alice".to_string(),
+            "bob".to_string(),
+            "charlie".to_string(),
+        ];
+        ui.set_peers(&initial_peers).expect("set_peers failed");
+        assert_eq!(ui.peers().len(), 3);
+        assert_eq!(ui.peers(), initial_peers);
+
+        // Update with new set
+        let updated_peers = vec!["david".to_string()];
+        ui.set_peers(&updated_peers)
+            .expect("set_peers update failed");
+        assert_eq!(ui.peers(), updated_peers);
+    }
+
+    #[test]
+    fn test_destroy_session_clears_peers() {
+        let ui = ChatUi::mount("app").expect("mount failed");
+        ui.add_peer("peer-alice").expect("add peer failed");
+        ui.add_peer("peer-bob").expect("add peer failed");
+        assert_eq!(ui.peers().len(), 2);
+
+        ui.destroy_session().expect("destroy_session failed");
+        assert!(ui.peers().is_empty());
     }
 }

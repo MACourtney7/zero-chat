@@ -133,6 +133,64 @@ html, body {
   gap: 12px;
 }
 
+/* Multi-Peer Mesh Badges & Indicators */
+.peer-list {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  max-width: 320px;
+}
+
+.peer-count-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  color: var(--accent-cyan);
+  font-family: var(--font-mono);
+  user-select: none;
+  white-space: nowrap;
+}
+
+.peer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px solid rgba(99, 102, 241, 0.28);
+  color: #c7d2fe;
+  font-family: var(--font-mono);
+  user-select: none;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+}
+
+.peer-pill:hover {
+  background: rgba(99, 102, 241, 0.22);
+  border-color: rgba(99, 102, 241, 0.45);
+}
+
+.peer-indicator-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--accent-emerald);
+  box-shadow: 0 0 6px var(--accent-emerald);
+}
+
+.peer-label {
+  font-weight: 500;
+}
+
 /* Status Pill with Pulsing Dot Indicator */
 .status-pill {
   display: inline-flex;
