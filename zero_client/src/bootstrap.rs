@@ -420,17 +420,14 @@ pub async fn simulate_handshake_loopback(
     assert!(!host_session.is_edge_severed());
 
     // Joiner generates answer and dispatches drop payload
-    let drop_payload = execute_joiner_autodrop(
-        "https://example.test",
-        invite,
-        joiner_peer,
-        joiner_pubkey,
-    )
-    .await?;
+    let drop_payload =
+        execute_joiner_autodrop("https://example.test", invite, joiner_peer, joiner_pubkey).await?;
 
     // Host receives the dropped answer over signaling
     let drop_json = to_json_string(&drop_payload)?;
-    host_session.handle_incoming_drop_message(&drop_json).await?;
+    host_session
+        .handle_incoming_drop_message(&drop_json)
+        .await?;
 
     // Complete loopback pairing
     WebRtcPeer::pair_for_testing(host_peer, joiner_peer).map_err(BootstrapError::from)?;
@@ -616,7 +613,8 @@ mod tests {
         let not_json = URL_SAFE_NO_PAD.encode(b"not json");
         let err = detect_invite_from_hash(&format!("#payload={not_json}")).unwrap_err();
         match err {
-            BootstrapError::Invite(InviteError::Protocol(ProtocolError::SerializationError(_))) => {}
+            BootstrapError::Invite(InviteError::Protocol(ProtocolError::SerializationError(_))) => {
+            }
             other => panic!("Expected Protocol Serialization error, got: {other:?}"),
         }
     }
@@ -659,25 +657,19 @@ mod tests {
             }
 
             // 4. Simulated HTTP errors
-            let err = dispatch_drop_post(
-                "https://edge.app/simulate_error/403",
-                "token-abc",
-                &payload,
-            )
-            .await
-            .unwrap_err();
+            let err =
+                dispatch_drop_post("https://edge.app/simulate_error/403", "token-abc", &payload)
+                    .await
+                    .unwrap_err();
             match err {
                 BootstrapError::HttpError { status, .. } => assert_eq!(status, 403),
                 other => panic!("Expected HttpError 403, got {other:?}"),
             }
 
-            let err = dispatch_drop_post(
-                "https://edge.app/simulate_error/500",
-                "token-abc",
-                &payload,
-            )
-            .await
-            .unwrap_err();
+            let err =
+                dispatch_drop_post("https://edge.app/simulate_error/500", "token-abc", &payload)
+                    .await
+                    .unwrap_err();
             match err {
                 BootstrapError::HttpError { status, .. } => assert_eq!(status, 500),
                 other => panic!("Expected HttpError 500, got {other:?}"),
@@ -698,14 +690,10 @@ mod tests {
                 guest_private_key: None,
             };
 
-            let drop = execute_joiner_autodrop(
-                "https://edge.app",
-                &invite,
-                &joiner_peer,
-                [9u8; 32],
-            )
-            .await
-            .expect("execute joiner autodrop");
+            let drop =
+                execute_joiner_autodrop("https://edge.app", &invite, &joiner_peer, [9u8; 32])
+                    .await
+                    .expect("execute joiner autodrop");
 
             assert_eq!(drop.invite_uuid, invite.invite_uuid);
             assert_eq!(drop.token, invite.token);
@@ -742,8 +730,7 @@ mod tests {
     fn test_host_signaling_session_and_edge_severance() {
         block_on(async {
             let host_peer = WebRtcPeer::new();
-            let mut session =
-                HostSignalingSession::new("do-room-01", [7u8; 32], host_peer.clone());
+            let mut session = HostSignalingSession::new("do-room-01", [7u8; 32], host_peer.clone());
 
             assert_eq!(session.do_id(), "do-room-01");
             assert_eq!(session.host_secret(), &[7u8; 32]);
@@ -842,7 +829,10 @@ mod tests {
             host_peer
                 .send_binary(&[0xDE, 0xAD, 0xBE, 0xEF])
                 .expect("host sends binary");
-            assert_eq!(*joiner_received_bytes.borrow(), vec![0xDE, 0xAD, 0xBE, 0xEF]);
+            assert_eq!(
+                *joiner_received_bytes.borrow(),
+                vec![0xDE, 0xAD, 0xBE, 0xEF]
+            );
         });
     }
 }
