@@ -9,6 +9,7 @@
 - **Pure Rust Cryptographic Engine**: Synchronous, memory-safe cryptographic primitives (`x25519-dalek`, `chacha20poly1305`, `hmac-sha256` with `getrandom/js`) shared between WASM and Cloudflare Worker, bypassing asynchronous JS WebCrypto bridging overhead.
 - **Direct P2P DataChannels**: Once the initial WebRTC SDP offer/answer exchange completes, the cloud edge drops out permanently. All communication flows directly over browser-to-browser UDP DataChannels.
 - **In-Band Gossip Mesh**: Multi-peer scaling without edge requests. The room host bridges encrypted signaling messages between existing WebRTC DataChannels so joining peers snap direct connections (`Channel_BC`) with zero edge hits.
+- **Continuous Integration & Delivery**: Automated dual-target test validation, clippy auditing, and automated Cloudflare Worker + Cloudflare Pages deployment via GitHub Actions.
 
 ---
 
@@ -19,6 +20,10 @@ zero_chat/
 │   ├── plugins.json                # Software factory plugin reference
 │   └── mcp_config.json             # MCP server configuration
 ├── .factory/                       # Factory state machine runtime (gitignored)
+├── .github/
+│   └── workflows/                  # CI/CD automation pipelines
+│       ├── ci.yml                  # Format, clippy, test, and wasm build validation
+│       └── deploy.yml              # Cloudflare Worker and Pages deployment
 ├── crates/
 │   └── zero_protocol/              # Shared schemas, DTOs, & crypto primitives
 │       ├── Cargo.toml
@@ -57,10 +62,13 @@ zero_chat/
 │       ├── ticket-003/spec.md
 │       ├── ticket-004/spec.md
 │       ├── ticket-005/spec.md
-│       └── ticket-006/spec.md
+│       ├── ticket-006/spec.md
+│       └── ticket-007/spec.md
 ├── tests/                          # End-to-end integration test suites
 │   ├── e2e_handshake.rs
 │   └── mesh_simulation_test.rs
+├── docs/                           # Project guides & deployment runbooks
+│   └── deployment.md
 ├── Cargo.toml                      # Top-level Cargo workspace
 └── factory.yaml                    # Software Factory automation commands
 ```
