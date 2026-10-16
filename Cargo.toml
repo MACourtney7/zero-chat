@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/zero_protocol",
+    "zero_client",
+    "zero_network",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"

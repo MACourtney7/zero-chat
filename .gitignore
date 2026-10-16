@@ -1,4 +1,7 @@
 .DS_Store
+/target
+target/
+**/*.rs.bk
 
 # Agentic Software Factory runtime
 .factory/

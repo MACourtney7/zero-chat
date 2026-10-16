@@ -1,0 +1,7 @@
+[package]
+name = "zero_network"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+zero_protocol = { path = "../crates/zero_protocol" }
