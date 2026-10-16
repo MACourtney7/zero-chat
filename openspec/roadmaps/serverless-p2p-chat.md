@@ -33,7 +33,7 @@ Build an entirely serverless, zero-footprint, real-time peer-to-peer (P2P) commu
 | `ticket-004` | Stateless HMAC Invite Generator & URL Fragment Auto-Drop Joiner | `MEDIUM` | `["ticket-002", "ticket-003"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-005` | Ephemeral Chat UI, Cryptographic Payload Sealing & E2E Validation | `MEDIUM` | `["ticket-004"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-006` | In-Band Gossip Signaling Relay & Multi-Peer Mesh Topology | `HIGH` | `["ticket-005"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
-| `ticket-007` | CI/CD Automation: GitHub Actions & Cloudflare Deployment Pipeline | `LOW` | `["ticket-003", "ticket-005"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
+| `ticket-007` | CI/CD Automation: GitHub Actions & Cloudflare Deployment Pipeline | `LOW` | `["ticket-003", "ticket-005"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 
 ---
 
@@ -90,7 +90,7 @@ flowchart TD
 - [x] Ticket-004 completed and merged to `main`.
 - [x] Ticket-005 completed and merged to `main`.
 - [ ] Ticket-006 completed and merged to `main`.
-- [ ] Ticket-007 completed and merged to `main`.
+- [x] Ticket-007 completed and merged to `main`.
 - [ ] End-to-end integration tests pass across combined deliverables (`cargo test --workspace`).
 - [ ] Zero persistent storage verified (no IndexedDB, localStorage, or cookies created).
 - [ ] Tab closure forensic cleanliness verified.
