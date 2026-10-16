@@ -290,6 +290,12 @@ impl MeshTopology {
         }
     }
 
+    /// Disconnects a peer from the mesh, closes its data channel, and triggers `on_peer_left` callbacks (REQ-006.5).
+    /// Alias for `remove_peer`.
+    pub fn disconnect_peer(&self, peer_id: &str) -> Result<(), MeshError> {
+        self.remove_peer(peer_id)
+    }
+
     /// Returns list of currently connected peer IDs.
     pub fn connected_peers(&self) -> Vec<String> {
         let mut list: Vec<String> = self.inner.borrow().peers.keys().cloned().collect();
@@ -323,6 +329,16 @@ impl MeshTopology {
     /// Sets the maximum deduplication cache capacity (useful for cache boundary testing).
     pub fn set_max_seen_cache_for_testing(&self, size: usize) {
         self.inner.borrow_mut().max_seen_cache = size;
+    }
+
+    /// Returns the number of message IDs currently stored in the deduplication cache.
+    pub fn seen_messages_count(&self) -> usize {
+        self.inner.borrow().seen_messages.len()
+    }
+
+    /// Returns whether the given message UUID is present in the deduplication cache.
+    pub fn has_seen_message(&self, message_uuid: &str) -> bool {
+        self.inner.borrow().seen_messages.contains(message_uuid)
     }
 
     /// Subscribes to decrypted chat messages.
