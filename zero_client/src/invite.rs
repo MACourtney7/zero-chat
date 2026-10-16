@@ -253,7 +253,10 @@ mod tests {
 
         // Verification fails with empty secret
         let err = verify_invite_payload(b"", &payload).unwrap_err();
-        assert_eq!(err, InviteError::Protocol(ProtocolError::InvalidKeyLength(0)));
+        assert_eq!(
+            err,
+            InviteError::Protocol(ProtocolError::InvalidKeyLength(0))
+        );
 
         // With auto-generated UUID
         let payload_auto = create_offline_invite(
@@ -363,9 +366,8 @@ mod tests {
         assert_eq!(payload, unpacked);
 
         // Base URL with existing fragment should be stripped and replaced
-        let url_with_existing =
-            create_invite_url("https://zerochat.app/join#stale-hash", &payload)
-                .expect("replace existing fragment");
+        let url_with_existing = create_invite_url("https://zerochat.app/join#stale-hash", &payload)
+            .expect("replace existing fragment");
         assert!(url_with_existing.starts_with("https://zerochat.app/join#payload="));
         assert!(!url_with_existing.contains("stale-hash"));
         let unpacked2 = unpack_invite_fragment(&url_with_existing).expect("unpack replaced hash");
@@ -385,8 +387,8 @@ mod tests {
             .unwrap()
             .replace("#payload=", "");
         let multi_param_fragment = format!("#theme=dark&payload={raw_b64}&debug=true");
-        let unpacked_multi = unpack_invite_fragment(&multi_param_fragment)
-            .expect("unpack multi-param fragment");
+        let unpacked_multi =
+            unpack_invite_fragment(&multi_param_fragment).expect("unpack multi-param fragment");
         assert_eq!(payload, unpacked_multi);
 
         // Query param only in URL
