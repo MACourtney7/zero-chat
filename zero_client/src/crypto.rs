@@ -83,7 +83,11 @@ impl ChatSessionCrypto {
     /// Encrypts and seals a plaintext message for transmission over RTCDataChannel (REQ-005.2).
     /// Generates a unique message UUID, assigns timestamp, seals plaintext with ChaCha20-Poly1305,
     /// and populates the `ChatMessage` struct with high-entropy `SealedFrame`.
-    pub fn seal_message(&self, sender_id: &str, plaintext: &str) -> Result<ChatMessage, CryptoError> {
+    pub fn seal_message(
+        &self,
+        sender_id: &str,
+        plaintext: &str,
+    ) -> Result<ChatMessage, CryptoError> {
         let frame = chacha20poly1305::seal_payload(&self.shared_secret, plaintext.as_bytes())
             .map_err(CryptoError::Protocol)?;
 
@@ -110,13 +114,13 @@ impl ChatSessionCrypto {
         let decrypted_bytes = chacha20poly1305::open_payload(&self.shared_secret, frame)
             .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
 
-        String::from_utf8(decrypted_bytes)
-            .map_err(|e| CryptoError::Utf8Error(e.to_string()))
+        String::from_utf8(decrypted_bytes).map_err(|e| CryptoError::Utf8Error(e.to_string()))
     }
 
     /// Directly seals arbitrary byte slices into a SealedFrame.
     pub fn seal_raw(&self, plaintext: &[u8]) -> Result<SealedFrame, CryptoError> {
-        chacha20poly1305::seal_payload(&self.shared_secret, plaintext).map_err(CryptoError::Protocol)
+        chacha20poly1305::seal_payload(&self.shared_secret, plaintext)
+            .map_err(CryptoError::Protocol)
     }
 
     /// Directly authenticates and decrypts a SealedFrame into raw byte vector.
@@ -226,8 +230,10 @@ mod tests {
             "Diffie-Hellman shared secret must be symmetric"
         );
 
-        let direct_alice = derive_session_key(alice_kp.private_key_bytes(), bob_kp.public_key_bytes());
-        let direct_bob = derive_session_key(bob_kp.private_key_bytes(), alice_kp.public_key_bytes());
+        let direct_alice =
+            derive_session_key(alice_kp.private_key_bytes(), bob_kp.public_key_bytes());
+        let direct_bob =
+            derive_session_key(bob_kp.private_key_bytes(), alice_kp.public_key_bytes());
         assert_eq!(direct_alice, direct_bob);
         assert_eq!(alice_crypto.shared_secret(), &direct_alice);
     }
@@ -253,7 +259,8 @@ mod tests {
         assert_eq!(decrypted, plaintext);
 
         // Test convenience functions
-        let conv_msg = seal_chat_payload(&secret, "alice-conv", plaintext).expect("convenience seal");
+        let conv_msg =
+            seal_chat_payload(&secret, "alice-conv", plaintext).expect("convenience seal");
         let conv_decrypted = open_chat_payload(&secret, &conv_msg).expect("convenience open");
         assert_eq!(conv_decrypted, plaintext);
     }
@@ -263,7 +270,8 @@ mod tests {
         let secret = [0x88; KEY_LEN];
         let crypto = ChatSessionCrypto::from_shared_secret(secret);
 
-        let plaintext = "High entropy ChaCha20-Poly1305 ciphertext structure validation test string.";
+        let plaintext =
+            "High entropy ChaCha20-Poly1305 ciphertext structure validation test string.";
         let chat_msg = crypto
             .seal_message("sender-test", plaintext)
             .expect("seal message");
@@ -305,7 +313,9 @@ mod tests {
         let result = crypto.open_message(&chat_msg);
         match result {
             Err(CryptoError::DecryptionFailed(_)) => {}
-            other => panic!("Expected DecryptionFailed error on tampered ciphertext, got {other:?}"),
+            other => {
+                panic!("Expected DecryptionFailed error on tampered ciphertext, got {other:?}")
+            }
         }
     }
 
@@ -433,7 +443,9 @@ mod tests {
         let secret = [0x44; KEY_LEN];
         let crypto = ChatSessionCrypto::from_shared_secret(secret);
 
-        let msg = crypto.seal_message("bob", "Testing JSON serialization").unwrap();
+        let msg = crypto
+            .seal_message("bob", "Testing JSON serialization")
+            .unwrap();
         let json = serialize_message(&msg).expect("serialize");
         let decoded = deserialize_message(&json).expect("deserialize");
         assert_eq!(msg, decoded);

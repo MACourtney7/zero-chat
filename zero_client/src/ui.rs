@@ -163,7 +163,9 @@ impl ChatUi {
 
         let input_field = input_element
             .dyn_into::<web_sys::HtmlInputElement>()
-            .map_err(|_| UiError::DomCastFailed("message-input is not an HtmlInputElement".into()))?;
+            .map_err(|_| {
+                UiError::DomCastFailed("message-input is not an HtmlInputElement".into())
+            })?;
 
         Ok(Self {
             container,
@@ -178,9 +180,10 @@ impl ChatUi {
         self.status_badge
             .set_class_name(&format!("status-pill {}", status.css_class()));
 
-        let document = self.container.owner_document().ok_or_else(|| {
-            UiError::DomOperationFailed("no owner document on container".into())
-        })?;
+        let document = self
+            .container
+            .owner_document()
+            .ok_or_else(|| UiError::DomOperationFailed("no owner document on container".into()))?;
 
         if let Some(label) = document.get_element_by_id("connection-status-label") {
             label.set_text_content(Some(status.label()));
@@ -193,9 +196,10 @@ impl ChatUi {
     pub fn show_invite(&self, invite_url: &str) -> Result<(), UiError> {
         use wasm_bindgen::JsCast;
 
-        let document = self.container.owner_document().ok_or_else(|| {
-            UiError::DomOperationFailed("no owner document on container".into())
-        })?;
+        let document = self
+            .container
+            .owner_document()
+            .ok_or_else(|| UiError::DomOperationFailed("no owner document on container".into()))?;
 
         if let Some(section) = document.get_element_by_id("invite-section") {
             remove_class(&section, "hidden");
@@ -219,14 +223,19 @@ impl ChatUi {
         is_self: bool,
         verified: bool,
     ) -> Result<(), UiError> {
-        let document = self.container.owner_document().ok_or_else(|| {
-            UiError::DomOperationFailed("no owner document on container".into())
-        })?;
+        let document = self
+            .container
+            .owner_document()
+            .ok_or_else(|| UiError::DomOperationFailed("no owner document on container".into()))?;
 
         let bubble = document
             .create_element("div")
             .map_err(|e| UiError::DomOperationFailed(format!("{e:?}")))?;
-        let direction_class = if is_self { "message-outgoing" } else { "message-incoming" };
+        let direction_class = if is_self {
+            "message-outgoing"
+        } else {
+            "message-incoming"
+        };
         bubble.set_class_name(&format!("message-bubble {direction_class}"));
 
         // Header: Sender + Timestamp
@@ -288,16 +297,18 @@ impl ChatUi {
         self.messages_feed
             .append_child(&bubble)
             .map_err(|e| UiError::DomOperationFailed(format!("{e:?}")))?;
-        self.messages_feed.set_scroll_top(self.messages_feed.scroll_height());
+        self.messages_feed
+            .set_scroll_top(self.messages_feed.scroll_height());
 
         Ok(())
     }
 
     /// Appends a prominent security alert for tampered/dropped packets (REQ-005.3).
     pub fn append_security_alert(&self, alert_text: &str) -> Result<(), UiError> {
-        let document = self.container.owner_document().ok_or_else(|| {
-            UiError::DomOperationFailed("no owner document on container".into())
-        })?;
+        let document = self
+            .container
+            .owner_document()
+            .ok_or_else(|| UiError::DomOperationFailed("no owner document on container".into()))?;
 
         let card = document
             .create_element("div")
@@ -323,7 +334,8 @@ impl ChatUi {
         self.messages_feed
             .append_child(&card)
             .map_err(|e| UiError::DomOperationFailed(format!("{e:?}")))?;
-        self.messages_feed.set_scroll_top(self.messages_feed.scroll_height());
+        self.messages_feed
+            .set_scroll_top(self.messages_feed.scroll_height());
 
         Ok(())
     }
@@ -336,9 +348,10 @@ impl ChatUi {
         self.input_field.set_value("");
         self.set_status(ConnectionStatus::Disconnected)?;
 
-        let document = self.container.owner_document().ok_or_else(|| {
-            UiError::DomOperationFailed("no owner document on container".into())
-        })?;
+        let document = self
+            .container
+            .owner_document()
+            .ok_or_else(|| UiError::DomOperationFailed("no owner document on container".into()))?;
 
         if let Some(invite_sec) = document.get_element_by_id("invite-section") {
             add_class(&invite_sec, "hidden");
@@ -370,7 +383,9 @@ impl ChatUi {
                 .length()
                 .map_err(|e| UiError::DomOperationFailed(format!("{e:?}")))?;
             if len > 0 {
-                return Err(UiError::StorageNotEmpty(format!("localStorage has {len} item(s)")));
+                return Err(UiError::StorageNotEmpty(format!(
+                    "localStorage has {len} item(s)"
+                )));
             }
         }
 
@@ -379,7 +394,9 @@ impl ChatUi {
                 .length()
                 .map_err(|e| UiError::DomOperationFailed(format!("{e:?}")))?;
             if len > 0 {
-                return Err(UiError::StorageNotEmpty(format!("sessionStorage has {len} item(s)")));
+                return Err(UiError::StorageNotEmpty(format!(
+                    "sessionStorage has {len} item(s)"
+                )));
             }
         }
 
@@ -534,7 +551,10 @@ impl ChatUi {
 
     /// Inspect logged messages in in-memory test model.
     pub fn messages(&self) -> Vec<(String, String, bool, bool)> {
-        self.messages.read().expect("messages lock poisoned").clone()
+        self.messages
+            .read()
+            .expect("messages lock poisoned")
+            .clone()
     }
 
     /// Inspect logged alerts in in-memory test model.
@@ -544,7 +564,10 @@ impl ChatUi {
 
     /// Inspect current invite URL in in-memory test model.
     pub fn invite_url(&self) -> Option<String> {
-        self.invite_url.read().expect("invite lock poisoned").clone()
+        self.invite_url
+            .read()
+            .expect("invite lock poisoned")
+            .clone()
     }
 }
 
@@ -564,19 +587,13 @@ mod tests {
             ConnectionStatus::Signaling.label(),
             "Signaling (Host/Dead-drop)..."
         );
-        assert_eq!(
-            ConnectionStatus::Signaling.css_class(),
-            "status-signaling"
-        );
+        assert_eq!(ConnectionStatus::Signaling.css_class(), "status-signaling");
 
         assert_eq!(
             ConnectionStatus::Connected.label(),
             "P2P Connected (WebRTC)"
         );
-        assert_eq!(
-            ConnectionStatus::Connected.css_class(),
-            "status-connected"
-        );
+        assert_eq!(ConnectionStatus::Connected.css_class(), "status-connected");
 
         assert_eq!(
             ConnectionStatus::EdgeSevered.label(),

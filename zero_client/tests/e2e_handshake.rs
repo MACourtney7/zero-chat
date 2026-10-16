@@ -22,9 +22,9 @@ use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 use zero_client::{
     create_offline_invite, deserialize_message, execute_joiner_autodrop, pack_invite_fragment,
-    serialize_message, unpack_invite_fragment, verify_invite_payload,
-    ChatSessionCrypto, ChatUi, ConnectionStatus, CryptoError, HostSignalingSession,
-    PeerLifecycleState, WebRtcPeer, KEY_LEN, NONCE_LEN, TAG_LEN,
+    serialize_message, unpack_invite_fragment, verify_invite_payload, ChatSessionCrypto, ChatUi,
+    ConnectionStatus, CryptoError, HostSignalingSession, PeerLifecycleState, WebRtcPeer, KEY_LEN,
+    NONCE_LEN, TAG_LEN,
 };
 use zero_protocol::crypto::x25519::X25519Keypair;
 use zero_protocol::{to_json_string, ChatMessage, SealedFrame};
@@ -140,8 +140,13 @@ fn test_req_005_1_ui_lifecycle_and_status_transitions() {
         .expect("append incoming verified message");
 
     // Incoming unverified message (security warning badge)
-    ui.append_message("unverified-actor", "Suspicious unsealed payload", false, false)
-        .expect("append incoming unverified message");
+    ui.append_message(
+        "unverified-actor",
+        "Suspicious unsealed payload",
+        false,
+        false,
+    )
+    .expect("append incoming unverified message");
 
     let messages = ui.messages();
     assert_eq!(messages.len(), 3);
@@ -214,7 +219,8 @@ fn test_req_005_2_symmetric_payload_sealing_and_packet_inspection() {
     );
 
     // 3. Seal outgoing chat message using ChatSessionCrypto::seal_message
-    let plaintext = "ZeroChat strictly zero-footprint ephemeral communication payload for packet inspection.";
+    let plaintext =
+        "ZeroChat strictly zero-footprint ephemeral communication payload for packet inspection.";
     let chat_msg: ChatMessage = alice_crypto
         .seal_message("alice-node", plaintext)
         .expect("seal outgoing chat message");
@@ -472,8 +478,7 @@ fn test_req_005_5_complete_e2e_handshake_and_encrypted_chat_roundtrip() {
         // Alice begins host signaling session to /host/{do_id}
         let host_secret = [0x7au8; 32];
         let do_id = "do-e2e-handshake-room-99";
-        let mut alice_session =
-            HostSignalingSession::new(do_id, host_secret, alice_peer.clone());
+        let mut alice_session = HostSignalingSession::new(do_id, host_secret, alice_peer.clone());
         alice_session
             .connect("wss://edge.zerochat.test")
             .expect("Alice connect signaling");
@@ -516,13 +521,11 @@ fn test_req_005_5_complete_e2e_handshake_and_encrypted_chat_roundtrip() {
         bob_ui
             .set_status(ConnectionStatus::Signaling)
             .expect("Bob set status Signaling");
-        let bob_unpacked =
-            unpack_invite_fragment(&invite_url).expect("Bob unpack invite fragment");
+        let bob_unpacked = unpack_invite_fragment(&invite_url).expect("Bob unpack invite fragment");
         assert_eq!(bob_unpacked, invite);
 
         // Step 5: Bob verifies HMAC token (verify_invite_payload)
-        verify_invite_payload(&host_secret, &bob_unpacked)
-            .expect("Bob verify HMAC invite token");
+        verify_invite_payload(&host_secret, &bob_unpacked).expect("Bob verify HMAC invite token");
 
         // Step 6: Bob generates SDP answer and joiner payload (DropPayload) via execute_joiner_autodrop
         let drop_payload = execute_joiner_autodrop(
@@ -689,12 +692,8 @@ fn test_req_005_5_complete_e2e_handshake_and_encrypted_chat_roundtrip() {
         ChatUi::verify_zero_persistence().expect("mid-chat persistence audit");
 
         // Step 14: Both terminate session via destroy_session()
-        alice_ui
-            .destroy_session()
-            .expect("Alice destroy session");
-        bob_ui
-            .destroy_session()
-            .expect("Bob destroy session");
+        alice_ui.destroy_session().expect("Alice destroy session");
+        bob_ui.destroy_session().expect("Bob destroy session");
 
         assert!(alice_ui.messages().is_empty());
         assert!(bob_ui.messages().is_empty());
