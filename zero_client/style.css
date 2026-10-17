@@ -590,14 +590,26 @@ html, body {
 
 /* System Messages */
 .system-message {
-  align-self: center;
-  text-align: center;
-  font-style: italic;
+  align-self: flex-start;
+  text-align: left;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-style: normal;
   font-size: 0.8rem;
   color: var(--text-muted);
-  padding: 6px 0;
+  padding: 4px 0;
   user-select: none;
   animation: fadeIn 0.2s ease-out;
+}
+
+.system-timestamp {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  cursor: default;
+  user-select: none;
+  flex-shrink: 0;
 }
 
 /* Message Bubbles */
@@ -630,12 +642,14 @@ html, body {
   align-self: flex-end;
   background: rgba(16, 185, 129, 0.12);
   border: 1px solid rgba(16, 185, 129, 0.25);
+  border-left: 3px solid var(--accent-emerald);
   border-bottom-right-radius: 4px;
   box-shadow: 0 4px 16px rgba(16, 185, 129, 0.08);
 }
 
 .message-outgoing .message-header {
-  justify-content: flex-end;
+  justify-content: flex-start;
+  gap: 6px;
 }
 
 .message-outgoing .message-sender {
@@ -679,6 +693,16 @@ html, body {
   flex-shrink: 0;
 }
 
+.self-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--accent-emerald);
+  box-shadow: 0 0 6px var(--accent-emerald);
+  display: inline-block;
+  flex-shrink: 0;
+}
+
 .peer-color-0 { --peer-color: #38bdf8; } /* cyan */
 .peer-color-1 { --peer-color: #fbbf24; } /* amber */
 .peer-color-2 { --peer-color: #a855f7; } /* purple */
@@ -696,6 +720,8 @@ html, body {
   color: var(--text-muted);
   font-size: 0.68rem;
   font-family: var(--font-mono);
+  cursor: default;
+  user-select: none;
 }
 
 .message-text {
@@ -902,10 +928,10 @@ html, body {
 .welcome-splash {
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  max-width: 680px;
+  gap: 12px;
+  max-width: 620px;
   margin: auto;
-  padding: 28px 24px;
+  padding: 20px;
   background: rgba(18, 24, 38, 0.65);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
