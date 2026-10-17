@@ -60,7 +60,6 @@ jobs:
           wasm-bindgen --target web --out-dir dist/pkg target/wasm32-unknown-unknown/release/zero_client.wasm
           cp zero_client/index.html dist/
           cp zero_client/style.css dist/
-          cp zero_client/test_harness.html dist/
 
       - name: Ensure Cloudflare Pages project exists
         run: npx wrangler pages project create zero-chat --production-branch=main || true

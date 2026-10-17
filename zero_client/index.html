@@ -41,11 +41,6 @@
             border: 1px solid rgba(56, 189, 248, 0.25);
             color: #bae6fd;
         }
-        .join-input-box {
-            display: flex;
-            gap: 6px;
-            flex: 1;
-        }
     </style>
 </head>
 <body>
@@ -62,10 +57,6 @@
                 <div class="header-controls">
                     <div id="peer-count" class="peer-count-badge">0 peers</div>
                     <div id="peer-list" class="peer-list"></div>
-                    <div id="connection-status-pill" class="status-pill status-disconnected">
-                        <span class="status-indicator-dot"></span>
-                        <span id="connection-status-label" class="status-label">Disconnected</span>
-                    </div>
                     <button id="destroy-session-button" class="btn btn-burn" type="button" title="Instantly wipes all DOM messages and memory">
                         <span>Burn Session</span>
                     </button>
@@ -74,22 +65,10 @@
 
             <!-- Room Creation / Invite Controls -->
             <section id="invite-section" class="invite-panel glass-panel">
-                <div class="invite-header">
-                    <span class="invite-title">Direct P2P Room</span>
-                    <span id="invite-subtitle" class="invite-desc">Create an ephemeral room or join with an invite link.</span>
-                </div>
                 <div class="invite-input-row" id="room-controls">
                     <button id="btn-create-room" class="btn-action" type="button">✨ Create Private Room</button>
-                    <button id="btn-toggle-join" class="btn btn-copy" type="button">🔗 Join with Link</button>
-
-                    <div id="join-input-group" class="join-input-box hidden">
-                        <input id="paste-invite-input" class="invite-input" type="text" placeholder="Paste invite link or code here..." />
-                        <button id="btn-submit-join" class="btn-action" type="button">Connect</button>
-                    </div>
-
                     <input id="invite-url-input" class="invite-input hidden" type="text" readonly placeholder="Generating invite link..." />
                     <button id="copy-invite-button" class="btn btn-copy hidden" type="button">Copy Link</button>
-                    <a href="test_harness.html" class="btn btn-copy" style="text-decoration:none; display:inline-flex; align-items:center;" target="_blank">Diagnostics</a>
                 </div>
                 <div id="copy-feedback" class="copy-feedback hidden">✓ Copied invite link to clipboard! Open in another window to test.</div>
             </section>
@@ -99,12 +78,7 @@
                 <span id="joiner-status-text">🔗 Invite detected! Autodropping SDP answer to signaling edge...</span>
             </div>
 
-            <main id="messages-container" class="messages-container">
-                <div class="security-alert-card" style="border-color: rgba(56, 189, 248, 0.3); background: rgba(56, 189, 248, 0.05);">
-                    <span class="alert-icon" style="color: var(--accent-cyan);">🔒 [ZERO PERSISTENCE]</span>
-                    <span class="alert-message" style="color: #cbd5e1;">All messages are end-to-end encrypted with ChaCha20-Poly1305 over WebRTC. No messages, rooms, or keys are ever stored on any server or in browser storage.</span>
-                </div>
-            </main>
+            <main id="messages-container" class="messages-container"></main>
 
             <footer class="chat-footer glass-panel">
                 <form id="message-form" class="message-form" onsubmit="return false;">
@@ -120,15 +94,9 @@
         const WORKER_WS_ORIGIN = "wss://network.zero-chat.workers.dev";
 
         // DOM elements
-        const statusPill = document.getElementById("connection-status-pill");
-        const statusLabel = document.getElementById("connection-status-label");
         const peerCountEl = document.getElementById("peer-count");
         const peerListEl = document.getElementById("peer-list");
         const btnCreateRoom = document.getElementById("btn-create-room");
-        const btnToggleJoin = document.getElementById("btn-toggle-join");
-        const joinInputGroup = document.getElementById("join-input-group");
-        const pasteInviteInput = document.getElementById("paste-invite-input");
-        const btnSubmitJoin = document.getElementById("btn-submit-join");
         const inviteInput = document.getElementById("invite-url-input");
         const btnCopyInvite = document.getElementById("copy-invite-button");
         const copyFeedback = document.getElementById("copy-feedback");
@@ -267,8 +235,7 @@
         }
 
         function updateStatus(status, text) {
-            statusPill.className = `status-pill status-${status}`;
-            statusLabel.textContent = text;
+            console.debug(`[Status] ${status}: ${text}`);
         }
 
         function appendMessageBubble(senderName, text, isSelf) {
@@ -310,9 +277,9 @@
         function initEngineListeners() {
             engine.onStateChangeCb = (st) => {
                 if (st === "open") {
-                    updateStatus("edge-severed", "P2P Direct (Edge Severed)");
+                    updateStatus("open", "P2P Established");
                     peerCountEl.textContent = "1 peer";
-                    peerListEl.innerHTML = `<span class="peer-pill">🟢 Peer Connected</span>`;
+                    peerListEl.innerHTML = `<span class="peer-pill">🟢 P2P Established</span>`;
                     msgInput.disabled = false;
                     sendBtn.disabled = false;
                     msgInput.focus();
@@ -323,9 +290,8 @@
                         hostWs = null;
                     }
                     if (joinerBanner) joinerBanner.classList.add("hidden");
-                    if (joinInputGroup) joinInputGroup.classList.add("hidden");
                 } else if (st === "closed") {
-                    updateStatus("disconnected", "Disconnected");
+                    updateStatus("closed", "Disconnected");
                     peerCountEl.textContent = "0 peers";
                     peerListEl.innerHTML = "";
                     msgInput.disabled = true;
@@ -344,8 +310,6 @@
         async function createRoomAsHost() {
             btnCreateRoom.disabled = true;
             btnCreateRoom.textContent = "Gathering ICE...";
-            btnToggleJoin.classList.add("hidden");
-            joinInputGroup.classList.add("hidden");
             updateStatus("signaling", "Gathering ICE & creating offer...");
 
             try {
@@ -407,7 +371,6 @@
                 alert("Room creation failed: " + err);
                 btnCreateRoom.disabled = false;
                 btnCreateRoom.textContent = "✨ Create Private Room";
-                btnToggleJoin.classList.remove("hidden");
                 updateStatus("disconnected", "Error creating room");
             }
         }
@@ -436,8 +399,6 @@
                 updateStatus("signaling", "Connecting as peer...");
 
                 btnCreateRoom.classList.add("hidden");
-                btnToggleJoin.classList.add("hidden");
-                joinInputGroup.classList.add("hidden");
 
                 const jsonStr = base64UrlToUtf8(rawPayload);
                 const invite = JSON.parse(jsonStr);
@@ -485,25 +446,6 @@
         // Event bindings
         btnCreateRoom.addEventListener("click", createRoomAsHost);
 
-        btnToggleJoin.addEventListener("click", () => {
-            btnCreateRoom.classList.add("hidden");
-            btnToggleJoin.classList.add("hidden");
-            joinInputGroup.classList.remove("hidden");
-            pasteInviteInput.focus();
-        });
-
-        btnSubmitJoin.addEventListener("click", () => {
-            const val = pasteInviteInput.value.trim();
-            if (val) joinRoomFromHash(val);
-        });
-
-        pasteInviteInput.addEventListener("keydown", (e) => {
-            if (e.key === "Enter") {
-                const val = pasteInviteInput.value.trim();
-                if (val) joinRoomFromHash(val);
-            }
-        });
-
         btnCopyInvite.addEventListener("click", async () => {
             await navigator.clipboard.writeText(inviteInput.value);
             copyFeedback.classList.remove("hidden");
@@ -544,8 +486,6 @@
             btnCreateRoom.classList.remove("hidden");
             btnCreateRoom.disabled = false;
             btnCreateRoom.textContent = "✨ Create Private Room";
-            btnToggleJoin.classList.remove("hidden");
-            joinInputGroup.classList.add("hidden");
             inviteInput.classList.add("hidden");
             btnCopyInvite.classList.add("hidden");
             history.replaceState(null, "", window.location.pathname);

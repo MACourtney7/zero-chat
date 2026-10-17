@@ -5,3 +5,4 @@ target/
 
 # Agentic Software Factory runtime
 .factory/
+dist/

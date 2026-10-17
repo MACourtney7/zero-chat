@@ -64,10 +64,9 @@ else
     cp "${CLIENT_WASM}" dist/pkg/zero_client_bg.wasm
 fi
 
-echo "--> Copying web assets (index.html, style.css, test_harness.html)..."
+echo "--> Copying web assets (index.html, style.css)..."
 cp zero_client/index.html dist/
 cp zero_client/style.css dist/
-cp zero_client/test_harness.html dist/
 
 # Step 5: Assert bundle integrity
 echo "--> Verifying assembled bundle integrity..."
