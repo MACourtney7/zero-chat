@@ -70,7 +70,7 @@
         <div class="chat-layout">
             <header class="chat-header glass-panel">
                 <div class="header-brand">
-                    <span class="brand-icon">0</span>
+                    <span class="brand-icon" id="peer-count">0</span>
                     <div class="brand-text">
                         <h1 class="brand-title">zero-chat.pages.dev</h1>
                         <span class="brand-tagline">SECURE P2P CHAT</span>
@@ -80,7 +80,6 @@
                     <div id="status-badge" class="status-pill status-disconnected">
                         <span class="status-indicator-dot"></span>
                     </div>
-                    <div id="peer-count" class="peer-count-badge">0</div>
                     <div id="peer-list" class="peer-list hidden"></div>
                     <button id="header-leave-btn" class="btn btn-leave btn-icon hidden" type="button" aria-label="Leave chat">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -108,35 +107,28 @@
 
             <main id="messages-container" class="messages-container">
                 <div id="welcome-splash" class="welcome-splash">
-                    <div class="welcome-header">
-                        <h2 class="welcome-title">Zero-Footprint Ephemeral Messaging</h2>
-                        <p class="welcome-subtitle">Direct browser-to-browser communication with cryptographic forward secrecy.</p>
-                    </div>
                     <div class="welcome-features">
                         <div class="feature-card">
                             <div class="feature-icon">⚡</div>
                             <div class="feature-content">
-                                <span class="feature-title">Direct P2P WebRTC</span>
-                                <p class="feature-desc">All messages flow directly between peers over encrypted DataChannels. Zero intermediate relays or storage servers.</p>
+                                <span class="feature-title">Direct P2P Connection</span>
+                                <p class="feature-desc">Zero intermediate relays or storage servers.</p>
                             </div>
                         </div>
                         <div class="feature-card">
                             <div class="feature-icon">🔒</div>
                             <div class="feature-content">
-                                <span class="feature-title">ChaCha20-Poly1305 AEAD</span>
-                                <p class="feature-desc">Hardware-accelerated authenticated symmetric cipher sealing every payload with unique nonces.</p>
+                                <span class="feature-title">Secure Communications</span>
+                                <p class="feature-desc">All messages are end-to-end encrypted.</p>
                             </div>
                         </div>
                         <div class="feature-card">
                             <div class="feature-icon">🛡️</div>
                             <div class="feature-content">
-                                <span class="feature-title">Zero Trace & Ephemeral</span>
-                                <p class="feature-desc">No accounts, no cookies, no storage. Closing the tab or burning the chat permanently incinerates all keys and history.</p>
+                                <span class="feature-title">Zero Trace</span>
+                                <p class="feature-desc">Ephemeral chats that burn when closed.</p>
                             </div>
                         </div>
-                    </div>
-                    <div class="welcome-prompt">
-                        <span>Click <strong>Create Private Chat</strong> below to start a chat, or open an invite link to join.</span>
                     </div>
                 </div>
             </main>
@@ -344,35 +336,28 @@
 
         const WELCOME_SPLASH_HTML = `
             <div id="welcome-splash" class="welcome-splash">
-                <div class="welcome-header">
-                    <h2 class="welcome-title">Zero-Footprint Ephemeral Messaging</h2>
-                    <p class="welcome-subtitle">Direct browser-to-browser communication with cryptographic forward secrecy.</p>
-                </div>
                 <div class="welcome-features">
                     <div class="feature-card">
                         <div class="feature-icon">⚡</div>
                         <div class="feature-content">
-                            <span class="feature-title">Direct P2P WebRTC</span>
-                            <p class="feature-desc">All messages flow directly between peers over encrypted DataChannels. Zero intermediate relays or storage servers.</p>
+                            <span class="feature-title">Direct P2P Connection</span>
+                            <p class="feature-desc">Zero intermediate relays or storage servers.</p>
                         </div>
                     </div>
                     <div class="feature-card">
                         <div class="feature-icon">🔒</div>
                         <div class="feature-content">
-                            <span class="feature-title">ChaCha20-Poly1305 AEAD</span>
-                            <p class="feature-desc">Hardware-accelerated authenticated symmetric cipher sealing every payload with unique nonces.</p>
+                            <span class="feature-title">Secure Communications</span>
+                            <p class="feature-desc">All messages are end-to-end encrypted.</p>
                         </div>
                     </div>
                     <div class="feature-card">
                         <div class="feature-icon">🛡️</div>
                         <div class="feature-content">
-                            <span class="feature-title">Zero Trace & Ephemeral</span>
-                            <p class="feature-desc">No accounts, no cookies, no storage. Closing the tab or burning the chat permanently incinerates all keys and history.</p>
+                            <span class="feature-title">Zero Trace</span>
+                            <p class="feature-desc">Ephemeral chats that burn when closed.</p>
                         </div>
                     </div>
-                </div>
-                <div class="welcome-prompt">
-                    <span>Click <strong>Create Private Chat</strong> below to start a chat, or open an invite link to join.</span>
                 </div>
             </div>`;
 
@@ -384,7 +369,6 @@
         }
 
         function showWelcomeSplash() {
-            if (isBurned) return;
             if (feed.querySelectorAll(".message-bubble, .system-message, .security-alert-card").length > 0) {
                 return;
             }
@@ -436,6 +420,10 @@
                 peerDot.className = "peer-dot";
                 peerDot.style.backgroundColor = peerColor;
                 header.appendChild(peerDot);
+            } else {
+                const selfDot = document.createElement("span");
+                selfDot.className = "peer-dot self-dot";
+                header.appendChild(selfDot);
             }
 
             header.appendChild(time);
@@ -444,22 +432,31 @@
             body.className = "message-text";
             body.textContent = text;
 
-            const badge = document.createElement("div");
-            badge.className = "security-badge verified";
-            badge.textContent = "🔒 ChaCha20-Poly1305 Verified";
-
             bubble.appendChild(header);
             bubble.appendChild(body);
-            bubble.appendChild(badge);
 
             feed.appendChild(bubble);
             feed.scrollTop = feed.scrollHeight;
         }
 
         function appendSystemMessage(text) {
+            hideWelcomeSplash();
             const el = document.createElement("div");
             el.className = "system-message";
-            el.textContent = text;
+
+            const now = new Date();
+            const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+            const timeSpan = document.createElement("span");
+            timeSpan.className = "system-timestamp";
+            timeSpan.textContent = timeStr;
+            el.appendChild(timeSpan);
+
+            const textSpan = document.createElement("span");
+            textSpan.className = "system-text";
+            textSpan.textContent = text;
+            el.appendChild(textSpan);
+
             feed.appendChild(el);
             feed.scrollTop = feed.scrollHeight;
         }
@@ -478,7 +475,6 @@
                     updateStatus("open", "P2P Established");
                     if (statusBadge) statusBadge.classList.add("hidden");
                     if (peerCountEl) {
-                        peerCountEl.classList.remove("hidden");
                         peerCountEl.textContent = "1";
                     }
                     if (peerListEl) {
@@ -552,6 +548,7 @@
         async function createRoomAsHost() {
             isBurned = false;
             isJoining = false;
+            hideWelcomeSplash();
             btnCreateRoom.disabled = true;
             updateStatus("signaling", "Gathering ICE & creating offer...");
 
@@ -726,23 +723,23 @@
             if (e.key === "Enter") doSendMessage();
         });
 
-        if (headerLeaveBtn) {
-            headerLeaveBtn.addEventListener("click", () => burnBtn.click());
-        }
-
-        burnBtn.addEventListener("click", () => {
-            isBurned = true;
+        function resetToHome() {
             hasActiveSession = false;
-            peerColorMap.clear();
-            if (engine) engine.close();
-            if (hostWs) hostWs.close();
+            isBurned = false;
             isJoining = false;
-            hideWelcomeSplash();
-            feed.innerHTML = `
-                <div class="security-alert-card burn-banner-centered">
-                    <span class="alert-icon">SESSION BURNED</span>
-                </div>`;
-            updateStatus("disconnected", "Destroyed");
+            peerColorMap.clear();
+            if (engine) {
+                engine.onStateChangeCb = null;
+                engine.close();
+                engine = null;
+            }
+            if (hostWs) {
+                try { hostWs.close(); } catch (_) {}
+                hostWs = null;
+            }
+            feed.innerHTML = "";
+            showWelcomeSplash();
+            updateStatus("disconnected", "Disconnected");
             if (statusBadge) {
                 statusBadge.classList.remove("hidden");
                 statusBadge.className = "status-pill status-disconnected";
@@ -759,13 +756,22 @@
             if (burnRoomBar) burnRoomBar.classList.add("hidden");
             if (messageForm) messageForm.classList.add("hidden");
             if (inviteBar) inviteBar.classList.add("hidden");
+            if (joinerBanner) joinerBanner.classList.add("hidden");
             if (createRoomBar) {
                 createRoomBar.classList.remove("hidden");
                 btnCreateRoom.disabled = false;
                 btnCreateRoom.innerHTML = CREATE_ROOM_ICON_HTML;
             }
+            msgInput.disabled = true;
+            sendBtn.disabled = true;
             history.replaceState(null, "", window.location.pathname);
-        });
+        }
+
+        if (headerLeaveBtn) {
+            headerLeaveBtn.addEventListener("click", resetToHome);
+        }
+
+        burnBtn.addEventListener("click", resetToHome);
 
         // 1. Auto-detect invite hash on initial page load (e.g. opening link in new tab)
         if (window.location.hash && window.location.hash.includes("payload=")) {
