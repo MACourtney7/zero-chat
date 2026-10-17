@@ -157,10 +157,14 @@ html, body {
   max-width: 320px;
 }
 
-.peer-count-badge {
+.peer-count-badge,
+#peer-count {
   display: inline-flex;
   align-items: center;
-  padding: 4px 10px;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 8px;
   border-radius: 9999px;
   font-size: 0.72rem;
   font-weight: 600;
@@ -172,16 +176,16 @@ html, body {
   -webkit-user-select: none;
   cursor: default;
   white-space: nowrap;
+  box-sizing: border-box;
 }
 
 .peer-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
+  justify-content: center;
+  height: 26px;
+  padding: 0 8px;
   border-radius: 9999px;
-  font-size: 0.72rem;
-  font-weight: 600;
   background: rgba(56, 189, 248, 0.1);
   border: 1px solid rgba(56, 189, 248, 0.25);
   color: var(--accent-cyan);
@@ -190,11 +194,12 @@ html, body {
   -webkit-user-select: none;
   cursor: default;
   white-space: nowrap;
+  box-sizing: border-box;
 }
 
 .peer-lock-icon {
-  width: 12px;
-  height: 12px;
+  width: 13px;
+  height: 13px;
   stroke: var(--accent-cyan);
   display: inline-block;
   flex-shrink: 0;
@@ -205,19 +210,24 @@ html, body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 4px 12px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
   border-radius: 9999px;
-  font-size: 0.72rem;
-  font-weight: 600;
   background: rgba(244, 63, 94, 0.12);
   border: 1px solid rgba(244, 63, 94, 0.32);
   color: #fda4af;
-  font-family: var(--font-mono);
   cursor: pointer;
   transition: all 0.2s ease;
-  white-space: nowrap;
   user-select: none;
   -webkit-user-select: none;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.btn-leave svg,
+#header-leave-btn svg {
+  display: block;
 }
 
 .btn-leave:hover,
@@ -247,16 +257,18 @@ html, body {
 }
 
 /* Status Pill with Pulsing Dot Indicator */
+#status-badge,
 .status-pill {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 14px;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
   border-radius: 9999px;
-  font-size: 0.78rem;
-  font-weight: 500;
   transition: all 0.3s ease;
   user-select: none;
+  flex-shrink: 0;
 }
 
 .status-indicator-dot {
@@ -279,13 +291,13 @@ html, body {
 
 /* Status Classes */
 .status-disconnected {
-  background: rgba(100, 116, 139, 0.12);
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  color: #94a3b8;
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  color: var(--accent-cyan);
 }
 .status-disconnected .status-indicator-dot {
   background-color: #64748b;
-  box-shadow: 0 0 6px #64748b;
+  box-shadow: 0 0 6px rgba(100, 116, 139, 0.6);
   animation: none;
 }
 
@@ -438,13 +450,21 @@ html, body {
   animation: slideDown 0.25s ease-out;
 }
 
-.btn-burn-full {
+.btn-burn-full,
+#destroy-session-button {
   width: 100%;
   padding: 10px 16px;
   font-size: 0.85rem;
   font-weight: 600;
   text-align: center;
+  display: flex;
+  align-items: center;
   justify-content: center;
+}
+
+.btn-burn-full svg,
+#destroy-session-button svg {
+  display: block;
 }
 
 .create-room-bar {
@@ -452,12 +472,19 @@ html, body {
   display: flex;
 }
 
-.btn-action-full {
+.btn-action-full,
+#btn-create-room {
   width: 100%;
-  text-align: center;
+  display: flex;
+  align-items: center;
   justify-content: center;
   padding: 12px 20px;
   font-size: 0.9rem;
+}
+
+.btn-action-full svg,
+#btn-create-room svg {
+  display: block;
 }
 
 .btn-emerald {
