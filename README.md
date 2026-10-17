@@ -132,8 +132,8 @@ Validate client packaging and Worker build configurations locally:
 
 Deployments are fully automated via GitHub Actions on push to `main`:
 
-1. **Signaling Worker (`zero_network`)**:
-   Deploys to **Cloudflare Workers** with the `DeadDropRoom` SQLite Durable Object binding.
+1. **Signaling Worker (`network`)**:
+   Deploys to **Cloudflare Workers** (`https://network.zero-chat.workers.dev`) with the `DeadDropRoom` SQLite Durable Object binding.
 2. **Web Client (`zero_client`)**:
    Compiles Rust to WebAssembly and deploys the static assets (`index.html`, `style.css`, `.wasm`, `.js`) to **Cloudflare Pages** (`zero-chat.pages.dev`).
 
