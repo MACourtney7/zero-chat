@@ -69,7 +69,7 @@ zero_chat/
 │   │   ├── serverless-p2p-chat.md
 │   │   └── archive/
 │   └── changes/                    # Task specifications
-│       └── archive/                # Archived change proposals (ticket-001..015)
+│       └── archive/                # Archived change proposals (ticket-001..016)
 ├── tests/                          # Root integration test suites
 │   ├── e2e_handshake.rs            # Full loopback handshake & chat roundtrip
 │   └── mesh_simulation_test.rs     # 3+ peer in-band mesh simulation suite
@@ -110,13 +110,12 @@ zero_chat/
 
 ### 3.5 Ephemeral Chat UI (`zero_client::ui`, `style.css`)
 - Glassmorphic dark-mode interface with translucent panels (`backdrop-filter: blur(16px)`), pulsing connection badges, and responsive layouts.
-- Dynamic connection status pill:
-  - `status-disconnected`: Neutral Slate (`Disconnected`)
-  - `status-signaling`: Amber Pulse (`Signaling...`)
-  - `status-connected`: Emerald Green (`P2P Connected (WebRTC)`)
-  - `status-edge-severed`: Sapphire Blue (`P2P Direct (Edge Severed)`)
-- Live security tags (`🔒 ChaCha20-Poly1305 Verified` or `⚠️ Unverified Tag`) and high-visibility security alert cards for dropped tampered packets.
-- **Burn Session**: "Burn Session" button and tab closure invoke `destroy_session()`, wiping all DOM chat feeds, clearing internal memory buffers, and asserting empty storage.
+- Domain URL branding in top-bar header and `<title>` (`zero-chat.pages.dev`) with embedded SVG favicon matching the brand icon.
+- Merged peer counter badge integrated directly into the top-left "0" brand icon (`id="peer-count"`), updating dynamically from 0 to active peer counts.
+- Dynamic connection status pill with pulsing indicator dot and minimalist icon-only controls for Room Creation, Copying Invites, Sending Messages, Leaving, and Session Burning with native hover tooltips suppressed.
+- Unified chat bubble styling across incoming and outgoing messages with left accent borders (emerald for self, cyan/palette for peers), `[dot] [timestamp]` header layout with regular arrow cursor, and clean message bodies without bulky verification footers.
+- Left-aligned system messages with monospace timestamps (`[HH:MM]`).
+- Minimalist 3-card welcome splash (`Direct P2P Connection`, `Secure Communications`, `Zero Trace`) displayed strictly when the chat is empty; session burn and leave return the user cleanly to this home view.
 
 ### 3.6 Decentralized In-Band Gossip Mesh (`zero_client::mesh`, `envelope`)
 - **Opaque Bridge Relay (REQ-006.1)**: Room host acts as an in-band signaling bridge between existing peers (`Channel_AB`, `Channel_AC`). Relay frames (`RelaySdpOffer`, `RelaySdpAnswer`) contain end-to-end sealed payloads; relay nodes forward them verbatim without inspection.

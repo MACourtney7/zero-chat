@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-016"
 title: "UI Tweaks: Merged Peers Counter, Home Splash Reset, System Message Timestamps, Minimalist Splash Card, and Unified Chat Bubble Styling"
-state: "IN_PROGRESS"
+state: "COMPLETED"
 roadmap: "serverless-p2p-chat"
 depends_on: ["ticket-015"]
 created_at: "2026-10-17T22:55:00Z"
@@ -63,20 +63,20 @@ The objective of this task is to implement all of these visual, functional, and 
   - Cryptographic packet sealing in `zero_protocol`.
 
 ## 3. Requirements & Acceptance Criteria
-- [ ] **REQ-016.1 (Merged Top-Bar Brand Peer Counter)**: The peer counter must be merged into the "0" icon on the left of the top bar (`.brand-icon`), initializing at `0` and updating dynamically to reflect active peer count (`1`, etc.). The separate peer count badge on the right side of `.header-controls` must be removed.
-- [ ] **REQ-016.2 (Session Burn & Leave Home Reset)**: The red `SESSION BURNED` banner card must be removed. Clicking the Burn Chat button (`#destroy-session-button`) or Leave button (`#header-leave-btn`) must completely clear the chat feed, reset session state, and return the user to the home view with the clean welcome splash card displayed.
-- [ ] **REQ-016.3 (Home-Only Splash Visibility Guard)**: The welcome splash card must be immediately hidden when a room is created (`createRoomAsHost`) and whenever any message or system notification exists in the feed. The splash card must only be visible when the chat feed is completely empty on the idle home view.
-- [ ] **REQ-016.4 (Left-Aligned System Messages with Timestamps)**: System messages (`.system-message`) must be left-aligned (`align-self: flex-start; text-align: left;`) and must display a timestamp to the left of the text (e.g. `12:34 Secure chat created`).
-- [ ] **REQ-016.5 (Clean Splash Header & Prompt Stripping)**: In both `index.html` static markup and `WELCOME_SPLASH_HTML` JavaScript template, the header title `"Zero-Footprint Ephemeral Messaging"`, subtitle `"Direct browser-to-browser communication with cryptographic forward secrecy."`, and the bottom prompt container (`.welcome-prompt`) must be completely removed.
-- [ ] **REQ-016.6 (Updated Minimalist Feature Card Copy)**: The three feature cards in the splash message (in both static HTML and `WELCOME_SPLASH_HTML`) must be updated to:
+- [x] **REQ-016.1 (Merged Top-Bar Brand Peer Counter)**: The peer counter must be merged into the "0" icon on the left of the top bar (`.brand-icon`), initializing at `0` and updating dynamically to reflect active peer count (`1`, etc.). The separate peer count badge on the right side of `.header-controls` must be removed.
+- [x] **REQ-016.2 (Session Burn & Leave Home Reset)**: The red `SESSION BURNED` banner card must be removed. Clicking the Burn Chat button (`#destroy-session-button`) or Leave button (`#header-leave-btn`) must completely clear the chat feed, reset session state, and return the user to the home view with the clean welcome splash card displayed.
+- [x] **REQ-016.3 (Home-Only Splash Visibility Guard)**: The welcome splash card must be immediately hidden when a room is created (`createRoomAsHost`) and whenever any message or system notification exists in the feed. The splash card must only be visible when the chat feed is completely empty on the idle home view.
+- [x] **REQ-016.4 (Left-Aligned System Messages with Timestamps)**: System messages (`.system-message`) must be left-aligned (`align-self: flex-start; text-align: left;`) and must display a timestamp to the left of the text (e.g. `12:34 Secure chat created`).
+- [x] **REQ-016.5 (Clean Splash Header & Prompt Stripping)**: In both `index.html` static markup and `WELCOME_SPLASH_HTML` JavaScript template, the header title `"Zero-Footprint Ephemeral Messaging"`, subtitle `"Direct browser-to-browser communication with cryptographic forward secrecy."`, and the bottom prompt container (`.welcome-prompt`) must be completely removed.
+- [x] **REQ-016.6 (Updated Minimalist Feature Card Copy)**: The three feature cards in the splash message (in both static HTML and `WELCOME_SPLASH_HTML`) must be updated to:
   - Card 1: Title `"Direct P2P Connection"`, description `"Zero intermediate relays or storage servers."`
   - Card 2: Title `"Secure Communications"`, description `"All messages are end-to-end encrypted."`
   - Card 3: Title `"Zero Trace"`, description `"Ephemeral chats that burn when closed."`
-- [ ] **REQ-016.7 (Unified User Bubble Header & Dot)**: User (outgoing) chat bubbles must have their timestamp left-aligned (`justify-content: flex-start;`) and preceded by an emerald dot icon on the top-left, matching the layout of peer bubbles (`[green dot] [timestamp]`).
-- [ ] **REQ-016.8 (Green Accent Border on User Bubble)**: User (outgoing) chat bubbles must feature a 3px emerald accent border along the left edge (`border-left: 3px solid var(--accent-emerald);`), matching the accent line style of peer bubbles.
-- [ ] **REQ-016.9 (Removal of Padlock Verification Badges)**: The padlock icon and verification text (`.security-badge` / `"🔒 ChaCha20-Poly1305 Verified"`) must be removed from the bottom of all chat bubbles.
-- [ ] **REQ-016.10 (Regular Arrow Cursor on Timestamps)**: Hovering over chat bubble timestamps (`.message-timestamp` and `.system-timestamp`) must show the standard arrow cursor (`cursor: default; user-select: none;`) instead of an I-beam text selection cursor.
-- [ ] **REQ-016.11 (Test Suite & Non-Regression Integrity)**: All 86 workspace unit and integration tests (`cargo test --workspace`) must pass cleanly.
+- [x] **REQ-016.7 (Unified User Bubble Header & Dot)**: User (outgoing) chat bubbles must have their timestamp left-aligned (`justify-content: flex-start;`) and preceded by an emerald dot icon on the top-left, matching the layout of peer bubbles (`[green dot] [timestamp]`).
+- [x] **REQ-016.8 (Green Accent Border on User Bubble)**: User (outgoing) chat bubbles must feature a 3px emerald accent border along the left edge (`border-left: 3px solid var(--accent-emerald);`), matching the accent line style of peer bubbles.
+- [x] **REQ-016.9 (Removal of Padlock Verification Badges)**: The padlock icon and verification text (`.security-badge` / `"🔒 ChaCha20-Poly1305 Verified"`) must be removed from the bottom of all chat bubbles.
+- [x] **REQ-016.10 (Regular Arrow Cursor on Timestamps)**: Hovering over chat bubble timestamps (`.message-timestamp` and `.system-timestamp`) must show the standard arrow cursor (`cursor: default; user-select: none;`) instead of an I-beam text selection cursor.
+- [x] **REQ-016.11 (Test Suite & Non-Regression Integrity)**: All 86 workspace unit and integration tests (`cargo test --workspace`) must pass cleanly.
 
 ## 4. Architectural Design & Impacted Modules
 - `zero_client/index.html`:
