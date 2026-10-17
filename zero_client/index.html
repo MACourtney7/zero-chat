@@ -41,6 +41,11 @@
             border: 1px solid rgba(56, 189, 248, 0.25);
             color: #bae6fd;
         }
+        .join-input-box {
+            display: flex;
+            gap: 6px;
+            flex: 1;
+        }
     </style>
 </head>
 <body>
@@ -71,10 +76,17 @@
             <section id="invite-section" class="invite-panel glass-panel">
                 <div class="invite-header">
                     <span class="invite-title">Direct P2P Room</span>
-                    <span id="invite-subtitle" class="invite-desc">Create an ephemeral room or share your direct link.</span>
+                    <span id="invite-subtitle" class="invite-desc">Create an ephemeral room or join with an invite link.</span>
                 </div>
                 <div class="invite-input-row" id="room-controls">
                     <button id="btn-create-room" class="btn-action" type="button">✨ Create Private Room</button>
+                    <button id="btn-toggle-join" class="btn btn-copy" type="button">🔗 Join with Link</button>
+
+                    <div id="join-input-group" class="join-input-box hidden">
+                        <input id="paste-invite-input" class="invite-input" type="text" placeholder="Paste invite link or code here..." />
+                        <button id="btn-submit-join" class="btn-action" type="button">Connect</button>
+                    </div>
+
                     <input id="invite-url-input" class="invite-input hidden" type="text" readonly placeholder="Generating invite link..." />
                     <button id="copy-invite-button" class="btn btn-copy hidden" type="button">Copy Link</button>
                     <a href="test_harness.html" class="btn btn-copy" style="text-decoration:none; display:inline-flex; align-items:center;" target="_blank">Diagnostics</a>
@@ -113,6 +125,10 @@
         const peerCountEl = document.getElementById("peer-count");
         const peerListEl = document.getElementById("peer-list");
         const btnCreateRoom = document.getElementById("btn-create-room");
+        const btnToggleJoin = document.getElementById("btn-toggle-join");
+        const joinInputGroup = document.getElementById("join-input-group");
+        const pasteInviteInput = document.getElementById("paste-invite-input");
+        const btnSubmitJoin = document.getElementById("btn-submit-join");
         const inviteInput = document.getElementById("invite-url-input");
         const btnCopyInvite = document.getElementById("copy-invite-button");
         const copyFeedback = document.getElementById("copy-feedback");
@@ -289,6 +305,7 @@
 
         let engine = null;
         let hostWs = null;
+        let isJoining = false;
 
         function initEngineListeners() {
             engine.onStateChangeCb = (st) => {
@@ -306,6 +323,7 @@
                         hostWs = null;
                     }
                     if (joinerBanner) joinerBanner.classList.add("hidden");
+                    if (joinInputGroup) joinInputGroup.classList.add("hidden");
                 } else if (st === "closed") {
                     updateStatus("disconnected", "Disconnected");
                     peerCountEl.textContent = "0 peers";
@@ -326,6 +344,8 @@
         async function createRoomAsHost() {
             btnCreateRoom.disabled = true;
             btnCreateRoom.textContent = "Gathering ICE...";
+            btnToggleJoin.classList.add("hidden");
+            joinInputGroup.classList.add("hidden");
             updateStatus("signaling", "Gathering ICE & creating offer...");
 
             try {
@@ -387,6 +407,7 @@
                 alert("Room creation failed: " + err);
                 btnCreateRoom.disabled = false;
                 btnCreateRoom.textContent = "✨ Create Private Room";
+                btnToggleJoin.classList.remove("hidden");
                 updateStatus("disconnected", "Error creating room");
             }
         }
@@ -394,19 +415,29 @@
         // =========================================================================
         // JOINER WORKFLOW: Detect #payload=..., generate answer, drop answer via POST
         // =========================================================================
-        async function joinRoomFromHash(hash) {
+        async function joinRoomFromHash(hashOrUrl) {
+            if (isJoining) return;
+            if (!hashOrUrl) return;
+
             try {
                 let rawPayload = null;
-                const match = hash.match(/payload=([^&]+)/);
-                if (match) rawPayload = match[1];
+                const match = hashOrUrl.match(/payload=([^&]+)/);
+                if (match) {
+                    rawPayload = match[1];
+                } else if (!hashOrUrl.includes("=") && hashOrUrl.length > 50) {
+                    rawPayload = hashOrUrl.trim().replace(/^#/, "");
+                }
 
                 if (!rawPayload) return;
 
+                isJoining = true;
                 joinerBanner.classList.remove("hidden");
                 joinerStatusText.textContent = "Found Room Invite! Accepting offer and generating answer...";
                 updateStatus("signaling", "Connecting as peer...");
 
                 btnCreateRoom.classList.add("hidden");
+                btnToggleJoin.classList.add("hidden");
+                joinInputGroup.classList.add("hidden");
 
                 const jsonStr = base64UrlToUtf8(rawPayload);
                 const invite = JSON.parse(jsonStr);
@@ -444,6 +475,7 @@
                 // Strip hash from URL for privacy and zero forensic trace
                 history.replaceState(null, "", window.location.pathname);
             } catch (err) {
+                isJoining = false;
                 console.error("Joiner failed:", err);
                 joinerStatusText.textContent = "Connection error: " + err.message;
                 updateStatus("disconnected", "Join failed");
@@ -452,6 +484,25 @@
 
         // Event bindings
         btnCreateRoom.addEventListener("click", createRoomAsHost);
+
+        btnToggleJoin.addEventListener("click", () => {
+            btnCreateRoom.classList.add("hidden");
+            btnToggleJoin.classList.add("hidden");
+            joinInputGroup.classList.remove("hidden");
+            pasteInviteInput.focus();
+        });
+
+        btnSubmitJoin.addEventListener("click", () => {
+            const val = pasteInviteInput.value.trim();
+            if (val) joinRoomFromHash(val);
+        });
+
+        pasteInviteInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                const val = pasteInviteInput.value.trim();
+                if (val) joinRoomFromHash(val);
+            }
+        });
 
         btnCopyInvite.addEventListener("click", async () => {
             await navigator.clipboard.writeText(inviteInput.value);
@@ -479,6 +530,7 @@
         burnBtn.addEventListener("click", () => {
             if (engine) engine.close();
             if (hostWs) hostWs.close();
+            isJoining = false;
             feed.innerHTML = `
                 <div class="security-alert-card" style="border-color: rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.08);">
                     <span class="alert-icon" style="color: var(--accent-rose);">🔥 [SESSION BURNED]</span>
@@ -492,15 +544,24 @@
             btnCreateRoom.classList.remove("hidden");
             btnCreateRoom.disabled = false;
             btnCreateRoom.textContent = "✨ Create Private Room";
+            btnToggleJoin.classList.remove("hidden");
+            joinInputGroup.classList.add("hidden");
             inviteInput.classList.add("hidden");
             btnCopyInvite.classList.add("hidden");
             history.replaceState(null, "", window.location.pathname);
         });
 
-        // Auto-detect invite hash on initial load
+        // 1. Auto-detect invite hash on initial page load (e.g. opening link in new tab)
         if (window.location.hash && window.location.hash.includes("payload=")) {
             joinRoomFromHash(window.location.hash);
         }
+
+        // 2. Auto-detect invite hash if user pastes URL into address bar of already-opened window
+        window.addEventListener("hashchange", () => {
+            if (window.location.hash && window.location.hash.includes("payload=")) {
+                joinRoomFromHash(window.location.hash);
+            }
+        });
     </script>
 </body>
 </html>
