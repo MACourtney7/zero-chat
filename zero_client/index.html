@@ -41,6 +41,27 @@
             border: 1px solid rgba(56, 189, 248, 0.25);
             color: #bae6fd;
         }
+        .btn-action-full {
+            width: 100%;
+            padding: 12px 20px;
+            font-size: 0.9rem;
+            text-align: center;
+        }
+        .create-room-bar {
+            width: 100%;
+            display: flex;
+        }
+        .burn-room-bar {
+            width: 100%;
+            margin-bottom: 8px;
+        }
+        .btn-burn-full {
+            width: 100%;
+            padding: 10px 16px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -55,20 +76,27 @@
                     </div>
                 </div>
                 <div class="header-controls">
-                    <div id="peer-count" class="peer-count-badge">0 peers</div>
-                    <div id="peer-list" class="peer-list"></div>
-                    <button id="destroy-session-button" class="btn btn-burn" type="button" title="Instantly wipes all DOM messages and memory">
-                        <span>Burn Session</span>
-                    </button>
+                    <div id="status-badge" class="status-pill status-disconnected">
+                        <span class="status-indicator-dot"></span>
+                        <span id="status-badge-text" class="status-label">Disconnected</span>
+                    </div>
+                    <div id="peer-count" class="peer-count-badge hidden">0 peers</div>
+                    <div id="peer-list" class="peer-list hidden"></div>
                 </div>
             </header>
 
+            <!-- Full-width Burn Room control underneath header (active chat only) -->
+            <div id="burn-room-bar" class="burn-room-bar hidden">
+                <button id="destroy-session-button" class="btn btn-burn btn-burn-full" type="button" title="Instantly wipes all DOM messages and memory">
+                    <span>Burn Room</span>
+                </button>
+            </div>
+
             <!-- Room Creation / Invite Controls -->
-            <section id="invite-section" class="invite-panel glass-panel">
+            <section id="invite-section" class="invite-panel glass-panel hidden">
                 <div class="invite-input-row" id="room-controls">
-                    <button id="btn-create-room" class="btn-action" type="button">✨ Create Private Room</button>
-                    <input id="invite-url-input" class="invite-input hidden" type="text" readonly placeholder="Generating invite link..." />
-                    <button id="copy-invite-button" class="btn btn-copy btn-icon hidden" type="button" title="Copy Invite Link" aria-label="Copy Invite Link">
+                    <input id="invite-url-input" class="invite-input" type="text" readonly placeholder="Generating invite link..." />
+                    <button id="copy-invite-button" class="btn btn-copy btn-icon" type="button" title="Copy Invite Link" aria-label="Copy Invite Link">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
@@ -85,7 +113,13 @@
             <main id="messages-container" class="messages-container"></main>
 
             <footer class="chat-footer glass-panel">
-                <form id="message-form" class="message-form" onsubmit="return false;">
+                <!-- Full-width Create Private Room bar when disconnected -->
+                <div id="create-room-bar" class="create-room-bar">
+                    <button id="btn-create-room" class="btn-action btn-action-full" type="button">✨ Create Private Room</button>
+                </div>
+
+                <!-- Chat text input bar when in active chat -->
+                <form id="message-form" class="message-form hidden" onsubmit="return false;">
                     <input id="message-input" class="message-input" type="text" placeholder="Type an encrypted message..." autocomplete="off" disabled />
                     <button id="send-button" class="btn btn-send" type="button" disabled>Send</button>
                 </form>
@@ -99,16 +133,21 @@
 
         // DOM elements
         const inviteSection = document.getElementById("invite-section");
+        const statusBadge = document.getElementById("status-badge");
+        const statusBadgeText = document.getElementById("status-badge-text");
         const peerCountEl = document.getElementById("peer-count");
         const peerListEl = document.getElementById("peer-list");
+        const createRoomBar = document.getElementById("create-room-bar");
         const btnCreateRoom = document.getElementById("btn-create-room");
         const inviteInput = document.getElementById("invite-url-input");
         const btnCopyInvite = document.getElementById("copy-invite-button");
         const joinerBanner = document.getElementById("joiner-banner");
         const joinerStatusText = document.getElementById("joiner-status-text");
         const feed = document.getElementById("messages-container");
+        const messageForm = document.getElementById("message-form");
         const msgInput = document.getElementById("message-input");
         const sendBtn = document.getElementById("send-button");
+        const burnRoomBar = document.getElementById("burn-room-bar");
         const burnBtn = document.getElementById("destroy-session-button");
 
         // WebRTC Engine (Browser native WebRTC with bundled candidate gathering)
@@ -240,6 +279,7 @@
 
         function updateStatus(status, text) {
             console.debug(`[Status] ${status}: ${text}`);
+            if (statusBadgeText) statusBadgeText.textContent = text;
         }
 
         function appendMessageBubble(senderName, text, isSelf) {
@@ -291,8 +331,18 @@
             engine.onStateChangeCb = (st) => {
                 if (st === "open") {
                     updateStatus("open", "P2P Established");
-                    peerCountEl.textContent = "1 peer";
-                    peerListEl.innerHTML = `<span class="peer-pill">🟢 P2P Established</span>`;
+                    if (statusBadge) statusBadge.classList.add("hidden");
+                    if (peerCountEl) {
+                        peerCountEl.classList.remove("hidden");
+                        peerCountEl.textContent = "1 peer";
+                    }
+                    if (peerListEl) {
+                        peerListEl.classList.remove("hidden");
+                        peerListEl.innerHTML = `<span class="peer-pill">🟢 P2P Established</span>`;
+                    }
+                    if (burnRoomBar) burnRoomBar.classList.remove("hidden");
+                    if (createRoomBar) createRoomBar.classList.add("hidden");
+                    if (messageForm) messageForm.classList.remove("hidden");
                     msgInput.disabled = false;
                     sendBtn.disabled = false;
                     msgInput.focus();
@@ -312,8 +362,26 @@
                     }
                 } else if (st === "closed") {
                     updateStatus("closed", "Disconnected");
-                    peerCountEl.textContent = "0 peers";
-                    peerListEl.innerHTML = "";
+                    if (statusBadge) {
+                        statusBadge.classList.remove("hidden");
+                        statusBadge.className = "status-pill status-disconnected";
+                        if (statusBadgeText) statusBadgeText.textContent = "Disconnected";
+                    }
+                    if (peerCountEl) {
+                        peerCountEl.classList.add("hidden");
+                        peerCountEl.textContent = "0 peers";
+                    }
+                    if (peerListEl) {
+                        peerListEl.classList.add("hidden");
+                        peerListEl.innerHTML = "";
+                    }
+                    if (burnRoomBar) burnRoomBar.classList.add("hidden");
+                    if (messageForm) messageForm.classList.add("hidden");
+                    if (createRoomBar) {
+                        createRoomBar.classList.remove("hidden");
+                        btnCreateRoom.disabled = false;
+                        btnCreateRoom.textContent = "✨ Create Private Room";
+                    }
                     msgInput.disabled = true;
                     sendBtn.disabled = true;
                     if (!isBurned) {
@@ -385,7 +453,9 @@
                 hostWs.onerror = (e) => console.warn("Signaling socket error:", e);
 
                 // Show copyable invite controls
-                btnCreateRoom.classList.add("hidden");
+                if (inviteSection) inviteSection.classList.remove("hidden");
+                btnCreateRoom.disabled = true;
+                btnCreateRoom.textContent = "Awaiting Peer...";
                 inviteInput.value = inviteUrl;
                 inviteInput.classList.remove("hidden");
                 btnCopyInvite.classList.remove("hidden");
@@ -394,7 +464,7 @@
             } catch (err) {
                 console.error("Room creation failed:", err);
                 alert("Room creation failed: " + err);
-                if (inviteSection) inviteSection.classList.remove("hidden");
+                if (inviteSection) inviteSection.classList.add("hidden");
                 btnCreateRoom.disabled = false;
                 btnCreateRoom.textContent = "✨ Create Private Room";
                 updateStatus("disconnected", "Error creating room");
@@ -426,7 +496,7 @@
                 updateStatus("signaling", "Connecting as peer...");
 
                 if (inviteSection) inviteSection.classList.add("hidden");
-                btnCreateRoom.classList.add("hidden");
+                if (createRoomBar) createRoomBar.classList.add("hidden");
 
                 const jsonStr = base64UrlToUtf8(rawPayload);
                 const invite = JSON.parse(jsonStr);
@@ -514,24 +584,31 @@
             feed.innerHTML = `
                 <div class="security-alert-card" style="border-color: rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.08);">
                     <span class="alert-icon" style="color: var(--accent-rose);">🔥 [SESSION BURNED]</span>
-                    <span class="alert-message">All ephemeral DOM elements, keys, and session memory have been completely wiped.</span>
                 </div>`;
             updateStatus("disconnected", "Destroyed");
-            peerCountEl.textContent = "0 peers";
-            peerListEl.innerHTML = "";
-            msgInput.disabled = true;
-            sendBtn.disabled = true;
-            if (inviteSection) inviteSection.classList.remove("hidden");
-            btnCreateRoom.classList.remove("hidden");
-            btnCreateRoom.disabled = false;
-            btnCreateRoom.textContent = "✨ Create Private Room";
+            if (statusBadge) {
+                statusBadge.classList.remove("hidden");
+                statusBadge.className = "status-pill status-disconnected";
+                if (statusBadgeText) statusBadgeText.textContent = "Disconnected";
+            }
+            if (peerCountEl) {
+                peerCountEl.classList.add("hidden");
+                peerCountEl.textContent = "0 peers";
+            }
+            if (peerListEl) {
+                peerListEl.classList.add("hidden");
+                peerListEl.innerHTML = "";
+            }
+            if (burnRoomBar) burnRoomBar.classList.add("hidden");
+            if (messageForm) messageForm.classList.add("hidden");
+            if (createRoomBar) {
+                createRoomBar.classList.remove("hidden");
+                btnCreateRoom.disabled = false;
+                btnCreateRoom.textContent = "✨ Create Private Room";
+            }
+            if (inviteSection) inviteSection.classList.add("hidden");
             inviteInput.classList.add("hidden");
             btnCopyInvite.classList.add("hidden");
-            btnCopyInvite.innerHTML = `
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                </svg>`;
             history.replaceState(null, "", window.location.pathname);
         });
 
