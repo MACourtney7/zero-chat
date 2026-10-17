@@ -92,9 +92,54 @@
                 </button>
             </div>
 
-            <!-- Room Creation / Invite Controls -->
-            <section id="invite-section" class="invite-panel glass-panel hidden">
-                <div class="invite-input-row" id="room-controls">
+            <!-- Dynamic banner when opening an invite URL -->
+            <div id="joiner-banner" class="join-banner hidden">
+                <span id="joiner-status-text">🔗 Invite detected! Autodropping SDP answer to signaling edge...</span>
+            </div>
+
+            <main id="messages-container" class="messages-container">
+                <div id="welcome-splash" class="welcome-splash">
+                    <div class="welcome-header">
+                        <h2 class="welcome-title">Zero-Footprint Ephemeral Messaging</h2>
+                        <p class="welcome-subtitle">Direct browser-to-browser communication with cryptographic forward secrecy.</p>
+                    </div>
+                    <div class="welcome-features">
+                        <div class="feature-card">
+                            <div class="feature-icon">⚡</div>
+                            <div class="feature-content">
+                                <span class="feature-title">Direct P2P WebRTC</span>
+                                <p class="feature-desc">All messages flow directly between peers over encrypted DataChannels. Zero intermediate relays or storage servers.</p>
+                            </div>
+                        </div>
+                        <div class="feature-card">
+                            <div class="feature-icon">🔒</div>
+                            <div class="feature-content">
+                                <span class="feature-title">ChaCha20-Poly1305 AEAD</span>
+                                <p class="feature-desc">Hardware-accelerated authenticated symmetric cipher sealing every payload with unique nonces.</p>
+                            </div>
+                        </div>
+                        <div class="feature-card">
+                            <div class="feature-icon">🛡️</div>
+                            <div class="feature-content">
+                                <span class="feature-title">Zero Trace & Ephemeral</span>
+                                <p class="feature-desc">No accounts, no cookies, no storage. Closing the tab or burning the room permanently incinerates all keys and history.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="welcome-prompt">
+                        <span>Click <strong>Create Private Room</strong> below to start a room, or open an invite link to join.</span>
+                    </div>
+                </div>
+            </main>
+
+            <footer class="chat-footer glass-panel">
+                <!-- Full-width Create Private Room bar when disconnected -->
+                <div id="create-room-bar" class="create-room-bar">
+                    <button id="btn-create-room" class="btn-action btn-action-full btn-emerald" type="button">Create Private Room</button>
+                </div>
+
+                <!-- Room Invite Link & Copy Bar in footer action slot -->
+                <div id="invite-bar" class="invite-bar hidden">
                     <input id="invite-url-input" class="invite-input" type="text" readonly placeholder="Generating invite link..." />
                     <button id="copy-invite-button" class="btn btn-copy btn-icon" type="button" title="Copy Invite Link" aria-label="Copy Invite Link">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -102,20 +147,6 @@
                             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                         </svg>
                     </button>
-                </div>
-            </section>
-
-            <!-- Dynamic banner when opening an invite URL -->
-            <div id="joiner-banner" class="join-banner hidden">
-                <span id="joiner-status-text">🔗 Invite detected! Autodropping SDP answer to signaling edge...</span>
-            </div>
-
-            <main id="messages-container" class="messages-container"></main>
-
-            <footer class="chat-footer glass-panel">
-                <!-- Full-width Create Private Room bar when disconnected -->
-                <div id="create-room-bar" class="create-room-bar">
-                    <button id="btn-create-room" class="btn-action btn-action-full" type="button">✨ Create Private Room</button>
                 </div>
 
                 <!-- Chat text input bar when in active chat -->
@@ -132,7 +163,7 @@
         const WORKER_WS_ORIGIN = "wss://network.zero-chat.workers.dev";
 
         // DOM elements
-        const inviteSection = document.getElementById("invite-section");
+        const inviteBar = document.getElementById("invite-bar");
         const statusBadge = document.getElementById("status-badge");
         const statusBadgeText = document.getElementById("status-badge-text");
         const peerCountEl = document.getElementById("peer-count");
@@ -282,7 +313,59 @@
             if (statusBadgeText) statusBadgeText.textContent = text;
         }
 
+        const WELCOME_SPLASH_HTML = `
+            <div id="welcome-splash" class="welcome-splash">
+                <div class="welcome-header">
+                    <h2 class="welcome-title">Zero-Footprint Ephemeral Messaging</h2>
+                    <p class="welcome-subtitle">Direct browser-to-browser communication with cryptographic forward secrecy.</p>
+                </div>
+                <div class="welcome-features">
+                    <div class="feature-card">
+                        <div class="feature-icon">⚡</div>
+                        <div class="feature-content">
+                            <span class="feature-title">Direct P2P WebRTC</span>
+                            <p class="feature-desc">All messages flow directly between peers over encrypted DataChannels. Zero intermediate relays or storage servers.</p>
+                        </div>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🔒</div>
+                        <div class="feature-content">
+                            <span class="feature-title">ChaCha20-Poly1305 AEAD</span>
+                            <p class="feature-desc">Hardware-accelerated authenticated symmetric cipher sealing every payload with unique nonces.</p>
+                        </div>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🛡️</div>
+                        <div class="feature-content">
+                            <span class="feature-title">Zero Trace & Ephemeral</span>
+                            <p class="feature-desc">No accounts, no cookies, no storage. Closing the tab or burning the room permanently incinerates all keys and history.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="welcome-prompt">
+                    <span>Click <strong>Create Private Room</strong> below to start a room, or open an invite link to join.</span>
+                </div>
+            </div>`;
+
+        function hideWelcomeSplash() {
+            const splash = document.getElementById("welcome-splash");
+            if (splash) {
+                splash.classList.add("hidden");
+            }
+        }
+
+        function showWelcomeSplash() {
+            if (isBurned) return;
+            const splash = document.getElementById("welcome-splash");
+            if (splash) {
+                splash.classList.remove("hidden");
+            } else {
+                feed.insertAdjacentHTML("afterbegin", WELCOME_SPLASH_HTML);
+            }
+        }
+
         function appendMessageBubble(senderName, text, isSelf) {
+            hideWelcomeSplash();
             const bubble = document.createElement("div");
             bubble.className = `message-bubble ${isSelf ? "message-outgoing" : "message-incoming"}`;
 
@@ -330,6 +413,7 @@
         function initEngineListeners() {
             engine.onStateChangeCb = (st) => {
                 if (st === "open") {
+                    hideWelcomeSplash();
                     updateStatus("open", "P2P Established");
                     if (statusBadge) statusBadge.classList.add("hidden");
                     if (peerCountEl) {
@@ -342,6 +426,7 @@
                     }
                     if (burnRoomBar) burnRoomBar.classList.remove("hidden");
                     if (createRoomBar) createRoomBar.classList.add("hidden");
+                    if (inviteBar) inviteBar.classList.add("hidden");
                     if (messageForm) messageForm.classList.remove("hidden");
                     msgInput.disabled = false;
                     sendBtn.disabled = false;
@@ -353,7 +438,6 @@
                         hostWs = null;
                     }
                     if (joinerBanner) joinerBanner.classList.add("hidden");
-                    if (inviteSection) inviteSection.classList.add("hidden");
 
                     if (isJoining) {
                         appendSystemMessage("Joined room.");
@@ -377,15 +461,17 @@
                     }
                     if (burnRoomBar) burnRoomBar.classList.add("hidden");
                     if (messageForm) messageForm.classList.add("hidden");
+                    if (inviteBar) inviteBar.classList.add("hidden");
                     if (createRoomBar) {
                         createRoomBar.classList.remove("hidden");
                         btnCreateRoom.disabled = false;
-                        btnCreateRoom.textContent = "✨ Create Private Room";
+                        btnCreateRoom.textContent = "Create Private Room";
                     }
                     msgInput.disabled = true;
                     sendBtn.disabled = true;
                     if (!isBurned) {
                         appendSystemMessage("Peer left.");
+                        showWelcomeSplash();
                     }
                 }
             };
@@ -452,21 +538,21 @@
 
                 hostWs.onerror = (e) => console.warn("Signaling socket error:", e);
 
-                // Show copyable invite controls
-                if (inviteSection) inviteSection.classList.remove("hidden");
-                btnCreateRoom.disabled = true;
-                btnCreateRoom.textContent = "Awaiting Peer...";
+                // Show copyable invite controls in footer action slot (replacing create-room-bar)
+                if (createRoomBar) createRoomBar.classList.add("hidden");
+                if (inviteBar) inviteBar.classList.remove("hidden");
                 inviteInput.value = inviteUrl;
-                inviteInput.classList.remove("hidden");
-                btnCopyInvite.classList.remove("hidden");
 
                 appendSystemMessage("Secure room created.");
             } catch (err) {
                 console.error("Room creation failed:", err);
                 alert("Room creation failed: " + err);
-                if (inviteSection) inviteSection.classList.add("hidden");
-                btnCreateRoom.disabled = false;
-                btnCreateRoom.textContent = "✨ Create Private Room";
+                if (inviteBar) inviteBar.classList.add("hidden");
+                if (createRoomBar) {
+                    createRoomBar.classList.remove("hidden");
+                    btnCreateRoom.disabled = false;
+                    btnCreateRoom.textContent = "Create Private Room";
+                }
                 updateStatus("disconnected", "Error creating room");
             }
         }
@@ -495,7 +581,7 @@
                 joinerStatusText.textContent = "Found Room Invite! Accepting offer and generating answer...";
                 updateStatus("signaling", "Connecting as peer...");
 
-                if (inviteSection) inviteSection.classList.add("hidden");
+                if (inviteBar) inviteBar.classList.add("hidden");
                 if (createRoomBar) createRoomBar.classList.add("hidden");
 
                 const jsonStr = base64UrlToUtf8(rawPayload);
@@ -581,9 +667,10 @@
             if (engine) engine.close();
             if (hostWs) hostWs.close();
             isJoining = false;
+            hideWelcomeSplash();
             feed.innerHTML = `
-                <div class="security-alert-card" style="border-color: rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.08);">
-                    <span class="alert-icon" style="color: var(--accent-rose);">🔥 [SESSION BURNED]</span>
+                <div class="security-alert-card burn-banner-centered">
+                    <span class="alert-icon">SESSION BURNED</span>
                 </div>`;
             updateStatus("disconnected", "Destroyed");
             if (statusBadge) {
@@ -601,14 +688,12 @@
             }
             if (burnRoomBar) burnRoomBar.classList.add("hidden");
             if (messageForm) messageForm.classList.add("hidden");
+            if (inviteBar) inviteBar.classList.add("hidden");
             if (createRoomBar) {
                 createRoomBar.classList.remove("hidden");
                 btnCreateRoom.disabled = false;
-                btnCreateRoom.textContent = "✨ Create Private Room";
+                btnCreateRoom.textContent = "Create Private Room";
             }
-            if (inviteSection) inviteSection.classList.add("hidden");
-            inviteInput.classList.add("hidden");
-            btnCopyInvite.classList.add("hidden");
             history.replaceState(null, "", window.location.pathname);
         });
 
