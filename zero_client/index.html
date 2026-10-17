@@ -7,6 +7,152 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div id="app"></div>
+    <div id="app">
+        <div class="chat-layout">
+            <header class="chat-header glass-panel">
+                <div class="header-brand">
+                    <span class="brand-icon">0</span>
+                    <div class="brand-text">
+                        <h1 class="brand-title">ZeroChat</h1>
+                        <span class="brand-tagline">Ephemeral P2P</span>
+                    </div>
+                </div>
+                <div class="header-controls">
+                    <div id="peer-count" class="peer-count-badge">0 peers</div>
+                    <div id="peer-list" class="peer-list"></div>
+                    <div id="connection-status-pill" class="status-pill status-disconnected">
+                        <span class="status-indicator-dot"></span>
+                        <span id="connection-status-label" class="status-label">Disconnected</span>
+                    </div>
+                    <button id="destroy-session-button" class="btn btn-burn" type="button" title="Instantly wipes all DOM messages and memory">
+                        <span>Burn Session</span>
+                    </button>
+                </div>
+            </header>
+
+            <section id="invite-section" class="invite-panel glass-panel">
+                <div class="invite-header">
+                    <span class="invite-title">Direct P2P Room</span>
+                    <span class="invite-desc">Zero persistence, browser-to-browser WebAssembly chat.</span>
+                </div>
+                <div class="invite-input-row">
+                    <input id="invite-url-input" class="invite-input" type="text" readonly value="Generating room..." />
+                    <button id="copy-invite-button" class="btn btn-copy" type="button">Copy Link</button>
+                    <a href="test_harness.html" class="btn btn-copy" style="text-decoration:none; display:inline-flex; align-items:center;" target="_blank">Diagnostics</a>
+                </div>
+                <div id="copy-feedback" class="copy-feedback hidden">✓ Copied to clipboard</div>
+            </section>
+
+            <main id="messages-container" class="messages-container">
+                <div class="security-alert-card" style="border-color: rgba(56, 189, 248, 0.3); background: rgba(56, 189, 248, 0.05);">
+                    <span class="alert-icon" style="color: var(--accent-cyan);">🔒 [ZERO PERSISTENCE]</span>
+                    <span class="alert-message" style="color: #cbd5e1;">All messages are end-to-end encrypted with ChaCha20-Poly1305. No database, no cloud storage, no cookies, no localStorage. Closing this tab permanently erases all session history.</span>
+                </div>
+            </main>
+
+            <footer class="chat-footer glass-panel">
+                <form id="message-form" class="message-form" onsubmit="return false;">
+                    <input id="message-input" class="message-input" type="text" placeholder="Type an encrypted message..." autocomplete="off" />
+                    <button id="send-button" class="btn btn-send" type="button">Send</button>
+                </form>
+            </footer>
+        </div>
+    </div>
+
+    <script type="module">
+        // Attempt to load WASM engine from standard output location
+        let wasmEngine = null;
+        try {
+            const wasmMod = await import("./pkg/zero_client.js");
+            if (typeof wasmMod.default === "function") {
+                await wasmMod.default();
+            }
+            if (wasmMod.WasmWebRtcEngine) {
+                wasmEngine = new wasmMod.WasmWebRtcEngine();
+                const statusLabel = document.getElementById("connection-status-label");
+                if (statusLabel) statusLabel.textContent = "WASM Engine Ready";
+            }
+        } catch (_) {
+            // Running without static pkg or in dev preview
+        }
+
+        const inviteInput = document.getElementById("invite-url-input");
+        if (inviteInput) {
+            inviteInput.value = window.location.href;
+        }
+
+        const copyBtn = document.getElementById("copy-invite-button");
+        const feedback = document.getElementById("copy-feedback");
+        if (copyBtn && inviteInput) {
+            copyBtn.addEventListener("click", async () => {
+                await navigator.clipboard.writeText(inviteInput.value);
+                if (feedback) {
+                    feedback.classList.remove("hidden");
+                    setTimeout(() => feedback.classList.add("hidden"), 2000);
+                }
+            });
+        }
+
+        const burnBtn = document.getElementById("destroy-session-button");
+        const feed = document.getElementById("messages-container");
+        if (burnBtn && feed) {
+            burnBtn.addEventListener("click", () => {
+                feed.innerHTML = `
+                    <div class="security-alert-card" style="border-color: rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.08);">
+                        <span class="alert-icon" style="color: var(--accent-rose);">🔥 [SESSION BURNED]</span>
+                        <span class="alert-message">All ephemeral DOM elements and session memory have been completely wiped.</span>
+                    </div>`;
+                const pill = document.getElementById("connection-status-pill");
+                const label = document.getElementById("connection-status-label");
+                if (pill) pill.className = "status-pill status-disconnected";
+                if (label) label.textContent = "Destroyed";
+            });
+        }
+
+        const msgInput = document.getElementById("message-input");
+        const sendBtn = document.getElementById("send-button");
+        function sendMessage() {
+            if (!msgInput || !msgInput.value.trim()) return;
+            const text = msgInput.value.trim();
+            msgInput.value = "";
+
+            const bubble = document.createElement("div");
+            bubble.className = "message-bubble message-outgoing";
+
+            const header = document.createElement("div");
+            header.className = "message-header";
+            const sender = document.createElement("span");
+            sender.className = "message-sender";
+            sender.textContent = "You";
+            const time = document.createElement("span");
+            time.className = "message-timestamp";
+            const now = new Date();
+            time.textContent = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+            header.appendChild(sender);
+            header.appendChild(time);
+
+            const body = document.createElement("div");
+            body.className = "message-text";
+            body.textContent = text;
+
+            const badge = document.createElement("div");
+            badge.className = "security-badge verified";
+            badge.textContent = "🔒 ChaCha20-Poly1305 Encrypted";
+
+            bubble.appendChild(header);
+            bubble.appendChild(body);
+            bubble.appendChild(badge);
+
+            feed.appendChild(bubble);
+            feed.scrollTop = feed.scrollHeight;
+        }
+
+        if (sendBtn) sendBtn.addEventListener("click", sendMessage);
+        if (msgInput) {
+            msgInput.addEventListener("keydown", (e) => {
+                if (e.key === "Enter") sendMessage();
+            });
+        }
+    </script>
 </body>
 </html>

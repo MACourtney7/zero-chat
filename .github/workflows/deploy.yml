@@ -59,6 +59,7 @@ jobs:
           wasm-bindgen --target web --out-dir dist/pkg target/wasm32-unknown-unknown/release/zero_client.wasm
           cp zero_client/index.html dist/
           cp zero_client/style.css dist/
+          cp zero_client/test_harness.html dist/
 
       - name: Deploy Client to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
