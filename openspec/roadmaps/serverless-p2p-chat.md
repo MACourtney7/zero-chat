@@ -4,6 +4,7 @@ milestone: "serverless-p2p-chat"
 title: "Serverless P2P Ephemeral Communication Tool (Weekend MVP)"
 version: "1.1.0"
 created_at: "2026-10-16T21:28:00Z"
+completed_at: "2026-10-17T08:48:00Z"
 status: "COMPLETED"
 ---
 
@@ -96,5 +97,5 @@ flowchart TD
 - [x] Tab closure forensic cleanliness verified.
 - [x] Automated GitHub Actions CI workflow passes on all branches.
 - [x] Cloudflare deployment pipeline successfully deploys Worker and Pages bundle.
-- [ ] Canonical specifications reconciled in `openspec/specs/overview.md`.
-- [ ] Change proposals archived to `openspec/changes/archive/`.
+- [x] Canonical specifications reconciled in `openspec/specs/overview.md`.
+- [x] Change proposals archived to `openspec/changes/archive/`.
