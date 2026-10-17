@@ -274,9 +274,18 @@
             feed.scrollTop = feed.scrollHeight;
         }
 
+        function appendSystemMessage(text) {
+            const el = document.createElement("div");
+            el.className = "system-message";
+            el.textContent = text;
+            feed.appendChild(el);
+            feed.scrollTop = feed.scrollHeight;
+        }
+
         let engine = null;
         let hostWs = null;
         let isJoining = false;
+        let isBurned = false;
 
         function initEngineListeners() {
             engine.onStateChangeCb = (st) => {
@@ -295,12 +304,21 @@
                     }
                     if (joinerBanner) joinerBanner.classList.add("hidden");
                     if (inviteSection) inviteSection.classList.add("hidden");
+
+                    if (isJoining) {
+                        appendSystemMessage("Joined room.");
+                    } else {
+                        appendSystemMessage("Peer joined.");
+                    }
                 } else if (st === "closed") {
                     updateStatus("closed", "Disconnected");
                     peerCountEl.textContent = "0 peers";
                     peerListEl.innerHTML = "";
                     msgInput.disabled = true;
                     sendBtn.disabled = true;
+                    if (!isBurned) {
+                        appendSystemMessage("Peer left.");
+                    }
                 }
             };
 
@@ -313,6 +331,8 @@
         // HOST WORKFLOW: Create room, offer, signaling websocket, and invite link
         // =========================================================================
         async function createRoomAsHost() {
+            isBurned = false;
+            isJoining = false;
             btnCreateRoom.disabled = true;
             btnCreateRoom.textContent = "Gathering ICE...";
             updateStatus("signaling", "Gathering ICE & creating offer...");
@@ -370,7 +390,7 @@
                 inviteInput.classList.remove("hidden");
                 btnCopyInvite.classList.remove("hidden");
 
-                appendMessageBubble("System", "Secure room created.", false);
+                appendSystemMessage("Secure room created.");
             } catch (err) {
                 console.error("Room creation failed:", err);
                 alert("Room creation failed: " + err);
@@ -400,6 +420,7 @@
                 if (!rawPayload) return;
 
                 isJoining = true;
+                isBurned = false;
                 joinerBanner.classList.remove("hidden");
                 joinerStatusText.textContent = "Found Room Invite! Accepting offer and generating answer...";
                 updateStatus("signaling", "Connecting as peer...");
@@ -486,6 +507,7 @@
         });
 
         burnBtn.addEventListener("click", () => {
+            isBurned = true;
             if (engine) engine.close();
             if (hostWs) hostWs.close();
             isJoining = false;

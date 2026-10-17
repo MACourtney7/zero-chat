@@ -338,6 +338,16 @@ html, body {
   transform: translateY(0);
 }
 
+.btn-send:disabled,
+.btn-send:disabled:hover {
+  background: rgba(51, 65, 85, 0.28);
+  color: #475569;
+  box-shadow: none;
+  cursor: not-allowed;
+  transform: none;
+  opacity: 0.55;
+}
+
 /* Invite Section Panel */
 .invite-panel {
   padding: 14px 18px;
@@ -423,6 +433,18 @@ html, body {
 
 .messages-container::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.2);
+}
+
+/* System Messages */
+.system-message {
+  align-self: center;
+  text-align: center;
+  font-style: italic;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  padding: 6px 0;
+  user-select: none;
+  animation: fadeIn 0.2s ease-out;
 }
 
 /* Message Bubbles */
@@ -597,6 +619,17 @@ html, body {
 .message-input:focus {
   border-color: rgba(56, 189, 248, 0.5);
   box-shadow: 0 0 12px rgba(56, 189, 248, 0.2);
+}
+
+.message-input:disabled {
+  background: rgba(15, 20, 30, 0.4);
+  border-color: rgba(255, 255, 255, 0.05);
+  color: #475569;
+  cursor: not-allowed;
+}
+
+.message-input:disabled::placeholder {
+  color: #334155;
 }
 
 .message-input::placeholder {
