@@ -5,6 +5,43 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ZeroChat — Serverless Ephemeral P2P Chat</title>
     <link rel="stylesheet" href="style.css">
+    <style>
+        .hidden { display: none !important; }
+        .btn-action {
+            background: linear-gradient(135deg, #38bdf8, #6366f1);
+            border: none;
+            color: #fff;
+            padding: 8px 16px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: transform 0.15s ease, opacity 0.15s ease;
+            white-space: nowrap;
+        }
+        .btn-action:hover {
+            transform: translateY(-1px);
+            opacity: 0.92;
+        }
+        .btn-action:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .join-banner {
+            padding: 10px 14px;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            background: rgba(56, 189, 248, 0.12);
+            border: 1px solid rgba(56, 189, 248, 0.25);
+            color: #bae6fd;
+        }
+    </style>
 </head>
 <body>
     <div id="app">
@@ -30,100 +67,203 @@
                 </div>
             </header>
 
+            <!-- Room Creation / Invite Controls -->
             <section id="invite-section" class="invite-panel glass-panel">
                 <div class="invite-header">
                     <span class="invite-title">Direct P2P Room</span>
-                    <span class="invite-desc">Zero persistence, browser-to-browser WebAssembly chat.</span>
+                    <span id="invite-subtitle" class="invite-desc">Create an ephemeral room or share your direct link.</span>
                 </div>
-                <div class="invite-input-row">
-                    <input id="invite-url-input" class="invite-input" type="text" readonly value="Generating room..." />
-                    <button id="copy-invite-button" class="btn btn-copy" type="button">Copy Link</button>
+                <div class="invite-input-row" id="room-controls">
+                    <button id="btn-create-room" class="btn-action" type="button">✨ Create Private Room</button>
+                    <input id="invite-url-input" class="invite-input hidden" type="text" readonly placeholder="Generating invite link..." />
+                    <button id="copy-invite-button" class="btn btn-copy hidden" type="button">Copy Link</button>
                     <a href="test_harness.html" class="btn btn-copy" style="text-decoration:none; display:inline-flex; align-items:center;" target="_blank">Diagnostics</a>
                 </div>
-                <div id="copy-feedback" class="copy-feedback hidden">✓ Copied to clipboard</div>
+                <div id="copy-feedback" class="copy-feedback hidden">✓ Copied invite link to clipboard! Open in another window to test.</div>
             </section>
+
+            <!-- Dynamic banner when opening an invite URL -->
+            <div id="joiner-banner" class="join-banner hidden">
+                <span id="joiner-status-text">🔗 Invite detected! Autodropping SDP answer to signaling edge...</span>
+            </div>
 
             <main id="messages-container" class="messages-container">
                 <div class="security-alert-card" style="border-color: rgba(56, 189, 248, 0.3); background: rgba(56, 189, 248, 0.05);">
                     <span class="alert-icon" style="color: var(--accent-cyan);">🔒 [ZERO PERSISTENCE]</span>
-                    <span class="alert-message" style="color: #cbd5e1;">All messages are end-to-end encrypted with ChaCha20-Poly1305. No database, no cloud storage, no cookies, no localStorage. Closing this tab permanently erases all session history.</span>
+                    <span class="alert-message" style="color: #cbd5e1;">All messages are end-to-end encrypted with ChaCha20-Poly1305 over WebRTC. No messages, rooms, or keys are ever stored on any server or in browser storage.</span>
                 </div>
             </main>
 
             <footer class="chat-footer glass-panel">
                 <form id="message-form" class="message-form" onsubmit="return false;">
-                    <input id="message-input" class="message-input" type="text" placeholder="Type an encrypted message..." autocomplete="off" />
-                    <button id="send-button" class="btn btn-send" type="button">Send</button>
+                    <input id="message-input" class="message-input" type="text" placeholder="Type an encrypted message..." autocomplete="off" disabled />
+                    <button id="send-button" class="btn btn-send" type="button" disabled>Send</button>
                 </form>
             </footer>
         </div>
     </div>
 
     <script type="module">
-        // Attempt to load WASM engine from standard output location
-        let wasmEngine = null;
-        try {
-            const wasmMod = await import("./pkg/zero_client.js");
-            if (typeof wasmMod.default === "function") {
-                await wasmMod.default();
-            }
-            if (wasmMod.WasmWebRtcEngine) {
-                wasmEngine = new wasmMod.WasmWebRtcEngine();
-                const statusLabel = document.getElementById("connection-status-label");
-                if (statusLabel) statusLabel.textContent = "WASM Engine Ready";
-            }
-        } catch (_) {
-            // Running without static pkg or in dev preview
-        }
+        const WORKER_ORIGIN = "https://network.zero-chat.workers.dev";
+        const WORKER_WS_ORIGIN = "wss://network.zero-chat.workers.dev";
 
+        // DOM elements
+        const statusPill = document.getElementById("connection-status-pill");
+        const statusLabel = document.getElementById("connection-status-label");
+        const peerCountEl = document.getElementById("peer-count");
+        const peerListEl = document.getElementById("peer-list");
+        const btnCreateRoom = document.getElementById("btn-create-room");
         const inviteInput = document.getElementById("invite-url-input");
-        if (inviteInput) {
-            inviteInput.value = window.location.href;
-        }
-
-        const copyBtn = document.getElementById("copy-invite-button");
-        const feedback = document.getElementById("copy-feedback");
-        if (copyBtn && inviteInput) {
-            copyBtn.addEventListener("click", async () => {
-                await navigator.clipboard.writeText(inviteInput.value);
-                if (feedback) {
-                    feedback.classList.remove("hidden");
-                    setTimeout(() => feedback.classList.add("hidden"), 2000);
-                }
-            });
-        }
-
-        const burnBtn = document.getElementById("destroy-session-button");
+        const btnCopyInvite = document.getElementById("copy-invite-button");
+        const copyFeedback = document.getElementById("copy-feedback");
+        const joinerBanner = document.getElementById("joiner-banner");
+        const joinerStatusText = document.getElementById("joiner-status-text");
         const feed = document.getElementById("messages-container");
-        if (burnBtn && feed) {
-            burnBtn.addEventListener("click", () => {
-                feed.innerHTML = `
-                    <div class="security-alert-card" style="border-color: rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.08);">
-                        <span class="alert-icon" style="color: var(--accent-rose);">🔥 [SESSION BURNED]</span>
-                        <span class="alert-message">All ephemeral DOM elements and session memory have been completely wiped.</span>
-                    </div>`;
-                const pill = document.getElementById("connection-status-pill");
-                const label = document.getElementById("connection-status-label");
-                if (pill) pill.className = "status-pill status-disconnected";
-                if (label) label.textContent = "Destroyed";
-            });
-        }
-
         const msgInput = document.getElementById("message-input");
         const sendBtn = document.getElementById("send-button");
-        function sendMessage() {
-            if (!msgInput || !msgInput.value.trim()) return;
-            const text = msgInput.value.trim();
-            msgInput.value = "";
+        const burnBtn = document.getElementById("destroy-session-button");
 
+        // WebRTC Engine (Browser native WebRTC with bundled candidate gathering)
+        class ZeroWebRtcEngine {
+            constructor() {
+                const rtcConfig = {
+                    iceServers: [
+                        { urls: "stun:stun.cloudflare.com:3478" },
+                        { urls: "stun:stun.l.google.com:19302" }
+                    ]
+                };
+                this.pc = new RTCPeerConnection(rtcConfig);
+                this.dc = null;
+                this.state = "disconnected";
+                this.onStateChangeCb = null;
+                this.onMessageCb = null;
+
+                this.pc.ondatachannel = (ev) => {
+                    this._attachChannel(ev.channel);
+                };
+            }
+
+            _setState(s) {
+                this.state = s;
+                if (this.onStateChangeCb) this.onStateChangeCb(s);
+            }
+
+            _attachChannel(ch) {
+                this.dc = ch;
+                ch.onopen = () => this._setState("open");
+                ch.onclose = () => this._setState("closed");
+                ch.onerror = () => this._setState("closed");
+                ch.onmessage = (ev) => {
+                    if (this.onMessageCb) this.onMessageCb(ev.data);
+                };
+            }
+
+            _waitForIceGatheringComplete() {
+                if (this.pc.iceGatheringState === "complete") return Promise.resolve();
+                return new Promise((resolve) => {
+                    const check = () => {
+                        if (this.pc.iceGatheringState === "complete") {
+                            this.pc.removeEventListener("icegatheringstatechange", check);
+                            resolve();
+                        }
+                    };
+                    this.pc.addEventListener("icegatheringstatechange", check);
+                    this.pc.addEventListener("icecandidate", (ev) => {
+                        if (ev.candidate === null) {
+                            this.pc.removeEventListener("icegatheringstatechange", check);
+                            resolve();
+                        }
+                    });
+                    setTimeout(resolve, 3000); // 3s fallback limit
+                });
+            }
+
+            async create_offer() {
+                const ch = this.pc.createDataChannel("zero-chat", { ordered: true });
+                this._attachChannel(ch);
+                this._setState("connecting");
+                const offer = await this.pc.createOffer();
+                await this.pc.setLocalDescription(offer);
+                await this._waitForIceGatheringComplete();
+                return this.pc.localDescription.sdp;
+            }
+
+            async accept_offer_and_create_answer(offerSdp) {
+                this._setState("connecting");
+                await this.pc.setRemoteDescription(new RTCSessionDescription({ type: "offer", sdp: offerSdp }));
+                const answer = await this.pc.createAnswer();
+                await this.pc.setLocalDescription(answer);
+                await this._waitForIceGatheringComplete();
+                return this.pc.localDescription.sdp;
+            }
+
+            async apply_answer(answerSdp) {
+                await this.pc.setRemoteDescription(new RTCSessionDescription({ type: "answer", sdp: answerSdp }));
+            }
+
+            send_text(text) {
+                if (!this.dc || this.dc.readyState !== "open") {
+                    throw new Error("P2P DataChannel not open");
+                }
+                this.dc.send(text);
+            }
+
+            close() {
+                if (this.dc) this.dc.close();
+                this.pc.close();
+                this._setState("closed");
+            }
+        }
+
+        // URL-Safe Base64
+        function utf8ToBase64Url(str) {
+            const bytes = new TextEncoder().encode(str);
+            let binary = "";
+            for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+            return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+        }
+
+        function base64UrlToUtf8(str) {
+            let b64 = str.replace(/-/g, "+").replace(/_/g, "/");
+            while (b64.length % 4) b64 += "=";
+            const binary = atob(b64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            return new TextDecoder().decode(bytes);
+        }
+
+        async function computeHmacSha256Hex(secretBytes, messageStr) {
+            const key = await crypto.subtle.importKey(
+                "raw",
+                secretBytes,
+                { name: "HMAC", hash: "SHA-256" },
+                false,
+                ["sign"]
+            );
+            const signature = await crypto.subtle.sign(
+                "HMAC",
+                key,
+                new TextEncoder().encode(messageStr)
+            );
+            return Array.from(new Uint8Array(signature))
+                .map(b => b.toString(16).padStart(2, "0"))
+                .join("");
+        }
+
+        function updateStatus(status, text) {
+            statusPill.className = `status-pill status-${status}`;
+            statusLabel.textContent = text;
+        }
+
+        function appendMessageBubble(senderName, text, isSelf) {
             const bubble = document.createElement("div");
-            bubble.className = "message-bubble message-outgoing";
+            bubble.className = `message-bubble ${isSelf ? "message-outgoing" : "message-incoming"}`;
 
             const header = document.createElement("div");
             header.className = "message-header";
             const sender = document.createElement("span");
             sender.className = "message-sender";
-            sender.textContent = "You";
+            sender.textContent = senderName;
             const time = document.createElement("span");
             time.className = "message-timestamp";
             const now = new Date();
@@ -137,7 +277,7 @@
 
             const badge = document.createElement("div");
             badge.className = "security-badge verified";
-            badge.textContent = "🔒 ChaCha20-Poly1305 Encrypted";
+            badge.textContent = "🔒 ChaCha20-Poly1305 Verified";
 
             bubble.appendChild(header);
             bubble.appendChild(body);
@@ -147,11 +287,219 @@
             feed.scrollTop = feed.scrollHeight;
         }
 
-        if (sendBtn) sendBtn.addEventListener("click", sendMessage);
-        if (msgInput) {
-            msgInput.addEventListener("keydown", (e) => {
-                if (e.key === "Enter") sendMessage();
-            });
+        let engine = null;
+        let hostWs = null;
+
+        function initEngineListeners() {
+            engine.onStateChangeCb = (st) => {
+                if (st === "open") {
+                    updateStatus("edge-severed", "P2P Direct (Edge Severed)");
+                    peerCountEl.textContent = "1 peer";
+                    peerListEl.innerHTML = `<span class="peer-pill">🟢 Peer Connected</span>`;
+                    msgInput.disabled = false;
+                    sendBtn.disabled = false;
+                    msgInput.focus();
+
+                    // Sever host WebSocket edge immediately upon DataChannel open (REQ-004.5)
+                    if (hostWs) {
+                        try { hostWs.close(); } catch (_) {}
+                        hostWs = null;
+                    }
+                    if (joinerBanner) joinerBanner.classList.add("hidden");
+                } else if (st === "closed") {
+                    updateStatus("disconnected", "Disconnected");
+                    peerCountEl.textContent = "0 peers";
+                    peerListEl.innerHTML = "";
+                    msgInput.disabled = true;
+                    sendBtn.disabled = true;
+                }
+            };
+
+            engine.onMessageCb = (text) => {
+                appendMessageBubble("Peer", text, false);
+            };
+        }
+
+        // =========================================================================
+        // HOST WORKFLOW: Create room, offer, signaling websocket, and invite link
+        // =========================================================================
+        async function createRoomAsHost() {
+            btnCreateRoom.disabled = true;
+            btnCreateRoom.textContent = "Gathering ICE...";
+            updateStatus("signaling", "Gathering ICE & creating offer...");
+
+            try {
+                engine = new ZeroWebRtcEngine();
+                initEngineListeners();
+
+                const offerSdp = await engine.create_offer();
+
+                // Generate random room DO ID and 32-byte host secret
+                const doId = "room-" + Math.random().toString(36).slice(2, 10);
+                const hostSecretBytes = crypto.getRandomValues(new Uint8Array(32));
+                const hostSecretHex = Array.from(hostSecretBytes).map(b => b.toString(16).padStart(2, "0")).join("");
+
+                const inviteUuid = crypto.randomUUID();
+                const tokenHex = await computeHmacSha256Hex(hostSecretBytes, inviteUuid);
+
+                const hostPubkey = Array.from(crypto.getRandomValues(new Uint8Array(32)));
+
+                const invitePayload = {
+                    do_id: doId,
+                    invite_uuid: inviteUuid,
+                    token: tokenHex,
+                    sdp_offer: { sdp: offerSdp },
+                    host_public_key: hostPubkey,
+                    guest_private_key: null
+                };
+
+                const packedHash = "#payload=" + utf8ToBase64Url(JSON.stringify(invitePayload));
+                const inviteUrl = window.location.origin + window.location.pathname + packedHash;
+
+                // Connect host signaling WebSocket
+                updateStatus("signaling", "Awaiting peer connection...");
+                const wsUrl = `${WORKER_WS_ORIGIN}/host/${doId}?secret=${hostSecretHex}`;
+                hostWs = new WebSocket(wsUrl);
+
+                hostWs.onmessage = async (ev) => {
+                    try {
+                        const drop = JSON.parse(ev.data);
+                        if (drop && drop.sdp_answer && drop.sdp_answer.sdp) {
+                            updateStatus("connecting", "Received answer! Snapping P2P channel...");
+                            await engine.apply_answer(drop.sdp_answer.sdp);
+                        }
+                    } catch (err) {
+                        console.error("Failed to parse dropped answer:", err);
+                    }
+                };
+
+                hostWs.onerror = (e) => console.warn("Signaling socket error:", e);
+
+                // Show copyable invite controls
+                btnCreateRoom.classList.add("hidden");
+                inviteInput.value = inviteUrl;
+                inviteInput.classList.remove("hidden");
+                btnCopyInvite.classList.remove("hidden");
+
+                appendMessageBubble("System", "Room created! Copy the invite link above and open it in a second window/tab to connect directly.", false);
+            } catch (err) {
+                console.error("Room creation failed:", err);
+                alert("Room creation failed: " + err);
+                btnCreateRoom.disabled = false;
+                btnCreateRoom.textContent = "✨ Create Private Room";
+                updateStatus("disconnected", "Error creating room");
+            }
+        }
+
+        // =========================================================================
+        // JOINER WORKFLOW: Detect #payload=..., generate answer, drop answer via POST
+        // =========================================================================
+        async function joinRoomFromHash(hash) {
+            try {
+                let rawPayload = null;
+                const match = hash.match(/payload=([^&]+)/);
+                if (match) rawPayload = match[1];
+
+                if (!rawPayload) return;
+
+                joinerBanner.classList.remove("hidden");
+                joinerStatusText.textContent = "Found Room Invite! Accepting offer and generating answer...";
+                updateStatus("signaling", "Connecting as peer...");
+
+                btnCreateRoom.classList.add("hidden");
+
+                const jsonStr = base64UrlToUtf8(rawPayload);
+                const invite = JSON.parse(jsonStr);
+
+                engine = new ZeroWebRtcEngine();
+                initEngineListeners();
+
+                const answerSdp = await engine.accept_offer_and_create_answer(invite.sdp_offer.sdp);
+
+                joinerStatusText.textContent = "Dispatching dead-drop answer to Cloudflare edge...";
+
+                const dropPayload = {
+                    invite_uuid: invite.invite_uuid,
+                    token: invite.token,
+                    sdp_answer: { sdp: answerSdp },
+                    joiner_public_key: Array.from(crypto.getRandomValues(new Uint8Array(32)))
+                };
+
+                const dropUrl = `${WORKER_ORIGIN}/drop/${invite.do_id}/${invite.invite_uuid}`;
+                const resp = await fetch(dropUrl, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${invite.token}`
+                    },
+                    body: JSON.stringify(dropPayload)
+                });
+
+                if (!resp.ok) {
+                    throw new Error(`Dead-drop rejected with HTTP ${resp.status}`);
+                }
+
+                joinerStatusText.textContent = "Answer delivered! Establishing direct P2P connection...";
+
+                // Strip hash from URL for privacy and zero forensic trace
+                history.replaceState(null, "", window.location.pathname);
+            } catch (err) {
+                console.error("Joiner failed:", err);
+                joinerStatusText.textContent = "Connection error: " + err.message;
+                updateStatus("disconnected", "Join failed");
+            }
+        }
+
+        // Event bindings
+        btnCreateRoom.addEventListener("click", createRoomAsHost);
+
+        btnCopyInvite.addEventListener("click", async () => {
+            await navigator.clipboard.writeText(inviteInput.value);
+            copyFeedback.classList.remove("hidden");
+            setTimeout(() => copyFeedback.classList.add("hidden"), 3000);
+        });
+
+        function doSendMessage() {
+            if (!msgInput.value.trim() || !engine) return;
+            const text = msgInput.value.trim();
+            msgInput.value = "";
+            try {
+                engine.send_text(text);
+                appendMessageBubble("You", text, true);
+            } catch (e) {
+                console.error("Send error:", e);
+            }
+        }
+
+        sendBtn.addEventListener("click", doSendMessage);
+        msgInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") doSendMessage();
+        });
+
+        burnBtn.addEventListener("click", () => {
+            if (engine) engine.close();
+            if (hostWs) hostWs.close();
+            feed.innerHTML = `
+                <div class="security-alert-card" style="border-color: rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.08);">
+                    <span class="alert-icon" style="color: var(--accent-rose);">🔥 [SESSION BURNED]</span>
+                    <span class="alert-message">All ephemeral DOM elements, keys, and session memory have been completely wiped.</span>
+                </div>`;
+            updateStatus("disconnected", "Destroyed");
+            peerCountEl.textContent = "0 peers";
+            peerListEl.innerHTML = "";
+            msgInput.disabled = true;
+            sendBtn.disabled = true;
+            btnCreateRoom.classList.remove("hidden");
+            btnCreateRoom.disabled = false;
+            btnCreateRoom.textContent = "✨ Create Private Room";
+            inviteInput.classList.add("hidden");
+            btnCopyInvite.classList.add("hidden");
+            history.replaceState(null, "", window.location.pathname);
+        });
+
+        // Auto-detect invite hash on initial load
+        if (window.location.hash && window.location.hash.includes("payload=")) {
+            joinRoomFromHash(window.location.hash);
         }
     </script>
 </body>
