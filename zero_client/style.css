@@ -88,6 +88,9 @@ html, body {
   display: flex;
   align-items: center;
   gap: 12px;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
 }
 
 .brand-icon {
@@ -103,11 +106,17 @@ html, body {
   font-size: 1rem;
   color: var(--accent-cyan);
   font-family: var(--font-mono);
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
 }
 
 .brand-text {
   display: flex;
   flex-direction: column;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
 }
 
 .brand-title {
@@ -117,6 +126,9 @@ html, body {
   background: linear-gradient(135deg, #ffffff 40%, #94a3b8 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
 }
 
 .brand-tagline {
@@ -125,6 +137,9 @@ html, body {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-weight: 500;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
 }
 
 .header-controls {
@@ -154,6 +169,8 @@ html, body {
   color: var(--accent-cyan);
   font-family: var(--font-mono);
   user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
   white-space: nowrap;
 }
 
@@ -170,13 +187,9 @@ html, body {
   color: #c7d2fe;
   font-family: var(--font-mono);
   user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
   white-space: nowrap;
-  transition: all 0.2s ease;
-}
-
-.peer-pill:hover {
-  background: rgba(99, 102, 241, 0.22);
-  border-color: rgba(99, 102, 241, 0.45);
 }
 
 .peer-indicator-dot {
@@ -300,6 +313,16 @@ html, body {
   background: rgba(56, 189, 248, 0.25);
 }
 
+.btn-icon {
+  padding: 8px 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-icon svg {
+  display: block;
+}
+
 .btn-send {
   background: linear-gradient(135deg, #0ea5e9 0%, #3b82f6 100%);
   color: #ffffff;
@@ -323,6 +346,10 @@ html, body {
   gap: 8px;
   flex-shrink: 0;
   animation: slideDown 0.25s ease-out;
+}
+
+.invite-panel:not(:has(:not(.hidden))) {
+  display: none !important;
 }
 
 @keyframes slideDown {
@@ -368,13 +395,6 @@ html, body {
   color: var(--text-primary);
   font-family: var(--font-mono);
   outline: none;
-}
-
-.copy-feedback {
-  font-size: 0.75rem;
-  color: var(--accent-emerald);
-  font-weight: 500;
-  padding-left: 2px;
 }
 
 /* Chat Stream Container */

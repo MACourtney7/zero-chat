@@ -68,9 +68,13 @@
                 <div class="invite-input-row" id="room-controls">
                     <button id="btn-create-room" class="btn-action" type="button">✨ Create Private Room</button>
                     <input id="invite-url-input" class="invite-input hidden" type="text" readonly placeholder="Generating invite link..." />
-                    <button id="copy-invite-button" class="btn btn-copy hidden" type="button">Copy Link</button>
+                    <button id="copy-invite-button" class="btn btn-copy btn-icon hidden" type="button" title="Copy Invite Link" aria-label="Copy Invite Link">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                    </button>
                 </div>
-                <div id="copy-feedback" class="copy-feedback hidden">✓ Copied invite link to clipboard! Open in another window to test.</div>
             </section>
 
             <!-- Dynamic banner when opening an invite URL -->
@@ -94,12 +98,12 @@
         const WORKER_WS_ORIGIN = "wss://network.zero-chat.workers.dev";
 
         // DOM elements
+        const inviteSection = document.getElementById("invite-section");
         const peerCountEl = document.getElementById("peer-count");
         const peerListEl = document.getElementById("peer-list");
         const btnCreateRoom = document.getElementById("btn-create-room");
         const inviteInput = document.getElementById("invite-url-input");
         const btnCopyInvite = document.getElementById("copy-invite-button");
-        const copyFeedback = document.getElementById("copy-feedback");
         const joinerBanner = document.getElementById("joiner-banner");
         const joinerStatusText = document.getElementById("joiner-status-text");
         const feed = document.getElementById("messages-container");
@@ -290,6 +294,7 @@
                         hostWs = null;
                     }
                     if (joinerBanner) joinerBanner.classList.add("hidden");
+                    if (inviteSection) inviteSection.classList.add("hidden");
                 } else if (st === "closed") {
                     updateStatus("closed", "Disconnected");
                     peerCountEl.textContent = "0 peers";
@@ -365,10 +370,11 @@
                 inviteInput.classList.remove("hidden");
                 btnCopyInvite.classList.remove("hidden");
 
-                appendMessageBubble("System", "Room created! Copy the invite link above and open it in a second window/tab to connect directly.", false);
+                appendMessageBubble("System", "Secure room created.", false);
             } catch (err) {
                 console.error("Room creation failed:", err);
                 alert("Room creation failed: " + err);
+                if (inviteSection) inviteSection.classList.remove("hidden");
                 btnCreateRoom.disabled = false;
                 btnCreateRoom.textContent = "✨ Create Private Room";
                 updateStatus("disconnected", "Error creating room");
@@ -398,6 +404,7 @@
                 joinerStatusText.textContent = "Found Room Invite! Accepting offer and generating answer...";
                 updateStatus("signaling", "Connecting as peer...");
 
+                if (inviteSection) inviteSection.classList.add("hidden");
                 btnCreateRoom.classList.add("hidden");
 
                 const jsonStr = base64UrlToUtf8(rawPayload);
@@ -448,8 +455,17 @@
 
         btnCopyInvite.addEventListener("click", async () => {
             await navigator.clipboard.writeText(inviteInput.value);
-            copyFeedback.classList.remove("hidden");
-            setTimeout(() => copyFeedback.classList.add("hidden"), 3000);
+            btnCopyInvite.innerHTML = `
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>`;
+            setTimeout(() => {
+                btnCopyInvite.innerHTML = `
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>`;
+            }, 1500);
         });
 
         function doSendMessage() {
@@ -483,11 +499,17 @@
             peerListEl.innerHTML = "";
             msgInput.disabled = true;
             sendBtn.disabled = true;
+            if (inviteSection) inviteSection.classList.remove("hidden");
             btnCreateRoom.classList.remove("hidden");
             btnCreateRoom.disabled = false;
             btnCreateRoom.textContent = "✨ Create Private Room";
             inviteInput.classList.add("hidden");
             btnCopyInvite.classList.add("hidden");
+            btnCopyInvite.innerHTML = `
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>`;
             history.replaceState(null, "", window.location.pathname);
         });
 
