@@ -69,7 +69,7 @@ zero_chat/
 │   │   ├── serverless-p2p-chat.md
 │   │   └── archive/
 │   └── changes/                    # Task specifications
-│       └── archive/                # Archived change proposals (ticket-001..014)
+│       └── archive/                # Archived change proposals (ticket-001..015)
 ├── tests/                          # Root integration test suites
 │   ├── e2e_handshake.rs            # Full loopback handshake & chat roundtrip
 │   └── mesh_simulation_test.rs     # 3+ peer in-band mesh simulation suite
