@@ -72,7 +72,7 @@
                     <span class="brand-icon">0</span>
                     <div class="brand-text">
                         <h1 class="brand-title">ZeroChat</h1>
-                        <span class="brand-tagline">Ephemeral P2P</span>
+                        <span class="brand-tagline">SECURE P2P CHAT</span>
                     </div>
                 </div>
                 <div class="header-controls">
@@ -88,7 +88,7 @@
             <!-- Full-width Burn Room control underneath header (active chat only) -->
             <div id="burn-room-bar" class="burn-room-bar hidden">
                 <button id="destroy-session-button" class="btn btn-burn btn-burn-full" type="button" title="Instantly wipes all DOM messages and memory">
-                    <span>Burn Room</span>
+                    <span>Burn Chat</span>
                 </button>
             </div>
 
@@ -122,12 +122,12 @@
                             <div class="feature-icon">🛡️</div>
                             <div class="feature-content">
                                 <span class="feature-title">Zero Trace & Ephemeral</span>
-                                <p class="feature-desc">No accounts, no cookies, no storage. Closing the tab or burning the room permanently incinerates all keys and history.</p>
+                                <p class="feature-desc">No accounts, no cookies, no storage. Closing the tab or burning the chat permanently incinerates all keys and history.</p>
                             </div>
                         </div>
                     </div>
                     <div class="welcome-prompt">
-                        <span>Click <strong>Create Private Room</strong> below to start a room, or open an invite link to join.</span>
+                        <span>Click <strong>Create Private Chat</strong> below to start a chat, or open an invite link to join.</span>
                     </div>
                 </div>
             </main>
@@ -135,7 +135,7 @@
             <footer class="chat-footer glass-panel">
                 <!-- Full-width Create Private Room bar when disconnected -->
                 <div id="create-room-bar" class="create-room-bar">
-                    <button id="btn-create-room" class="btn-action btn-action-full btn-emerald" type="button">Create Private Room</button>
+                    <button id="btn-create-room" class="btn-action btn-action-full btn-emerald" type="button">Create Private Chat</button>
                 </div>
 
                 <!-- Room Invite Link & Copy Bar in footer action slot -->
@@ -202,6 +202,7 @@
             }
 
             _setState(s) {
+                if (this.state === s) return;
                 this.state = s;
                 if (this.onStateChangeCb) this.onStateChangeCb(s);
             }
@@ -338,12 +339,12 @@
                         <div class="feature-icon">🛡️</div>
                         <div class="feature-content">
                             <span class="feature-title">Zero Trace & Ephemeral</span>
-                            <p class="feature-desc">No accounts, no cookies, no storage. Closing the tab or burning the room permanently incinerates all keys and history.</p>
+                            <p class="feature-desc">No accounts, no cookies, no storage. Closing the tab or burning the chat permanently incinerates all keys and history.</p>
                         </div>
                     </div>
                 </div>
                 <div class="welcome-prompt">
-                    <span>Click <strong>Create Private Room</strong> below to start a room, or open an invite link to join.</span>
+                    <span>Click <strong>Create Private Chat</strong> below to start a chat, or open an invite link to join.</span>
                 </div>
             </div>`;
 
@@ -364,21 +365,48 @@
             }
         }
 
-        function appendMessageBubble(senderName, text, isSelf) {
+        const PEER_COLOR_PALETTE = [
+            "#38bdf8", // cyan
+            "#fbbf24", // amber
+            "#a855f7", // purple
+            "#34d399", // emerald
+            "#f43f5e", // rose
+            "#818cf8"  // indigo
+        ];
+        const peerColorMap = new Map();
+
+        function getPeerColor(peerId = "peer-01") {
+            if (!peerColorMap.has(peerId)) {
+                const color = PEER_COLOR_PALETTE[peerColorMap.size % PEER_COLOR_PALETTE.length];
+                peerColorMap.set(peerId, color);
+            }
+            return peerColorMap.get(peerId);
+        }
+
+        function appendMessageBubble(senderName, text, isSelf, peerId) {
             hideWelcomeSplash();
             const bubble = document.createElement("div");
             bubble.className = `message-bubble ${isSelf ? "message-outgoing" : "message-incoming"}`;
 
             const header = document.createElement("div");
             header.className = "message-header";
-            const sender = document.createElement("span");
-            sender.className = "message-sender";
-            sender.textContent = senderName;
+
+            const now = new Date();
+            const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
             const time = document.createElement("span");
             time.className = "message-timestamp";
-            const now = new Date();
-            time.textContent = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-            header.appendChild(sender);
+            time.textContent = timeStr;
+
+            if (!isSelf) {
+                const peerColor = getPeerColor(peerId || senderName || "peer-01");
+                bubble.style.setProperty("--peer-color", peerColor);
+
+                const peerDot = document.createElement("span");
+                peerDot.className = "peer-dot";
+                peerDot.style.backgroundColor = peerColor;
+                header.appendChild(peerDot);
+            }
+
             header.appendChild(time);
 
             const body = document.createElement("div");
@@ -409,10 +437,12 @@
         let hostWs = null;
         let isJoining = false;
         let isBurned = false;
+        let hasActiveSession = false;
 
         function initEngineListeners() {
             engine.onStateChangeCb = (st) => {
                 if (st === "open") {
+                    hasActiveSession = true;
                     hideWelcomeSplash();
                     updateStatus("open", "P2P Established");
                     if (statusBadge) statusBadge.classList.add("hidden");
@@ -440,9 +470,9 @@
                     if (joinerBanner) joinerBanner.classList.add("hidden");
 
                     if (isJoining) {
-                        appendSystemMessage("Joined room.");
+                        appendSystemMessage("Joined chat.");
                     } else {
-                        appendSystemMessage("Peer joined.");
+                        appendSystemMessage("Peer joined chat.");
                     }
                 } else if (st === "closed") {
                     updateStatus("closed", "Disconnected");
@@ -465,19 +495,22 @@
                     if (createRoomBar) {
                         createRoomBar.classList.remove("hidden");
                         btnCreateRoom.disabled = false;
-                        btnCreateRoom.textContent = "Create Private Room";
+                        btnCreateRoom.textContent = "Create Private Chat";
                     }
                     msgInput.disabled = true;
                     sendBtn.disabled = true;
+                    if (hasActiveSession && !isBurned) {
+                        appendSystemMessage("Peer left chat.");
+                    }
+                    hasActiveSession = false;
                     if (!isBurned) {
-                        appendSystemMessage("Peer left.");
                         showWelcomeSplash();
                     }
                 }
             };
 
             engine.onMessageCb = (text) => {
-                appendMessageBubble("Peer", text, false);
+                appendMessageBubble("Peer", text, false, "peer-01");
             };
         }
 
@@ -543,17 +576,17 @@
                 if (inviteBar) inviteBar.classList.remove("hidden");
                 inviteInput.value = inviteUrl;
 
-                appendSystemMessage("Secure room created.");
+                appendSystemMessage("Secure chat created.");
             } catch (err) {
-                console.error("Room creation failed:", err);
-                alert("Room creation failed: " + err);
+                console.error("Chat creation failed:", err);
+                alert("Chat creation failed: " + err);
                 if (inviteBar) inviteBar.classList.add("hidden");
                 if (createRoomBar) {
                     createRoomBar.classList.remove("hidden");
                     btnCreateRoom.disabled = false;
-                    btnCreateRoom.textContent = "Create Private Room";
+                    btnCreateRoom.textContent = "Create Private Chat";
                 }
-                updateStatus("disconnected", "Error creating room");
+                updateStatus("disconnected", "Error creating chat");
             }
         }
 
@@ -578,7 +611,7 @@
                 isJoining = true;
                 isBurned = false;
                 joinerBanner.classList.remove("hidden");
-                joinerStatusText.textContent = "Found Room Invite! Accepting offer and generating answer...";
+                joinerStatusText.textContent = "Found Chat Invite! Accepting offer and generating answer...";
                 updateStatus("signaling", "Connecting as peer...");
 
                 if (inviteBar) inviteBar.classList.add("hidden");
@@ -664,6 +697,8 @@
 
         burnBtn.addEventListener("click", () => {
             isBurned = true;
+            hasActiveSession = false;
+            peerColorMap.clear();
             if (engine) engine.close();
             if (hostWs) hostWs.close();
             isJoining = false;
@@ -692,7 +727,7 @@
             if (createRoomBar) {
                 createRoomBar.classList.remove("hidden");
                 btnCreateRoom.disabled = false;
-                btnCreateRoom.textContent = "Create Private Room";
+                btnCreateRoom.textContent = "Create Private Chat";
             }
             history.replaceState(null, "", window.location.pathname);
         });
