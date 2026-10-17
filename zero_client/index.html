@@ -80,8 +80,9 @@
                         <span class="status-indicator-dot"></span>
                         <span id="status-badge-text" class="status-label">Disconnected</span>
                     </div>
-                    <div id="peer-count" class="peer-count-badge hidden">0 peers</div>
+                    <div id="peer-count" class="peer-count-badge hidden">0</div>
                     <div id="peer-list" class="peer-list hidden"></div>
+                    <button id="header-leave-btn" class="btn btn-leave hidden" type="button" title="Leave chat session">Leave</button>
                 </div>
             </header>
 
@@ -151,8 +152,13 @@
 
                 <!-- Chat text input bar when in active chat -->
                 <form id="message-form" class="message-form hidden" onsubmit="return false;">
-                    <input id="message-input" class="message-input" type="text" placeholder="Type an encrypted message..." autocomplete="off" disabled />
-                    <button id="send-button" class="btn btn-send" type="button" disabled>Send</button>
+                    <input id="message-input" class="message-input" type="text" autocomplete="off" disabled />
+                    <button id="send-button" class="btn btn-send-emerald btn-icon" type="button" title="Send message" aria-label="Send message" disabled>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="22" y1="2" x2="11" y2="13"></line>
+                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                        </svg>
+                    </button>
                 </form>
             </footer>
         </div>
@@ -168,6 +174,7 @@
         const statusBadgeText = document.getElementById("status-badge-text");
         const peerCountEl = document.getElementById("peer-count");
         const peerListEl = document.getElementById("peer-list");
+        const headerLeaveBtn = document.getElementById("header-leave-btn");
         const createRoomBar = document.getElementById("create-room-bar");
         const btnCreateRoom = document.getElementById("btn-create-room");
         const inviteInput = document.getElementById("invite-url-input");
@@ -448,12 +455,13 @@
                     if (statusBadge) statusBadge.classList.add("hidden");
                     if (peerCountEl) {
                         peerCountEl.classList.remove("hidden");
-                        peerCountEl.textContent = "1 peer";
+                        peerCountEl.textContent = "1";
                     }
                     if (peerListEl) {
                         peerListEl.classList.remove("hidden");
-                        peerListEl.innerHTML = `<span class="peer-pill">🟢 P2P Established</span>`;
+                        peerListEl.innerHTML = `<span class="peer-pill"><svg class="peer-lock-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>P2P Established</span>`;
                     }
+                    if (headerLeaveBtn) headerLeaveBtn.classList.remove("hidden");
                     if (burnRoomBar) burnRoomBar.classList.remove("hidden");
                     if (createRoomBar) createRoomBar.classList.add("hidden");
                     if (inviteBar) inviteBar.classList.add("hidden");
@@ -470,9 +478,9 @@
                     if (joinerBanner) joinerBanner.classList.add("hidden");
 
                     if (isJoining) {
-                        appendSystemMessage("Joined chat.");
+                        appendSystemMessage("Joined chat");
                     } else {
-                        appendSystemMessage("Peer joined chat.");
+                        appendSystemMessage("Peer joined chat");
                     }
                 } else if (st === "closed") {
                     updateStatus("closed", "Disconnected");
@@ -483,12 +491,13 @@
                     }
                     if (peerCountEl) {
                         peerCountEl.classList.add("hidden");
-                        peerCountEl.textContent = "0 peers";
+                        peerCountEl.textContent = "0";
                     }
                     if (peerListEl) {
                         peerListEl.classList.add("hidden");
                         peerListEl.innerHTML = "";
                     }
+                    if (headerLeaveBtn) headerLeaveBtn.classList.add("hidden");
                     if (burnRoomBar) burnRoomBar.classList.add("hidden");
                     if (messageForm) messageForm.classList.add("hidden");
                     if (inviteBar) inviteBar.classList.add("hidden");
@@ -500,7 +509,7 @@
                     msgInput.disabled = true;
                     sendBtn.disabled = true;
                     if (hasActiveSession && !isBurned) {
-                        appendSystemMessage("Peer left chat.");
+                        appendSystemMessage("Peer left chat");
                     }
                     hasActiveSession = false;
                     if (!isBurned) {
@@ -576,7 +585,7 @@
                 if (inviteBar) inviteBar.classList.remove("hidden");
                 inviteInput.value = inviteUrl;
 
-                appendSystemMessage("Secure chat created.");
+                appendSystemMessage("Secure chat created");
             } catch (err) {
                 console.error("Chat creation failed:", err);
                 alert("Chat creation failed: " + err);
@@ -695,6 +704,10 @@
             if (e.key === "Enter") doSendMessage();
         });
 
+        if (headerLeaveBtn) {
+            headerLeaveBtn.addEventListener("click", () => burnBtn.click());
+        }
+
         burnBtn.addEventListener("click", () => {
             isBurned = true;
             hasActiveSession = false;
@@ -715,12 +728,13 @@
             }
             if (peerCountEl) {
                 peerCountEl.classList.add("hidden");
-                peerCountEl.textContent = "0 peers";
+                peerCountEl.textContent = "0";
             }
             if (peerListEl) {
                 peerListEl.classList.add("hidden");
                 peerListEl.innerHTML = "";
             }
+            if (headerLeaveBtn) headerLeaveBtn.classList.add("hidden");
             if (burnRoomBar) burnRoomBar.classList.add("hidden");
             if (messageForm) messageForm.classList.add("hidden");
             if (inviteBar) inviteBar.classList.add("hidden");
