@@ -377,6 +377,20 @@ html, body {
   font-size: 0.9rem;
 }
 
+.btn-emerald {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+  border: 1px solid rgba(16, 185, 129, 0.4) !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.28);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+
+.btn-emerald:hover:not(:disabled) {
+  background: linear-gradient(135deg, #34d399 0%, #059669 100%) !important;
+  box-shadow: 0 6px 20px rgba(16, 185, 129, 0.42);
+  transform: translateY(-1px);
+}
+
 /* Invite Section Panel */
 .invite-panel {
   padding: 14px 18px;
@@ -627,6 +641,30 @@ html, body {
   word-break: break-word;
 }
 
+.burn-banner-centered {
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  text-align: center !important;
+  width: 100%;
+  max-width: 650px;
+  margin: 16px auto !important;
+  padding: 14px 20px !important;
+  border-radius: 10px;
+  background: rgba(220, 38, 38, 0.14) !important;
+  border: 1px solid rgba(239, 68, 68, 0.5) !important;
+  box-shadow: 0 4px 24px rgba(220, 38, 38, 0.3) !important;
+  animation: alertGlow 2.5s infinite ease-in-out;
+}
+
+.burn-banner-centered .alert-icon {
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--accent-rose);
+  text-transform: uppercase;
+}
+
 /* Input Bar / Footer */
 .chat-footer {
   padding: 12px 16px;
@@ -669,6 +707,150 @@ html, body {
 
 .message-input::placeholder {
   color: var(--text-muted);
+}
+
+/* Footer Invite Bar */
+.invite-bar {
+  width: 100%;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.invite-bar .invite-input {
+  flex: 1;
+  background: rgba(10, 11, 14, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: var(--text-primary);
+  font-size: 0.88rem;
+  font-family: var(--font-mono);
+  outline: none;
+  min-width: 0;
+}
+
+.invite-bar .invite-input:focus {
+  border-color: var(--accent-emerald);
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+}
+
+.invite-bar .btn-copy {
+  flex-shrink: 0;
+  height: 40px;
+  width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(18, 24, 38, 0.8);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.invite-bar .btn-copy:hover {
+  background: rgba(16, 185, 129, 0.15);
+  border-color: rgba(16, 185, 129, 0.4);
+  color: var(--accent-emerald);
+}
+
+/* Welcome Splash Styling */
+.welcome-splash {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 680px;
+  margin: auto;
+  padding: 28px 24px;
+  background: rgba(18, 24, 38, 0.65);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  user-select: none;
+}
+
+.welcome-header {
+  text-align: center;
+}
+
+.welcome-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  background: linear-gradient(135deg, #ffffff 30%, #94a3b8 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 6px;
+}
+
+.welcome-subtitle {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.welcome-features {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.feature-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 12px 14px;
+  background: rgba(10, 11, 14, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+  transition: border-color 0.2s ease;
+}
+
+.feature-card:hover {
+  border-color: rgba(56, 189, 248, 0.2);
+}
+
+.feature-icon {
+  font-size: 1.25rem;
+  line-height: 1;
+  padding-top: 2px;
+  flex-shrink: 0;
+}
+
+.feature-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.feature-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.feature-desc {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.welcome-prompt {
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  padding: 10px;
+  background: rgba(16, 185, 129, 0.06);
+  border: 1px solid rgba(16, 185, 129, 0.18);
+  border-radius: 8px;
+}
+
+.welcome-prompt strong {
+  color: var(--accent-emerald);
 }
 
 /* Utilities */
