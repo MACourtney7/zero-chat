@@ -136,7 +136,7 @@ html, body {
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  font-weight: 500;
+  font-weight: 600;
   user-select: none;
   -webkit-user-select: none;
   cursor: default;
@@ -496,7 +496,7 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 10px 14px;
+  padding: 8px 12px;
   border-radius: 12px;
   word-break: break-word;
   animation: fadeIn 0.2s ease-out;
@@ -524,6 +524,10 @@ html, body {
   box-shadow: 0 4px 16px rgba(16, 185, 129, 0.08);
 }
 
+.message-outgoing .message-header {
+  justify-content: flex-end;
+}
+
 .message-outgoing .message-sender {
   color: #34d399;
 }
@@ -531,10 +535,16 @@ html, body {
 /* Incoming Messages ("Peer") */
 .message-incoming {
   align-self: flex-start;
-  background: rgba(14, 165, 233, 0.12);
-  border: 1px solid rgba(14, 165, 233, 0.25);
+  background: rgba(14, 165, 233, 0.10);
+  border: 1px solid rgba(14, 165, 233, 0.22);
+  border-left: 3px solid var(--peer-color, var(--accent-cyan));
   border-bottom-left-radius: 4px;
-  box-shadow: 0 4px 16px rgba(14, 165, 233, 0.08);
+  box-shadow: 0 4px 16px rgba(14, 165, 233, 0.06);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.message-incoming .message-header {
+  justify-content: flex-start;
 }
 
 .message-incoming .message-sender {
@@ -543,11 +553,28 @@ html, body {
 
 .message-header {
   display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 10px;
+  align-items: center;
+  gap: 6px;
   font-size: 0.72rem;
+  margin-bottom: 2px;
 }
+
+.peer-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--peer-color, var(--accent-cyan));
+  box-shadow: 0 0 6px var(--peer-color, var(--accent-cyan));
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.peer-color-0 { --peer-color: #38bdf8; } /* cyan */
+.peer-color-1 { --peer-color: #fbbf24; } /* amber */
+.peer-color-2 { --peer-color: #a855f7; } /* purple */
+.peer-color-3 { --peer-color: #34d399; } /* emerald */
+.peer-color-4 { --peer-color: #f43f5e; } /* rose */
+.peer-color-5 { --peer-color: #818cf8; } /* indigo */
 
 .message-sender {
   font-weight: 600;
