@@ -181,15 +181,57 @@ html, body {
   padding: 4px 10px;
   border-radius: 9999px;
   font-size: 0.72rem;
-  font-weight: 500;
-  background: rgba(99, 102, 241, 0.12);
-  border: 1px solid rgba(99, 102, 241, 0.28);
-  color: #c7d2fe;
+  font-weight: 600;
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  color: var(--accent-cyan);
   font-family: var(--font-mono);
   user-select: none;
   -webkit-user-select: none;
   cursor: default;
   white-space: nowrap;
+}
+
+.peer-lock-icon {
+  width: 12px;
+  height: 12px;
+  stroke: var(--accent-cyan);
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.btn-leave,
+#header-leave-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 12px;
+  border-radius: 9999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: rgba(244, 63, 94, 0.12);
+  border: 1px solid rgba(244, 63, 94, 0.32);
+  color: #fda4af;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.btn-leave:hover,
+#header-leave-btn:hover {
+  background: rgba(244, 63, 94, 0.24);
+  border-color: rgba(244, 63, 94, 0.6);
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(244, 63, 94, 0.35);
+  transform: translateY(-1px);
+}
+
+.btn-leave:active,
+#header-leave-btn:active {
+  transform: translateY(0);
 }
 
 .peer-indicator-dot {
@@ -346,6 +388,47 @@ html, body {
   cursor: not-allowed;
   transform: none;
   opacity: 0.55;
+}
+
+.btn-send-emerald {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: #ffffff;
+  padding: 10px 18px;
+  border-radius: 8px;
+  border: none;
+  box-shadow: 0 2px 10px rgba(16, 185, 129, 0.3);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
+}
+
+.btn-send-emerald:hover {
+  opacity: 0.92;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.45);
+  transform: translateY(-1px);
+}
+
+.btn-send-emerald:active {
+  transform: translateY(0);
+}
+
+.btn-send-emerald:disabled,
+.btn-send-emerald:disabled:hover {
+  background: rgba(51, 65, 85, 0.28);
+  color: #475569;
+  box-shadow: none;
+  cursor: not-allowed;
+  transform: none;
+  opacity: 0.6;
+}
+
+.btn-send-emerald.btn-icon {
+  width: 44px;
+  height: 42px;
+  padding: 0;
+  flex-shrink: 0;
 }
 
 /* Full Width Action and Burn Controls */
@@ -704,6 +787,7 @@ html, body {
   align-items: center;
 }
 
+#message-input,
 .message-input {
   flex: 1;
   background: rgba(10, 11, 14, 0.65);
@@ -716,11 +800,13 @@ html, body {
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
+#message-input:focus,
 .message-input:focus {
   border-color: rgba(56, 189, 248, 0.5);
   box-shadow: 0 0 12px rgba(56, 189, 248, 0.2);
 }
 
+#message-input:disabled,
 .message-input:disabled {
   background: rgba(15, 20, 30, 0.4);
   border-color: rgba(255, 255, 255, 0.05);
@@ -728,10 +814,12 @@ html, body {
   cursor: not-allowed;
 }
 
+#message-input:disabled::placeholder,
 .message-input:disabled::placeholder {
   color: #334155;
 }
 
+#message-input::placeholder,
 .message-input::placeholder {
   color: var(--text-muted);
 }
