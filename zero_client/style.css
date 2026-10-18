@@ -338,13 +338,22 @@ html, body {
   width: 58px;
   height: 26px;
   border-radius: 9999px;
-  background: rgba(244, 63, 94, 0.12);
-  border: 1px solid rgba(244, 63, 94, 0.32);
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.25);
   flex-shrink: 0;
   box-sizing: border-box;
   user-select: none;
   -webkit-user-select: none;
   cursor: default;
+}
+.status-capsule-disconnected .blue-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--accent-cyan);
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.6);
+  display: inline-block;
+  animation: none;
 }
 .status-capsule-disconnected .red-dot {
   width: 7px;
