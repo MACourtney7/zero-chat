@@ -4,7 +4,7 @@ milestone: "multi-user-mesh-chat"
 title: "Multi-User P2P Mesh Chat: Multi-Peer Engine, In-Band Relay Snapping & Header Add-Peer Controls"
 version: "1.0.0"
 created_at: "2026-10-18T21:02:00Z"
-status: "PLANNING"
+status: "COMPLETED"
 ---
 
 # Milestone Roadmap: Multi-User P2P Mesh Chat
@@ -34,7 +34,7 @@ This milestone expands Zero-Chat into a full-featured, zero-knowledge, multi-par
 | `ticket-025` | Multi-Peer Browser WebRTC Engine & Connection Pool | `MEDIUM` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-026` | In-Band SDP Signaling Relay & Mesh Snapping in Browser Client | `HIGH` | `["ticket-025"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-027` | Header Add-Peer Button, Single-Invite Lifecycle & Multi-User Room UI | `MEDIUM` | `["ticket-026"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
-| `ticket-028` | Multi-Peer E2E Simulation & Mesh Snapping Validation Suite | `MEDIUM` | `["ticket-027"]` | `PARALLEL_ELIGIBLE` | `PLANNING` |
+| `ticket-028` | Multi-Peer E2E Simulation & Mesh Snapping Validation Suite | `MEDIUM` | `["ticket-027"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 
 ---
 
@@ -78,4 +78,4 @@ flowchart TD
 - [x] **Track 1 (`ticket-025`)**: Browser client holds multiple `RTCPeerConnection` instances in a pool and broadcasts messages to all open channels.
 - [x] **Track 2 (`ticket-026`)**: Secondary peers snap direct WebRTC DataChannels via in-band SDP relay through the host with 0 cloud server requests.
 - [x] **Track 3 (`ticket-027`)**: Header Add-Peer button located to the left of `#peer-count`, enforces single active invite lifecycle, copies quietly without tooltips, and supports dynamic N-peer counter.
-- [ ] **Track 4 (`ticket-028`)**: Automated multi-node integration test suite validates full multi-user mesh lifecycle and workspace test suite passes with 100% success.
+- [x] **Track 4 (`ticket-028`)**: Automated multi-node integration test suite validates full multi-user mesh lifecycle and workspace test suite passes with 100% success.
