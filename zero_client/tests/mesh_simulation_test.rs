@@ -1,6 +1,6 @@
 //! Multi-node mesh simulation test suite for ZeroChat.
 //!
-//! Validates REQ-006.1 through REQ-006.5:
+//! Validates REQ-006.1 through REQ-006.5, REQ-022.1, and REQ-022.2:
 //! - REQ-006.1: Host bridges signaling messages between existing peers without inspecting or
 //!   decrypting their end-to-end payloads.
 //! - REQ-006.2: Third participant (Charlie) establishes direct `Channel_BC` data channel with Bob
@@ -9,6 +9,8 @@
 //! - REQ-006.4: Duplicate message broadcast loops are detected and suppressed via message ID caches.
 //! - REQ-006.5: Disconnection of a peer is detected, tearing down associated channels and updating
 //!   the UI peer list.
+//! - REQ-022.1: Multi-peer selective message purge integration test (leave and selective burn).
+//! - REQ-022.2: Multi-peer global burn integration test (session annihilation across all nodes).
 
 use std::cell::RefCell;
 use std::future::Future;
@@ -922,3 +924,637 @@ fn test_req_006_5_peer_disconnect_and_ui_cleanup() {
         "UI peer list is empty after all peers disconnect"
     );
 }
+
+/// REQ-022.1: Multi-Peer Selective Message Purge Integration Test
+///
+/// Validates that when a participant leaves and executes a selective burn:
+/// 1. Establish a 3-node connected mesh (`Alice`, `Bob`, `Charlie`):
+///    - Pair Alice <-> Bob, Alice <-> Charlie, and Bob <-> Charlie using `WebRtcPeer::pair_for_testing`.
+///    - Add peers to respective `MeshTopology` instances (`alice_mesh`, `bob_mesh`, `charlie_mesh`).
+/// 2. Mount ephemeral UI test doubles for Alice and Charlie using `ChatUi::mount`:
+///    - Alice UI: `let alice_ui = Rc::new(ChatUi::mount("alice-app").expect("mount Alice UI"));`
+///    - Charlie UI: `let charlie_ui = Rc::new(ChatUi::mount("charlie-app").expect("mount Charlie UI"));`
+///    - Seed UI peer lists for Alice (`bob`, `charlie`) and Charlie (`alice`, `bob`).
+///    - Wire `on_burn_peer_messages` callbacks on Alice and Charlie to call `ui.burn_peer_messages(peer_id)`.
+///    - Wire `on_peer_left` callbacks on Alice and Charlie to call `ui.remove_peer(peer_id)`.
+///    - Wire `on_message` callbacks on Alice and Charlie to append messages to `ChatUi` via `ui.append_message(sender, text, false, true)`.
+/// 3. Exchange messages:
+///    - Bob broadcasts multiple messages: `"Message 1 from Bob"`, `"Message 2 from Bob"`.
+///    - Alice broadcasts a message: `"Message from Alice"`. Alice's UI appends it with `is_self = true`.
+///    - Charlie broadcasts a message: `"Message from Charlie"`. Charlie's UI appends it with `is_self = true`.
+///    - Assert Alice's UI contains Bob's messages and Charlie's message and Alice's own message.
+///    - Assert Charlie's UI contains Bob's messages and Alice's message and Charlie's own message.
+/// 4. Bob executes leave and selective burn:
+///    - Call `bob_mesh.broadcast_leave_and_burn().expect("Bob leave_and_burn")`.
+/// 5. Verify selective purge and mesh survivability:
+///    - Assert Alice and Charlie both triggered `on_burn_peer_messages` with `"bob"`.
+///    - Assert Alice and Charlie both triggered `on_peer_left` with `"bob"`.
+///    - Assert Alice and Charlie removed Bob from their routing tables (`!alice_mesh.has_peer("bob")`, `!charlie_mesh.has_peer("bob")`).
+///    - Assert Alice's UI messages no longer contain any messages from `"bob"`, but DO contain `"Message from Alice"` and `"Message from Charlie"`.
+///    - Assert Charlie's UI messages no longer contain any messages from `"bob"`, but DO contain `"Message from Alice"` and `"Message from Charlie"`.
+///    - Assert Alice's UI peers only contains `"charlie"`.
+///    - Assert Charlie's UI peers only contains `"alice"`.
+/// 6. Verify continued communication between remaining peers:
+///    - Alice broadcasts a new message across the surviving mesh: `"Post-leave message from Alice to Charlie"`.
+///    - Assert Charlie receives and appends the new message from Alice.
+#[test]
+fn test_req_leave_and_burn_selective_message_purging() {
+    let (alice_sk, alice_pk) = generate_kp();
+    let (bob_sk, bob_pk) = generate_kp();
+    let (charlie_sk, charlie_pk) = generate_kp();
+
+    let alice_mesh = MeshTopology::new("alice", alice_sk);
+    let bob_mesh = MeshTopology::new("bob", bob_sk);
+    let charlie_mesh = MeshTopology::new("charlie", charlie_sk);
+
+    // 1. Establish 3-node connected mesh:
+    // Alice <-> Bob
+    let alice_to_bob = WebRtcPeer::new();
+    let bob_to_alice = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&alice_to_bob, &bob_to_alice).expect("pair Alice-Bob");
+    alice_mesh
+        .add_peer("bob", bob_pk, alice_to_bob.clone())
+        .expect("Alice adds Bob");
+    bob_mesh
+        .add_peer("alice", alice_pk, bob_to_alice.clone())
+        .expect("Bob adds Alice");
+
+    // Alice <-> Charlie
+    let alice_to_charlie = WebRtcPeer::new();
+    let charlie_to_alice = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&alice_to_charlie, &charlie_to_alice).expect("pair Alice-Charlie");
+    alice_mesh
+        .add_peer("charlie", charlie_pk, alice_to_charlie.clone())
+        .expect("Alice adds Charlie");
+    charlie_mesh
+        .add_peer("alice", alice_pk, charlie_to_alice.clone())
+        .expect("Charlie adds Alice");
+
+    // Bob <-> Charlie
+    let bob_to_charlie = WebRtcPeer::new();
+    let charlie_to_bob = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&bob_to_charlie, &charlie_to_bob).expect("pair Bob-Charlie");
+    bob_mesh
+        .add_peer("charlie", charlie_pk, bob_to_charlie.clone())
+        .expect("Bob adds Charlie");
+    charlie_mesh
+        .add_peer("bob", bob_pk, charlie_to_bob.clone())
+        .expect("Charlie adds Bob");
+
+    assert_eq!(alice_mesh.peer_count(), 2);
+    assert_eq!(bob_mesh.peer_count(), 2);
+    assert_eq!(charlie_mesh.peer_count(), 2);
+
+    // 2. Mount ephemeral UI test doubles for Alice and Charlie using ChatUi::mount:
+    let alice_ui = Rc::new(ChatUi::mount("alice-app").expect("mount Alice UI"));
+    let charlie_ui = Rc::new(ChatUi::mount("charlie-app").expect("mount Charlie UI"));
+
+    // Seed UI peer lists for Alice (bob, charlie) and Charlie (alice, bob)
+    alice_ui.add_peer("bob").expect("Alice UI adds Bob");
+    alice_ui.add_peer("charlie").expect("Alice UI adds Charlie");
+    charlie_ui.add_peer("alice").expect("Charlie UI adds Alice");
+    charlie_ui.add_peer("bob").expect("Charlie UI adds Bob");
+
+    // Wire on_burn_peer_messages callbacks on Alice and Charlie
+    let alice_burn_log = Rc::new(RefCell::new(Vec::new()));
+    let a_burn_log = alice_burn_log.clone();
+    let a_ui_burn = alice_ui.clone();
+    alice_mesh.on_burn_peer_messages(move |peer_id| {
+        a_burn_log.borrow_mut().push(peer_id.to_string());
+        let _ = a_ui_burn.burn_peer_messages(peer_id);
+    });
+
+    let charlie_burn_log = Rc::new(RefCell::new(Vec::new()));
+    let c_burn_log = charlie_burn_log.clone();
+    let c_ui_burn = charlie_ui.clone();
+    charlie_mesh.on_burn_peer_messages(move |peer_id| {
+        c_burn_log.borrow_mut().push(peer_id.to_string());
+        let _ = c_ui_burn.burn_peer_messages(peer_id);
+    });
+
+    // Wire on_peer_left callbacks on Alice and Charlie
+    let alice_left_log = Rc::new(RefCell::new(Vec::new()));
+    let a_left_log = alice_left_log.clone();
+    let a_ui_left = alice_ui.clone();
+    alice_mesh.on_peer_left(move |peer_id| {
+        a_left_log.borrow_mut().push(peer_id.to_string());
+        let _ = a_ui_left.remove_peer(peer_id);
+    });
+
+    let charlie_left_log = Rc::new(RefCell::new(Vec::new()));
+    let c_left_log = charlie_left_log.clone();
+    let c_ui_left = charlie_ui.clone();
+    charlie_mesh.on_peer_left(move |peer_id| {
+        c_left_log.borrow_mut().push(peer_id.to_string());
+        let _ = c_ui_left.remove_peer(peer_id);
+    });
+
+    // Wire on_message callbacks on Alice and Charlie to append messages to ChatUi
+    let a_ui_msg = alice_ui.clone();
+    alice_mesh.on_message(move |sender, text| {
+        let _ = a_ui_msg.append_message(sender, text, false, true);
+    });
+
+    let c_ui_msg = charlie_ui.clone();
+    charlie_mesh.on_message(move |sender, text| {
+        let _ = c_ui_msg.append_message(sender, text, false, true);
+    });
+
+    // 3. Exchange messages:
+    // Bob broadcasts multiple messages
+    bob_mesh
+        .broadcast_chat("Message 1 from Bob")
+        .expect("Bob broadcast msg 1");
+    bob_mesh
+        .broadcast_chat("Message 2 from Bob")
+        .expect("Bob broadcast msg 2");
+
+    // Alice broadcasts a message. Alice's UI appends it with is_self = true.
+    alice_mesh
+        .broadcast_chat("Message from Alice")
+        .expect("Alice broadcast message");
+    alice_ui
+        .append_message("alice", "Message from Alice", true, true)
+        .expect("Alice appends self message");
+
+    // Charlie broadcasts a message. Charlie's UI appends it with is_self = true.
+    charlie_mesh
+        .broadcast_chat("Message from Charlie")
+        .expect("Charlie broadcast message");
+    charlie_ui
+        .append_message("charlie", "Message from Charlie", true, true)
+        .expect("Charlie appends self message");
+
+    // Assert Alice's UI contains Bob's messages and Charlie's message and Alice's own message
+    let alice_msgs = alice_ui.messages();
+    assert_eq!(
+        alice_msgs.len(),
+        4,
+        "Alice UI must contain 4 messages before leave"
+    );
+    assert!(
+        alice_msgs
+            .iter()
+            .any(|(s, t, is_self, _)| s == "bob" && t == "Message 1 from Bob" && !*is_self),
+        "Alice UI must contain Bob msg 1"
+    );
+    assert!(
+        alice_msgs
+            .iter()
+            .any(|(s, t, is_self, _)| s == "bob" && t == "Message 2 from Bob" && !*is_self),
+        "Alice UI must contain Bob msg 2"
+    );
+    assert!(
+        alice_msgs
+            .iter()
+            .any(|(s, t, is_self, _)| s == "alice" && t == "Message from Alice" && *is_self),
+        "Alice UI must contain Alice self message"
+    );
+    assert!(
+        alice_msgs
+            .iter()
+            .any(|(s, t, is_self, _)| s == "charlie" && t == "Message from Charlie" && !*is_self),
+        "Alice UI must contain Charlie message"
+    );
+
+    // Assert Charlie's UI contains Bob's messages and Alice's message and Charlie's own message
+    let charlie_msgs = charlie_ui.messages();
+    assert_eq!(
+        charlie_msgs.len(),
+        4,
+        "Charlie UI must contain 4 messages before leave"
+    );
+    assert!(
+        charlie_msgs
+            .iter()
+            .any(|(s, t, is_self, _)| s == "bob" && t == "Message 1 from Bob" && !*is_self),
+        "Charlie UI must contain Bob msg 1"
+    );
+    assert!(
+        charlie_msgs
+            .iter()
+            .any(|(s, t, is_self, _)| s == "bob" && t == "Message 2 from Bob" && !*is_self),
+        "Charlie UI must contain Bob msg 2"
+    );
+    assert!(
+        charlie_msgs
+            .iter()
+            .any(|(s, t, is_self, _)| s == "alice" && t == "Message from Alice" && !*is_self),
+        "Charlie UI must contain Alice message"
+    );
+    assert!(
+        charlie_msgs
+            .iter()
+            .any(|(s, t, is_self, _)| s == "charlie" && t == "Message from Charlie" && *is_self),
+        "Charlie UI must contain Charlie self message"
+    );
+
+    // 4. Bob executes leave and selective burn:
+    bob_mesh
+        .broadcast_leave_and_burn()
+        .expect("Bob leave_and_burn");
+
+    // 5. Verify selective purge and mesh survivability:
+    // Assert Alice and Charlie both triggered on_burn_peer_messages with "bob"
+    assert_eq!(
+        *alice_burn_log.borrow(),
+        vec!["bob".to_string()],
+        "Alice must trigger on_burn_peer_messages for 'bob'"
+    );
+    assert_eq!(
+        *charlie_burn_log.borrow(),
+        vec!["bob".to_string()],
+        "Charlie must trigger on_burn_peer_messages for 'bob'"
+    );
+
+    // Assert Alice and Charlie both triggered on_peer_left with "bob"
+    assert_eq!(
+        *alice_left_log.borrow(),
+        vec!["bob".to_string()],
+        "Alice must trigger on_peer_left for 'bob'"
+    );
+    assert_eq!(
+        *charlie_left_log.borrow(),
+        vec!["bob".to_string()],
+        "Charlie must trigger on_peer_left for 'bob'"
+    );
+
+    // Assert Alice and Charlie removed Bob from their routing tables
+    assert!(
+        !alice_mesh.has_peer("bob"),
+        "Alice routing table must not have Bob"
+    );
+    assert!(
+        !charlie_mesh.has_peer("bob"),
+        "Charlie routing table must not have Bob"
+    );
+    assert_eq!(
+        alice_mesh.peer_count(),
+        1,
+        "Alice must have 1 peer remaining"
+    );
+    assert_eq!(
+        charlie_mesh.peer_count(),
+        1,
+        "Charlie must have 1 peer remaining"
+    );
+    assert!(
+        alice_mesh.has_peer("charlie"),
+        "Alice must retain Charlie"
+    );
+    assert!(
+        charlie_mesh.has_peer("alice"),
+        "Charlie must retain Alice"
+    );
+
+    // Assert Alice's UI messages no longer contain any messages from "bob", but DO contain Alice's and Charlie's messages
+    let alice_msgs_post_burn = alice_ui.messages();
+    assert_eq!(
+        alice_msgs_post_burn.len(),
+        2,
+        "Alice UI must have exactly 2 messages after Bob's selective purge"
+    );
+    assert!(
+        !alice_msgs_post_burn.iter().any(|(s, _, _, _)| s == "bob"),
+        "Alice UI must not contain any messages from 'bob'"
+    );
+    assert!(
+        alice_msgs_post_burn
+            .iter()
+            .any(|(s, t, is_self, _)| s == "alice" && t == "Message from Alice" && *is_self),
+        "Alice UI must retain Alice's own message"
+    );
+    assert!(
+        alice_msgs_post_burn
+            .iter()
+            .any(|(s, t, is_self, _)| s == "charlie" && t == "Message from Charlie" && !*is_self),
+        "Alice UI must retain Charlie's message"
+    );
+
+    // Assert Charlie's UI messages no longer contain any messages from "bob", but DO contain Alice's and Charlie's messages
+    let charlie_msgs_post_burn = charlie_ui.messages();
+    assert_eq!(
+        charlie_msgs_post_burn.len(),
+        2,
+        "Charlie UI must have exactly 2 messages after Bob's selective purge"
+    );
+    assert!(
+        !charlie_msgs_post_burn.iter().any(|(s, _, _, _)| s == "bob"),
+        "Charlie UI must not contain any messages from 'bob'"
+    );
+    assert!(
+        charlie_msgs_post_burn
+            .iter()
+            .any(|(s, t, is_self, _)| s == "alice" && t == "Message from Alice" && !*is_self),
+        "Charlie UI must retain Alice's message"
+    );
+    assert!(
+        charlie_msgs_post_burn
+            .iter()
+            .any(|(s, t, is_self, _)| s == "charlie" && t == "Message from Charlie" && *is_self),
+        "Charlie UI must retain Charlie's own message"
+    );
+
+    // Assert Alice's UI peers only contains "charlie"
+    assert_eq!(
+        alice_ui.peers(),
+        vec!["charlie".to_string()],
+        "Alice UI peers must only contain Charlie"
+    );
+
+    // Assert Charlie's UI peers only contains "alice"
+    assert_eq!(
+        charlie_ui.peers(),
+        vec!["alice".to_string()],
+        "Charlie UI peers must only contain Alice"
+    );
+
+    // 6. Verify continued communication between remaining peers:
+    let post_leave_msg = "Post-leave message from Alice to Charlie";
+    alice_mesh
+        .broadcast_chat(post_leave_msg)
+        .expect("Alice broadcast post-leave message");
+
+    let charlie_msgs_final = charlie_ui.messages();
+    assert_eq!(
+        charlie_msgs_final.len(),
+        3,
+        "Charlie UI must append post-leave message from Alice"
+    );
+    assert_eq!(
+        charlie_msgs_final.last(),
+        Some(&(
+            "alice".to_string(),
+            post_leave_msg.to_string(),
+            false,
+            true
+        )),
+        "Charlie UI last message must match post-leave message from Alice"
+    );
+}
+
+/// REQ-022.2: Multi-Peer Global Burn Integration Test
+///
+/// Validates session annihilation across all nodes:
+/// 1. Establish a 3-node connected mesh (`Alice`, `Bob`, `Charlie`) with paired `WebRtcPeer` instances and populated routing tables.
+/// 2. Mount ephemeral UI test doubles for all three participants (`alice_ui`, `bob_ui`, `charlie_ui`).
+/// 3. Connect `on_global_burn` on all three `MeshTopology` instances to record initiator and call `destroy_session()`.
+/// 4. Populate messages in feeds across all three participants.
+/// 5. Trigger global burn from Charlie (`charlie_mesh.broadcast_global_burn()`).
+/// 6. Verify global annihilation across all three nodes:
+///    - `on_global_burn` callback executed on Alice, Bob, and Charlie with initiator "charlie".
+///    - All peer channels severed and routing tables cleared (`peer_count() == 0`).
+///    - `ui.messages().is_empty()` and `ui.peers().is_empty()` for all three participants.
+///    - Deduplication caches and pending tables are zeroized/cleared on all nodes (`seen_messages_count() == 0`).
+#[test]
+fn test_req_global_burn_session_annihilation() {
+    let (alice_sk, alice_pk) = generate_kp();
+    let (bob_sk, bob_pk) = generate_kp();
+    let (charlie_sk, charlie_pk) = generate_kp();
+
+    let alice_mesh = MeshTopology::new("alice", alice_sk);
+    let bob_mesh = MeshTopology::new("bob", bob_sk);
+    let charlie_mesh = MeshTopology::new("charlie", charlie_sk);
+
+    // 1. Establish a 3-node connected mesh with paired WebRtcPeer instances and populated routing tables
+    let alice_to_bob = WebRtcPeer::new();
+    let bob_to_alice = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&alice_to_bob, &bob_to_alice).expect("pair Alice-Bob");
+    alice_mesh
+        .add_peer("bob", bob_pk, alice_to_bob.clone())
+        .expect("Alice adds Bob");
+    bob_mesh
+        .add_peer("alice", alice_pk, bob_to_alice.clone())
+        .expect("Bob adds Alice");
+
+    let alice_to_charlie = WebRtcPeer::new();
+    let charlie_to_alice = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&alice_to_charlie, &charlie_to_alice).expect("pair Alice-Charlie");
+    alice_mesh
+        .add_peer("charlie", charlie_pk, alice_to_charlie.clone())
+        .expect("Alice adds Charlie");
+    charlie_mesh
+        .add_peer("alice", alice_pk, charlie_to_alice.clone())
+        .expect("Charlie adds Alice");
+
+    let bob_to_charlie = WebRtcPeer::new();
+    let charlie_to_bob = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&bob_to_charlie, &charlie_to_bob).expect("pair Bob-Charlie");
+    bob_mesh
+        .add_peer("charlie", charlie_pk, bob_to_charlie.clone())
+        .expect("Bob adds Charlie");
+    charlie_mesh
+        .add_peer("bob", bob_pk, charlie_to_bob.clone())
+        .expect("Charlie adds Bob");
+
+    assert_eq!(alice_mesh.peer_count(), 2);
+    assert_eq!(bob_mesh.peer_count(), 2);
+    assert_eq!(charlie_mesh.peer_count(), 2);
+
+    // 2. Mount ephemeral UI test doubles for all three participants
+    let alice_ui = Rc::new(ChatUi::mount("alice-app").expect("mount Alice UI"));
+    let bob_ui = Rc::new(ChatUi::mount("bob-app").expect("mount Bob UI"));
+    let charlie_ui = Rc::new(ChatUi::mount("charlie-app").expect("mount Charlie UI"));
+
+    alice_ui.add_peer("bob").expect("Alice UI adds Bob");
+    alice_ui.add_peer("charlie").expect("Alice UI adds Charlie");
+    bob_ui.add_peer("alice").expect("Bob UI adds Alice");
+    bob_ui.add_peer("charlie").expect("Bob UI adds Charlie");
+    charlie_ui.add_peer("alice").expect("Charlie UI adds Alice");
+    charlie_ui.add_peer("bob").expect("Charlie UI adds Bob");
+
+    // 3. Connect on_global_burn on all three MeshTopology instances
+    let alice_burn_initiators = Rc::new(RefCell::new(Vec::new()));
+    let a_burn = alice_burn_initiators.clone();
+    let a_ui = alice_ui.clone();
+    alice_mesh.on_global_burn(move |initiator| {
+        a_burn.borrow_mut().push(initiator.to_string());
+        let _ = a_ui.destroy_session();
+    });
+
+    let bob_burn_initiators = Rc::new(RefCell::new(Vec::new()));
+    let b_burn = bob_burn_initiators.clone();
+    let b_ui = bob_ui.clone();
+    bob_mesh.on_global_burn(move |initiator| {
+        b_burn.borrow_mut().push(initiator.to_string());
+        let _ = b_ui.destroy_session();
+    });
+
+    let charlie_burn_initiators = Rc::new(RefCell::new(Vec::new()));
+    let c_burn = charlie_burn_initiators.clone();
+    let c_ui = charlie_ui.clone();
+    charlie_mesh.on_global_burn(move |initiator| {
+        c_burn.borrow_mut().push(initiator.to_string());
+        let _ = c_ui.destroy_session();
+    });
+
+    // Wire on_message callbacks on all three instances to feed their UIs
+    let a_ui_msg = alice_ui.clone();
+    alice_mesh.on_message(move |sender, text| {
+        let _ = a_ui_msg.append_message(sender, text, false, true);
+    });
+
+    let b_ui_msg = bob_ui.clone();
+    bob_mesh.on_message(move |sender, text| {
+        let _ = b_ui_msg.append_message(sender, text, false, true);
+    });
+
+    let c_ui_msg = charlie_ui.clone();
+    charlie_mesh.on_message(move |sender, text| {
+        let _ = c_ui_msg.append_message(sender, text, false, true);
+    });
+
+    // 4. Populate messages in feeds across all three participants
+    alice_mesh
+        .broadcast_chat("Broadcast from Alice")
+        .expect("Alice broadcast");
+    alice_ui
+        .append_message("alice", "Broadcast from Alice", true, true)
+        .expect("Alice UI self message");
+
+    bob_mesh
+        .broadcast_chat("Broadcast from Bob")
+        .expect("Bob broadcast");
+    bob_ui
+        .append_message("bob", "Broadcast from Bob", true, true)
+        .expect("Bob UI self message");
+
+    charlie_mesh
+        .broadcast_chat("Broadcast from Charlie")
+        .expect("Charlie broadcast");
+    charlie_ui
+        .append_message("charlie", "Broadcast from Charlie", true, true)
+        .expect("Charlie UI self message");
+
+    alice_ui
+        .append_security_alert("Sample alert on Alice")
+        .expect("Alice alert");
+    bob_ui
+        .append_security_alert("Sample alert on Bob")
+        .expect("Bob alert");
+    charlie_ui
+        .append_security_alert("Sample alert on Charlie")
+        .expect("Charlie alert");
+
+    // Pre-burn verification: feeds, peers, deduplication caches populated
+    assert!(!alice_ui.messages().is_empty());
+    assert!(!bob_ui.messages().is_empty());
+    assert!(!charlie_ui.messages().is_empty());
+
+    assert_eq!(alice_ui.peers().len(), 2);
+    assert_eq!(bob_ui.peers().len(), 2);
+    assert_eq!(charlie_ui.peers().len(), 2);
+
+    assert!(!alice_ui.alerts().is_empty());
+    assert!(!bob_ui.alerts().is_empty());
+    assert!(!charlie_ui.alerts().is_empty());
+
+    assert!(alice_mesh.seen_messages_count() > 0);
+    assert!(bob_mesh.seen_messages_count() > 0);
+    assert!(charlie_mesh.seen_messages_count() > 0);
+
+    // 5. Trigger global burn from Charlie
+    charlie_mesh
+        .broadcast_global_burn()
+        .expect("Charlie global burn");
+
+    // 6. Verify global annihilation across all three nodes:
+    // Assert on_global_burn callback executed with initiator "charlie" on all three
+    assert_eq!(
+        *alice_burn_initiators.borrow(),
+        vec!["charlie".to_string()],
+        "Alice on_global_burn must record 'charlie'"
+    );
+    assert_eq!(
+        *bob_burn_initiators.borrow(),
+        vec!["charlie".to_string()],
+        "Bob on_global_burn must record 'charlie'"
+    );
+    assert_eq!(
+        *charlie_burn_initiators.borrow(),
+        vec!["charlie".to_string()],
+        "Charlie on_global_burn must record 'charlie'"
+    );
+
+    // Assert all peer channels are severed and routing tables are cleared
+    assert_eq!(
+        alice_mesh.peer_count(),
+        0,
+        "Alice peer_count must be 0 after global burn"
+    );
+    assert_eq!(
+        bob_mesh.peer_count(),
+        0,
+        "Bob peer_count must be 0 after global burn"
+    );
+    assert_eq!(
+        charlie_mesh.peer_count(),
+        0,
+        "Charlie peer_count must be 0 after global burn"
+    );
+
+    assert!(!alice_mesh.has_peer("bob"));
+    assert!(!alice_mesh.has_peer("charlie"));
+    assert!(!bob_mesh.has_peer("alice"));
+    assert!(!bob_mesh.has_peer("charlie"));
+    assert!(!charlie_mesh.has_peer("alice"));
+    assert!(!charlie_mesh.has_peer("bob"));
+
+    assert_eq!(alice_to_bob.state(), PeerLifecycleState::Closed);
+    assert_eq!(bob_to_alice.state(), PeerLifecycleState::Closed);
+    assert_eq!(alice_to_charlie.state(), PeerLifecycleState::Closed);
+    assert_eq!(charlie_to_alice.state(), PeerLifecycleState::Closed);
+    assert_eq!(bob_to_charlie.state(), PeerLifecycleState::Closed);
+    assert_eq!(charlie_to_bob.state(), PeerLifecycleState::Closed);
+
+    // Assert ui.messages().is_empty() is true for Alice, Bob, and Charlie
+    assert!(
+        alice_ui.messages().is_empty(),
+        "Alice UI messages must be empty after global burn"
+    );
+    assert!(
+        bob_ui.messages().is_empty(),
+        "Bob UI messages must be empty after global burn"
+    );
+    assert!(
+        charlie_ui.messages().is_empty(),
+        "Charlie UI messages must be empty after global burn"
+    );
+
+    // Assert ui.peers().is_empty() is true for Alice, Bob, and Charlie
+    assert!(
+        alice_ui.peers().is_empty(),
+        "Alice UI peers must be empty after global burn"
+    );
+    assert!(
+        bob_ui.peers().is_empty(),
+        "Bob UI peers must be empty after global burn"
+    );
+    assert!(
+        charlie_ui.peers().is_empty(),
+        "Charlie UI peers must be empty after global burn"
+    );
+
+    // Assert ui alerts are cleared
+    assert!(alice_ui.alerts().is_empty());
+    assert!(bob_ui.alerts().is_empty());
+    assert!(charlie_ui.alerts().is_empty());
+
+    // Assert deduplication caches and pending tables are zeroized / cleared on all nodes
+    assert_eq!(
+        alice_mesh.seen_messages_count(),
+        0,
+        "Alice deduplication cache must be zeroized"
+    );
+    assert_eq!(
+        bob_mesh.seen_messages_count(),
+        0,
+        "Bob deduplication cache must be zeroized"
+    );
+    assert_eq!(
+        charlie_mesh.seen_messages_count(),
+        0,
+        "Charlie deduplication cache must be zeroized"
+    );
+}
+
