@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-024"
 title: "Peer Departure Deduplication and Disconnected Room Controls Preservation"
-state: "IN_PROGRESS"
+state: "COMPLETED"
 created_at: "2026-10-18T20:25:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-024/main"
@@ -64,15 +64,15 @@ When a peer exits a chat session—whether cleanly via `#header-leave-btn`, abru
 
 ## 3. Requirements & Acceptance Criteria
 
-- [ ] **REQ-024.1 (Deduplicated Peer Departure System Message)**:
+- [x] **REQ-024.1 (Deduplicated Peer Departure System Message)**:
   - Regardless of how a peer leaves (clicking `#header-leave-btn`, page refresh, tab closure, or network disconnect), surviving clients must produce **exactly one** system message: `"Peer left chat"`.
   - No duplicate system messages may appear on page refresh or dirty disconnect.
   - The bracketed messages `[Peer left - messages burned]` and `[Peer disconnected - messages burned]` must be eliminated in favor of `"Peer left chat"`.
 
-- [ ] **REQ-024.2 (Selective Message Purge Preservation)**:
+- [x] **REQ-024.2 (Selective Message Purge Preservation)**:
   - When the peer leaves (either via signal or dirty disconnect), remote messages authored by that peer are immediately removed from `#messages-feed`, preserving the zero-persistence invariant.
 
-- [ ] **REQ-024.3 (Disconnected Room Top Bar & Burn Controls)**:
+- [x] **REQ-024.3 (Disconnected Room Top Bar & Burn Controls)**:
   - When a peer leaves/disconnects in an active session:
     1. Header peer counter `#peer-count` displays `"0"`.
     2. Header padlock icon (`#peer-list .peer-pill`) remains visible.
@@ -81,7 +81,7 @@ When a peer exits a chat session—whether cleanly via `#header-leave-btn`, abru
     5. Sub-header burn button bar `#burn-room-bar` remains visible below the header.
     6. Footer `#message-form` remains visible with inputs disabled; `#create-room-bar` remains hidden.
 
-- [ ] **REQ-024.4 (Clean Reset to Home via Leave or Burn)**:
+- [x] **REQ-024.4 (Clean Reset to Home via Leave or Burn)**:
   - From the disconnected room state, clicking either `#header-leave-btn` or `#destroy-session-button` must trigger `resetToHome()`:
     1. Message feed is wiped (`#messages-container` returns to welcome splash).
     2. Header controls transition to idle state (padlock hidden, leave button hidden, `#idle-status-capsule` visible with blue dot, peer counter `"0"`).
@@ -89,7 +89,7 @@ When a peer exits a chat session—whether cleanly via `#header-leave-btn`, abru
     4. Footer `#create-room-bar` is unhidden and `#message-form` is hidden.
     5. URL hash is cleared.
 
-- [ ] **REQ-024.5 (Automated Test Coverage & Linter Integrity)**:
+- [x] **REQ-024.5 (Automated Test Coverage & Linter Integrity)**:
   - Automated tests verify:
     - Peer departure deduplication and single `"Peer left chat"` output.
     - Top bar and burn button retention on peer departure.

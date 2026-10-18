@@ -132,9 +132,9 @@ zero_chat/
 - **Opaque Bridge Relay (REQ-006.1)**: Room host acts as an in-band signaling bridge between existing peers (`Channel_AB`, `Channel_AC`). Relay frames (`RelaySdpOffer`, `RelaySdpAnswer`) contain end-to-end sealed payloads; relay nodes forward them verbatim without inspection.
 - **Direct Mesh Snapping (REQ-006.2)**: Secondary peers (Bob and Charlie) exchange SDP offers/answers over Alice's bridge and snap direct WebRTC DataChannels (`Channel_BC`) with **0 cloud edge requests**.
 - **Broadcast Flooding & Loop Suppression (REQ-006.3, REQ-006.4)**: Chat messages flood across direct links with initial TTL = 3. Network loops in cyclic/triangle topologies are suppressed using a FIFO message ID cache (`seen_messages`), delivering messages exactly once.
-- **Selective Leave & Purge (`PeerLeftAndBurn`)**: Clean departures broadcast `PeerLeftAndBurn` across the mesh before connection severance. Remote peers update routing tables and peer counts, selectively purge all DOM bubbles matching `.message-bubble[data-peer-id="<peer_id>"]`, and log `[Peer left - messages burned]`. Surviving mesh links remain active.
+- **Selective Leave & Purge (`PeerLeftAndBurn`)**: Clean departures broadcast `PeerLeftAndBurn` across the mesh before connection severance. Remote peers update routing tables and peer counts, selectively purge all DOM bubbles matching `.message-bubble[data-peer-id="<peer_id>"]`, and log a single clean `"Peer left chat"` notice (REQ-024.1). Surviving mesh links remain active.
 - **Global Room Annihilation (`GlobalBurnSession`)**: Triggered via `#destroy-session-button`, flooding a burn signal across all active DataChannels. All recipient nodes immediately invoke `resetToHome()`, closing connections, zeroizing memory, and wiping feeds simultaneously.
-- **Dirty Disconnect & Window Unload Purge**: Abrupt channel closures (`PeerLifecycleState::Closed` / `st === "closed"`) and `MeshTopology::remove_peer` automatically invoke `on_burn_peer_messages` to purge disconnected peer messages from the UI feed. Window `beforeunload` and `pagehide` listeners opportunistically dispatch `leave_and_burn` signals out before browser exit.
+- **Dirty Disconnect, Window Unload Purge & Controls Preservation**: Abrupt channel closures (`PeerLifecycleState::Closed` / `st === "closed"`) and `MeshTopology::remove_peer` automatically invoke `on_burn_peer_messages` to purge disconnected peer messages from the UI feed. Window `beforeunload` and `pagehide` listeners opportunistically dispatch `leave_and_burn` signals out before browser exit with deduplication guards. On peer departure, surviving nodes preserve disconnected room controls: header peer count `0`, padlock icon, and leave button remain visible (blue dot hidden), burn button remains accessible below header, and message input is disabled with `"Peer left chat"` placeholder, allowing the user to cleanly leave or burn to return to the home view (REQ-024.3, REQ-024.4).
 
 ### 3.7 CI/CD Automation (`.github/workflows/`)
 - **`ci.yml`**: Triggers on pull requests and pushes to `main`. Executes `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, full workspace test suite (`cargo test --workspace`), and target-specific builds (`wasm32-unknown-unknown` for `zero_client`).
@@ -167,16 +167,16 @@ Host (Alice)                     Joiner (Bob)                 Cloudflare DO
 
 ---
 
-## 5. Test & Validation Coverage (102 Tests)
+## 5. Test & Validation Coverage (103 Tests)
 
 ```text
 Unit Tests:
-  - zero_client lib (53 tests):
+  - zero_client lib (54 tests):
     * bootstrap & auto-drop: 8 passed
     * payload sealing & zeroization: 13 passed
     * invite generation & fragment packing: 8 passed
     * mesh topology & in-band relay: 11 passed (including leave and burn broadcasts, disconnect cleanup)
-    * chat UI & zero-persistence audit: 13 passed (including selective message burning, burn idempotency)
+    * chat UI & zero-persistence audit: 14 passed (including selective message burning, departure session preservation, burn idempotency)
   - zero_network lib (3 tests):
     * ephemeral room capacity & burn: 2 passed
     * mock host socket attachment: 1 passed
