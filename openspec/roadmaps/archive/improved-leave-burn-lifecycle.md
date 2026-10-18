@@ -4,6 +4,7 @@ milestone: "improved-leave-burn-lifecycle"
 title: "Improved Leave and Burn Lifecycle: Selective Message Purging and Global Room Annihilation"
 version: "1.0.0"
 created_at: "2026-10-18T17:05:00Z"
+completed_at: "2026-10-18T20:13:00Z"
 status: "COMPLETED"
 ---
 

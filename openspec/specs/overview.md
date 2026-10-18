@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.0.0"
-milestone: "serverless-p2p-chat"
+version: "1.1.0"
+milestone: "improved-leave-burn-lifecycle"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-18T16:58:00Z"
+updated_at: "2026-10-18T20:15:00Z"
 ---
 ```
 
@@ -19,7 +19,11 @@ updated_at: "2026-10-18T16:58:00Z"
 3. **Pure Rust Cryptographic Engine**: Synchronous, memory-safe cryptographic primitives (`x25519-dalek`, `chacha20poly1305`, `hmac-sha256` with `getrandom/js`) shared across WASM and Cloudflare Worker, bypassing asynchronous JS WebCrypto bridging overhead.
 4. **Direct P2P DataChannels**: Once the initial WebRTC SDP offer/answer exchange completes, the cloud edge drops out permanently (`is_edge_severed() == true`). All communication flows directly over browser-to-browser UDP DataChannels.
 5. **In-Band Gossip Mesh**: Multi-peer scaling without cloud edge requests. The room host acts as an opaque in-band signaling bridge between existing DataChannels (`Channel_AB`, `Channel_AC`), allowing joining peers to snap direct connections (`Channel_BC`) with zero edge hits.
-6. **Hermetic CI/CD Pipelines**: Automated dual-target test validation, strict clippy auditing, and automated Cloudflare Worker + Cloudflare Pages deployment via GitHub Actions.
+6. **Mesh-Coordinated Leave vs. Burn Lifecycle**:
+   - **Leave Chat (`leave_and_burn`)**: Clean departures broadcast `PeerLeftAndBurn` across the mesh before severance, causing remaining peers to selectively purge all messages authored by the leaving peer (`data-peer-id`) while preserving active mesh connections; the departing user's local session is reset to home.
+   - **Burn Chat (`global_burn`)**: Triggers complete room annihilation (`GlobalBurnSession`) flooded across all peers, immediately closing DataChannels, zeroizing keys/memory, and returning all participants simultaneously to the home view.
+   - **Dirty Disconnect Purge**: Abrupt disconnections (tab close, network severance) are intercepted via WebRTC channel state monitors and unload events to automatically purge the departed peer's messages on surviving clients.
+7. **Hermetic CI/CD Pipelines**: Automated dual-target test validation, strict clippy auditing, and automated Cloudflare Worker + Cloudflare Pages deployment via GitHub Actions.
 
 ---
 
@@ -69,7 +73,7 @@ zero_chat/
 │   │   ├── serverless-p2p-chat.md
 │   │   └── archive/
 │   └── changes/                    # Task specifications
-│       └── archive/                # Archived change proposals (ticket-001..019)
+│       └── archive/                # Archived change proposals (ticket-001..023)
 ├── tests/                          # Root integration test suites
 │   ├── e2e_handshake.rs            # Full loopback handshake & chat roundtrip
 │   └── mesh_simulation_test.rs     # 3+ peer in-band mesh simulation suite
@@ -118,13 +122,19 @@ zero_chat/
 - Direct chat creation logging: Room creation immediately outputs `"Secure chat created"` with timestamp.
 - Minimalist welcome splash with centered brand headline (`Zero accounts. Zero servers. Zero history.`), 3-step action flow (`Create Chat -> Share Link -> Talk P2P`), and 3 invariant feature cards (`Direct P2P Connection` with description `"Private channels with no intermediate relays or storage servers."`, `Secure Communications`, `Ephemeral Sessions`) displayed strictly when the chat is empty; session burn and leave return the user cleanly to this home view.
 - Unified chat bubble styling across incoming and outgoing messages with left accent borders (emerald for self, cyan/palette for peers), `[dot] [timestamp]` header layout with regular arrow cursor, and clean message bodies without bulky verification footers.
+- Message bubbles are stamped with `data-peer-id="<peer_id>"` (or `"local"` for self) for deterministic author attribution and selective burning.
+- Distinct Leave and Burn UI triggers:
+  - Circular red exit button (`#header-leave-btn`): triggers selective peer message purge across surviving peers (`PeerLeftAndBurn`) and resets local view to home.
+  - Session burn button (`#destroy-session-button`): triggers global room annihilation (`GlobalBurnSession`) flooding all peers and resetting everyone to home.
 - Left-aligned system messages with monospace timestamps (`[HH:MM]`).
 
-### 3.6 Decentralized In-Band Gossip Mesh (`zero_client::mesh`, `envelope`)
+### 3.6 Decentralized In-Band Gossip Mesh & Lifecycle (`zero_client::mesh`, `envelope`)
 - **Opaque Bridge Relay (REQ-006.1)**: Room host acts as an in-band signaling bridge between existing peers (`Channel_AB`, `Channel_AC`). Relay frames (`RelaySdpOffer`, `RelaySdpAnswer`) contain end-to-end sealed payloads; relay nodes forward them verbatim without inspection.
 - **Direct Mesh Snapping (REQ-006.2)**: Secondary peers (Bob and Charlie) exchange SDP offers/answers over Alice's bridge and snap direct WebRTC DataChannels (`Channel_BC`) with **0 cloud edge requests**.
 - **Broadcast Flooding & Loop Suppression (REQ-006.3, REQ-006.4)**: Chat messages flood across direct links with initial TTL = 3. Network loops in cyclic/triangle topologies are suppressed using a FIFO message ID cache (`seen_messages`), delivering messages exactly once.
-- **Graceful Teardown (REQ-006.5)**: Peer disconnects are broadcast via `PeerLeft` signals, cleaning routing tables and updating UI peer indicator lists while keeping remaining links active.
+- **Selective Leave & Purge (`PeerLeftAndBurn`)**: Clean departures broadcast `PeerLeftAndBurn` across the mesh before connection severance. Remote peers update routing tables and peer counts, selectively purge all DOM bubbles matching `.message-bubble[data-peer-id="<peer_id>"]`, and log `[Peer left - messages burned]`. Surviving mesh links remain active.
+- **Global Room Annihilation (`GlobalBurnSession`)**: Triggered via `#destroy-session-button`, flooding a burn signal across all active DataChannels. All recipient nodes immediately invoke `resetToHome()`, closing connections, zeroizing memory, and wiping feeds simultaneously.
+- **Dirty Disconnect & Window Unload Purge**: Abrupt channel closures (`PeerLifecycleState::Closed` / `st === "closed"`) and `MeshTopology::remove_peer` automatically invoke `on_burn_peer_messages` to purge disconnected peer messages from the UI feed. Window `beforeunload` and `pagehide` listeners opportunistically dispatch `leave_and_burn` signals out before browser exit.
 
 ### 3.7 CI/CD Automation (`.github/workflows/`)
 - **`ci.yml`**: Triggers on pull requests and pushes to `main`. Executes `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, full workspace test suite (`cargo test --workspace`), and target-specific builds (`wasm32-unknown-unknown` for `zero_client`).
@@ -157,21 +167,21 @@ Host (Alice)                     Joiner (Bob)                 Cloudflare DO
 
 ---
 
-## 5. Test & Validation Coverage (91 Tests)
+## 5. Test & Validation Coverage (102 Tests)
 
 ```text
 Unit Tests:
-  - zero_client lib (47 tests):
+  - zero_client lib (53 tests):
     * bootstrap & auto-drop: 8 passed
-    * payload sealing & zeroization: 12 passed
+    * payload sealing & zeroization: 13 passed
     * invite generation & fragment packing: 8 passed
-    * mesh topology & in-band relay: 8 passed
-    * chat UI & zero-persistence audit: 11 passed
+    * mesh topology & in-band relay: 11 passed (including leave and burn broadcasts, disconnect cleanup)
+    * chat UI & zero-persistence audit: 13 passed (including selective message burning, burn idempotency)
   - zero_network lib (3 tests):
     * ephemeral room capacity & burn: 2 passed
     * mock host socket attachment: 1 passed
-  - zero_protocol lib (6 tests):
-    * envelope schemas & TTL decrementation: 6 passed
+  - zero_protocol lib (8 tests):
+    * envelope schemas & TTL decrementation: 8 passed (including PeerLeftAndBurn, GlobalBurnSession)
 
 Integration Test Suites:
   - tests/e2e_handshake.rs (5 tests):
@@ -180,12 +190,15 @@ Integration Test Suites:
     * REQ-005.3: Tamper detection & security alert handling
     * REQ-005.4: Zero persistence lifecycle audit
     * REQ-005.5: Complete E2E handshake & encrypted chat roundtrip
-  - tests/mesh_simulation_test.rs (5 tests):
+  - tests/mesh_simulation_test.rs (8 tests):
     * REQ-006.1: Opaque bridge signaling relay
     * REQ-006.2: Direct mesh snap zero cloud edge
     * REQ-006.3: Mesh broadcast flooding delivery
     * REQ-006.4: Duplicate broadcast loop suppression & bounded cache
     * REQ-006.5: Peer disconnect & UI cleanup
+    * REQ-007.1: Leave and burn selective message purging
+    * REQ-007.2: Global burn session room annihilation
+    * REQ-007.3: Dirty disconnect automatic peer message purging
   - tests/invite_tests.rs (4 tests):
     * REQ-004.1 through REQ-004.5
   - tests/webrtc_tests.rs (6 tests):
@@ -195,5 +208,5 @@ Integration Test Suites:
   - tests/protocol_tests.rs (10 tests):
     * REQ-001.1 through REQ-001.5
 
-Total: 91 passed, 0 failed, 0 ignored.
+Total: 102 passed, 0 failed, 0 ignored.
 ```
