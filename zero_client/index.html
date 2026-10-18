@@ -185,17 +185,50 @@
         const burnRoomBar = document.getElementById("burn-room-bar");
         const burnBtn = document.getElementById("destroy-session-button");
 
+        // Deduplication & Glare Avoidance State
+        const MAX_SEEN_CACHE = 1000;
+        const seenMessageIds = new Set();
+        const seenMessageOrder = [];
+        const pendingOffers = new Set();
+
+        function generateUuid() {
+            if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+                return crypto.randomUUID();
+            }
+            return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function(c) {
+                const r = Math.random() * 16 | 0;
+                const v = c === "x" ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+
+        function markMessageSeen(messageUuid) {
+            if (!messageUuid) return false;
+            if (seenMessageIds.has(messageUuid)) {
+                return false;
+            }
+            seenMessageIds.add(messageUuid);
+            seenMessageOrder.push(messageUuid);
+            if (seenMessageOrder.length > MAX_SEEN_CACHE) {
+                const oldest = seenMessageOrder.shift();
+                seenMessageIds.delete(oldest);
+            }
+            return true;
+        }
+
         // WebRTC Engine (Browser native WebRTC with multi-peer connection pool)
         class ZeroWebRtcEngine {
-            constructor() {
+            constructor(peerId = null) {
                 this.rtcConfig = {
                     iceServers: [
                         { urls: "stun:stun.cloudflare.com:3478" },
                         { urls: "stun:stun.l.google.com:19302" }
                     ]
                 };
+                this.localPeerId = peerId || localPeerId;
                 // Map<peerId, { pc: RTCPeerConnection, dc: RTCDataChannel, state: string, peerId: string }>
                 this.peers = new Map();
+                this.pendingOffers = new Set();
                 this.state = "disconnected"; // Overall engine state: "disconnected", "connecting", "open", "closed"
                 this.onStateChangeCb = null; // (state, peerId) => void
                 this.onPeerStateChangeCb = null; // (peerId, state) => void
@@ -298,22 +331,27 @@
                 }
 
                 ch.onopen = () => {
-                    this._setPeerState(peerId, "open");
+                    const currentPeerId = peer.peerId || peerId;
+                    this._setPeerState(currentPeerId, "open");
                 };
                 ch.onclose = () => {
-                    this._handlePeerDisconnect(peerId);
+                    const currentPeerId = peer.peerId || peerId;
+                    this._handlePeerDisconnect(currentPeerId);
                 };
                 ch.onerror = () => {
-                    this._handlePeerDisconnect(peerId);
+                    const currentPeerId = peer.peerId || peerId;
+                    this._handlePeerDisconnect(currentPeerId);
                 };
                 ch.onmessage = (ev) => {
                     if (this.onMessageCb) {
-                        this.onMessageCb(ev.data, peerId);
+                        const currentPeerId = peer.peerId || peerId;
+                        this.onMessageCb(ev.data, currentPeerId);
                     }
                 };
 
                 if (ch.readyState === "open") {
-                    this._setPeerState(peerId, "open");
+                    const currentPeerId = peer.peerId || peerId;
+                    this._setPeerState(currentPeerId, "open");
                 }
             }
 
@@ -351,12 +389,12 @@
 
                 pc.onconnectionstatechange = () => {
                     if (pc.connectionState === "failed" || pc.connectionState === "closed") {
-                        this._handlePeerDisconnect(peerId);
+                        this._handlePeerDisconnect(peer.peerId || peerId);
                     }
                 };
                 pc.oniceconnectionstatechange = () => {
                     if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "closed") {
-                        this._handlePeerDisconnect(peerId);
+                        this._handlePeerDisconnect(peer.peerId || peerId);
                     }
                 };
 
@@ -376,6 +414,10 @@
                     peerId = "peer-01";
                 }
                 peerId = peerId || "peer-01";
+                if (this.pendingOffers) {
+                    this.pendingOffers.delete(peerId);
+                }
+                pendingOffers.delete(peerId);
                 const peer = this.peers.get(peerId);
                 if (!peer || !peer.pc) {
                     throw new Error(`Peer connection not found for ${peerId}`);
@@ -403,12 +445,12 @@
 
                 pc.onconnectionstatechange = () => {
                     if (pc.connectionState === "failed" || pc.connectionState === "closed") {
-                        this._handlePeerDisconnect(peerId);
+                        this._handlePeerDisconnect(peer.peerId || peerId);
                     }
                 };
                 pc.oniceconnectionstatechange = () => {
                     if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "closed") {
-                        this._handlePeerDisconnect(peerId);
+                        this._handlePeerDisconnect(peer.peerId || peerId);
                     }
                 };
 
@@ -433,6 +475,39 @@
 
             async apply_answer(answerSdp, peerId = "peer-01") {
                 return this.accept_peer_answer(peerId, answerSdp);
+            }
+
+            async initiate_relay_handshake(relayPeerId, targetPeerId) {
+                if (this.pendingOffers) {
+                    this.pendingOffers.add(targetPeerId);
+                }
+                pendingOffers.add(targetPeerId);
+                try {
+                    const offerSdp = await this.create_peer_offer(targetPeerId);
+                    const nonce = Array.from(crypto.getRandomValues(new Uint8Array(12)));
+                    const ciphertext = Array.from(new TextEncoder().encode(offerSdp));
+                    const offerMsg = {
+                        frame_id: generateUuid(),
+                        ttl: 3,
+                        signal: {
+                            RelaySdpOffer: {
+                                from_peer_id: this.localPeerId || localPeerId,
+                                to_peer_id: targetPeerId,
+                                sealed_offer: {
+                                    nonce,
+                                    ciphertext
+                                }
+                            }
+                        }
+                    };
+                    this.send_text(JSON.stringify(offerMsg), relayPeerId);
+                } catch (err) {
+                    if (this.pendingOffers) {
+                        this.pendingOffers.delete(targetPeerId);
+                    }
+                    pendingOffers.delete(targetPeerId);
+                    throw err;
+                }
             }
 
             broadcast_text(text) {
@@ -465,7 +540,23 @@
                 return this.broadcast_text(text);
             }
 
+            rename_peer(oldPeerId, newPeerId) {
+                if (!oldPeerId || !newPeerId || oldPeerId === newPeerId) return;
+                const peer = this.peers.get(oldPeerId);
+                if (!peer) return;
+                peer.peerId = newPeerId;
+                this.peers.delete(oldPeerId);
+                this.peers.set(newPeerId, peer);
+                if (peerColorMap.has(oldPeerId)) {
+                    peerColorMap.set(newPeerId, peerColorMap.get(oldPeerId));
+                }
+            }
+
             close_peer(peerId) {
+                if (this.pendingOffers) {
+                    this.pendingOffers.delete(peerId);
+                }
+                pendingOffers.delete(peerId);
                 const peer = this.peers.get(peerId);
                 if (!peer) return;
                 if (peer.dc) {
@@ -482,6 +573,10 @@
             }
 
             close() {
+                if (this.pendingOffers) {
+                    this.pendingOffers.clear();
+                }
+                pendingOffers.clear();
                 for (const [peerId, peer] of this.peers.entries()) {
                     if (peer.dc) {
                         try { peer.dc.close(); } catch (_) {}
@@ -497,6 +592,11 @@
                 this.peers.clear();
                 this._setOverallState("closed");
             }
+        }
+
+        async function initiateRelayHandshake(relayPeerId, targetPeerId) {
+            if (!engine) return;
+            return engine.initiate_relay_handshake(relayPeerId, targetPeerId);
         }
 
         // URL-Safe Base64
@@ -837,6 +937,44 @@
                     if (hasActiveSession && engine && engine.openPeerCount > 1) {
                         appendSystemMessage(`Peer (${peerId}) joined chat`);
                     }
+
+                    // Host Peer Introduction (REQ-026.2)
+                    if (engine && !isJoining) {
+                        for (const [existingPeerId, existingPeer] of engine.peers.entries()) {
+                            if (existingPeerId !== peerId && existingPeer.state === "open" && existingPeer.dc && existingPeer.dc.readyState === "open") {
+                                const msgToNew = {
+                                    frame_id: generateUuid(),
+                                    ttl: 3,
+                                    signal: {
+                                        PeerJoined: {
+                                            peer_id: existingPeerId,
+                                            public_key: new Array(32).fill(0)
+                                        }
+                                    }
+                                };
+                                const msgToExisting = {
+                                    frame_id: generateUuid(),
+                                    ttl: 3,
+                                    signal: {
+                                        PeerJoined: {
+                                            peer_id: peerId,
+                                            public_key: new Array(32).fill(0)
+                                        }
+                                    }
+                                };
+                                try {
+                                    engine.send_text(JSON.stringify(msgToNew), peerId);
+                                } catch (e) {
+                                    console.warn(`Failed to introduce ${existingPeerId} to ${peerId}:`, e);
+                                }
+                                try {
+                                    engine.send_text(JSON.stringify(msgToExisting), existingPeerId);
+                                } catch (e) {
+                                    console.warn(`Failed to introduce ${peerId} to ${existingPeerId}:`, e);
+                                }
+                            }
+                        }
+                    }
                 } else if (peerState === "closed") {
                     if (engine && engine.openPeerCount > 0) {
                         appendSystemMessage(`Peer (${peerId}) disconnected`);
@@ -844,20 +982,23 @@
                 }
             };
 
-            engine.onMessageCb = (text, peerId) => {
+            engine.onMessageCb = async (text, incomingPeerId) => {
                 let data = null;
                 try {
                     data = JSON.parse(text);
                 } catch (_) {}
 
                 if (data && typeof data === "object") {
+                    // 1. Leave & burn handlers
                     const isLeave = data.type === "leave_and_burn" ||
                         data.signal === "leave_and_burn" ||
                         data.action === "leave_and_burn" ||
-                        Boolean(data.signal && data.signal.PeerLeftAndBurn);
+                        Boolean(data.signal && (data.signal.PeerLeftAndBurn || data.signal === "leave_and_burn"));
 
                     if (isLeave) {
-                        const leavingPeerId = peerId || data.peer_id;
+                        const leavingPeerId = incomingPeerId ||
+                            (data.signal && data.signal.PeerLeftAndBurn && data.signal.PeerLeftAndBurn.peer_id) ||
+                            data.peer_id;
                         if (leavingPeerId && engine && engine.peers && engine.peers.has(leavingPeerId)) {
                             engine.close_peer(leavingPeerId);
                         } else if (engine && engine.openPeerCount <= 1) {
@@ -869,15 +1010,196 @@
                     const isBurn = data.type === "global_burn" ||
                         data.signal === "global_burn" ||
                         data.action === "global_burn" ||
-                        Boolean(data.signal && data.signal.GlobalBurnSession);
+                        Boolean(data.signal && (data.signal.GlobalBurnSession || data.signal === "global_burn"));
 
                     if (isBurn) {
                         resetToHome();
                         return;
                     }
+
+                    // 2. In-band SDP Relay Signaling & Mesh Snapping
+                    const signal = data.signal;
+                    if (signal && typeof signal === "object") {
+                        // A. RelaySdpOffer
+                        if (signal.RelaySdpOffer) {
+                            const { from_peer_id, to_peer_id, sealed_offer } = signal.RelaySdpOffer;
+                            const myPeerId = (engine && engine.localPeerId) || localPeerId;
+
+                            if (to_peer_id !== myPeerId) {
+                                // Intermediate relay bridge (REQ-026.1)
+                                if (data.ttl > 1) {
+                                    const fwd = {
+                                        ...data,
+                                        ttl: data.ttl - 1
+                                    };
+                                    try {
+                                        engine.send_text(JSON.stringify(fwd), to_peer_id);
+                                    } catch (e) {
+                                        console.warn(`Bridge failed to forward RelaySdpOffer to ${to_peer_id}:`, e);
+                                    }
+                                }
+                                return;
+                            } else {
+                                // Target Peer: decode offer, create answer, reply back to incomingPeerId (REQ-026.2)
+                                try {
+                                    let offerSdp = "";
+                                    if (sealed_offer && Array.isArray(sealed_offer.ciphertext)) {
+                                        offerSdp = new TextDecoder().decode(new Uint8Array(sealed_offer.ciphertext));
+                                    } else if (sealed_offer && typeof sealed_offer.sdp === "string") {
+                                        offerSdp = sealed_offer.sdp;
+                                    } else if (typeof sealed_offer === "string") {
+                                        offerSdp = sealed_offer;
+                                    }
+
+                                    const answerSdp = await engine.create_peer_answer(from_peer_id, offerSdp);
+                                    const nonce = Array.from(crypto.getRandomValues(new Uint8Array(12)));
+                                    const ciphertext = Array.from(new TextEncoder().encode(answerSdp));
+
+                                    const answerMsg = {
+                                        frame_id: generateUuid(),
+                                        ttl: 3,
+                                        signal: {
+                                            RelaySdpAnswer: {
+                                                from_peer_id: myPeerId,
+                                                to_peer_id: from_peer_id,
+                                                sealed_answer: {
+                                                    nonce,
+                                                    ciphertext
+                                                }
+                                            }
+                                        }
+                                    };
+                                    engine.send_text(JSON.stringify(answerMsg), incomingPeerId);
+                                } catch (err) {
+                                    console.error(`Failed to handle RelaySdpOffer from ${from_peer_id}:`, err);
+                                }
+                                return;
+                            }
+                        }
+
+                        // B. RelaySdpAnswer
+                        if (signal.RelaySdpAnswer) {
+                            const { from_peer_id, to_peer_id, sealed_answer } = signal.RelaySdpAnswer;
+                            const myPeerId = (engine && engine.localPeerId) || localPeerId;
+
+                            if (to_peer_id !== myPeerId) {
+                                // Intermediate relay bridge (REQ-026.1)
+                                if (data.ttl > 1) {
+                                    const fwd = {
+                                        ...data,
+                                        ttl: data.ttl - 1
+                                    };
+                                    try {
+                                        engine.send_text(JSON.stringify(fwd), to_peer_id);
+                                    } catch (e) {
+                                        console.warn(`Bridge failed to forward RelaySdpAnswer to ${to_peer_id}:`, e);
+                                    }
+                                }
+                                return;
+                            } else {
+                                // Offering Peer: decode answer, apply answer, complete direct snap (REQ-026.2)
+                                try {
+                                    let answerSdp = "";
+                                    if (sealed_answer && Array.isArray(sealed_answer.ciphertext)) {
+                                        answerSdp = new TextDecoder().decode(new Uint8Array(sealed_answer.ciphertext));
+                                    } else if (sealed_answer && typeof sealed_answer.sdp === "string") {
+                                        answerSdp = sealed_answer.sdp;
+                                    } else if (typeof sealed_answer === "string") {
+                                        answerSdp = sealed_answer;
+                                    }
+
+                                    await engine.accept_peer_answer(from_peer_id, answerSdp);
+                                    pendingOffers.delete(from_peer_id);
+                                    if (engine.pendingOffers) engine.pendingOffers.delete(from_peer_id);
+                                } catch (err) {
+                                    console.error(`Failed to apply RelaySdpAnswer from ${from_peer_id}:`, err);
+                                }
+                                return;
+                            }
+                        }
+
+                        // C. PeerJoined
+                        if (signal.PeerJoined) {
+                            const remotePeerId = signal.PeerJoined.peer_id;
+                            const myPeerId = (engine && engine.localPeerId) || localPeerId;
+
+                            if (remotePeerId && remotePeerId !== myPeerId) {
+                                const peerObj = engine && engine.peers && engine.peers.get(remotePeerId);
+                                const peerExists = peerObj && (peerObj.state === "open" || peerObj.state === "connecting");
+                                const isPending = pendingOffers.has(remotePeerId) || (engine.pendingOffers && engine.pendingOffers.has(remotePeerId));
+
+                                if (!peerExists && !isPending) {
+                                    // Glare avoidance rule (REQ-026.2)
+                                    const shouldInitiate = isJoining || (myPeerId < remotePeerId);
+                                    if (shouldInitiate) {
+                                        await initiateRelayHandshake(incomingPeerId, remotePeerId);
+                                    }
+                                }
+                            }
+                            return;
+                        }
+
+                        // D. BroadcastChat
+                        if (signal.BroadcastChat) {
+                            const broadcast = signal.BroadcastChat;
+                            const messageUuid = broadcast.message_uuid || data.frame_id;
+
+                            if (!messageUuid || seenMessageIds.has(messageUuid)) {
+                                // Loop suppression (REQ-026.3): DROP immediately
+                                return;
+                            }
+
+                            // Add to seen deduplication cache
+                            markMessageSeen(messageUuid);
+
+                            // Decode plaintext body
+                            let bodyText = "";
+                            if (broadcast.sealed_message && Array.isArray(broadcast.sealed_message.ciphertext)) {
+                                bodyText = new TextDecoder().decode(new Uint8Array(broadcast.sealed_message.ciphertext));
+                            } else if (typeof broadcast.body === "string") {
+                                bodyText = broadcast.body;
+                            } else if (typeof broadcast.text === "string") {
+                                bodyText = broadcast.text;
+                            }
+
+                            const senderPeerId = broadcast.origin_peer_id || incomingPeerId || "peer-01";
+                            appendMessageBubble("Peer", bodyText, false, senderPeerId);
+
+                            // Gossip Flooding (REQ-026.3)
+                            const currentTtl = broadcast.ttl !== undefined ? broadcast.ttl : data.ttl;
+                            if (currentTtl > 1) {
+                                const nextTtl = currentTtl - 1;
+                                const forwardedMsg = {
+                                    frame_id: data.frame_id || messageUuid,
+                                    ttl: nextTtl,
+                                    signal: {
+                                        BroadcastChat: {
+                                            ...broadcast,
+                                            ttl: nextTtl
+                                        }
+                                    }
+                                };
+                                const fwdJson = JSON.stringify(forwardedMsg);
+                                for (const [pId, p] of engine.peers.entries()) {
+                                    if (pId !== incomingPeerId && pId !== broadcast.origin_peer_id) {
+                                        if (p.dc && p.dc.readyState === "open") {
+                                            try {
+                                                p.dc.send(fwdJson);
+                                            } catch (e) {
+                                                console.warn(`Gossip flood send error to ${pId}:`, e);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            return;
+                        }
+                    }
                 }
 
-                appendMessageBubble("Peer", text, false, peerId || "peer-01");
+                // Backwards Compatibility: plain text or non-signal JSON
+                const fallbackText = (data && (typeof data.text === "string" ? data.text : (typeof data.body === "string" ? data.body : null))) || text;
+                appendMessageBubble("Peer", fallbackText, false, incomingPeerId || "peer-01");
             };
         }
 
@@ -894,7 +1216,8 @@
             updateStatus("signaling", "Gathering ICE & creating offer...");
 
             try {
-                engine = new ZeroWebRtcEngine();
+                engine = new ZeroWebRtcEngine(localPeerId);
+                window.engine = engine;
                 initEngineListeners();
 
                 const offerSdp = await engine.create_offer();
@@ -904,7 +1227,7 @@
                 const hostSecretBytes = crypto.getRandomValues(new Uint8Array(32));
                 const hostSecretHex = Array.from(hostSecretBytes).map(b => b.toString(16).padStart(2, "0")).join("");
 
-                const inviteUuid = crypto.randomUUID();
+                const inviteUuid = generateUuid();
                 const tokenHex = await computeHmacSha256Hex(hostSecretBytes, inviteUuid);
 
                 const hostPubkey = Array.from(crypto.getRandomValues(new Uint8Array(32)));
@@ -932,7 +1255,11 @@
                         if (drop && drop.sdp_answer && drop.sdp_answer.sdp) {
                             showTransientStatus("Establishing secure connection");
                             updateStatus("connecting", "Received answer! Snapping P2P channel...");
-                            await engine.apply_answer(drop.sdp_answer.sdp, drop.peer_id || "peer-01");
+                            const targetPeerId = drop.peer_id || "peer-01";
+                            if (drop.peer_id && drop.peer_id !== "peer-01" && engine.peers.has("peer-01")) {
+                                engine.rename_peer("peer-01", drop.peer_id);
+                            }
+                            await engine.apply_answer(drop.sdp_answer.sdp, targetPeerId);
                         }
                     } catch (err) {
                         console.error("Failed to parse dropped answer:", err);
@@ -991,7 +1318,8 @@
                 const jsonStr = base64UrlToUtf8(rawPayload);
                 const invite = JSON.parse(jsonStr);
 
-                engine = new ZeroWebRtcEngine();
+                engine = new ZeroWebRtcEngine(localPeerId);
+                window.engine = engine;
                 initEngineListeners();
 
                 const answerSdp = await engine.accept_offer_and_create_answer(invite.sdp_offer.sdp);
@@ -1049,8 +1377,31 @@
             if (!msgInput.value.trim() || !engine) return;
             const text = msgInput.value.trim();
             msgInput.value = "";
+
+            const messageUuid = generateUuid();
+            markMessageSeen(messageUuid);
+
+            const nonce = Array.from(crypto.getRandomValues(new Uint8Array(12)));
+            const ciphertext = Array.from(new TextEncoder().encode(text));
+
+            const broadcastMsg = {
+                frame_id: messageUuid,
+                ttl: 3,
+                signal: {
+                    BroadcastChat: {
+                        message_uuid: messageUuid,
+                        origin_peer_id: (engine && engine.localPeerId) || localPeerId,
+                        ttl: 3,
+                        sealed_message: {
+                            nonce,
+                            ciphertext
+                        }
+                    }
+                }
+            };
+
             try {
-                engine.send_text(text);
+                engine.broadcast_text(JSON.stringify(broadcastMsg));
                 appendMessageBubble("You", text, true);
             } catch (e) {
                 console.error("Send error:", e);
@@ -1069,12 +1420,16 @@
             opportunisticLeaveSent = false;
             isJoining = false;
             peerColorMap.clear();
+            seenMessageIds.clear();
+            seenMessageOrder.length = 0;
+            pendingOffers.clear();
             clearTransientStatus();
             if (engine) {
                 engine.onStateChangeCb = null;
                 engine.onPeerStateChangeCb = null;
                 engine.close();
                 engine = null;
+                window.engine = null;
             }
             if (hostWs) {
                 try { hostWs.close(); } catch (_) {}
@@ -1166,6 +1521,10 @@
                 joinRoomFromHash(window.location.hash);
             }
         });
+
+        // Expose constructors and relay helpers on window for external runners & tests
+        window.ZeroWebRtcEngine = ZeroWebRtcEngine;
+        window.initiateRelayHandshake = initiateRelayHandshake;
     </script>
 </body>
 </html>

@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-026"
 title: "In-Band SDP Signaling Relay & Mesh Snapping in Browser Client"
-state: "PLANNING"
+state: "IN_PROGRESS"
 roadmap: "multi-user-mesh-chat"
 depends_on: ["ticket-025"]
 created_at: "2026-10-18T21:02:00Z"
@@ -41,11 +41,11 @@ This task implements in-band SDP relay handling inside the browser client (`zero
 ---
 
 ## 3. Requirements & Acceptance Criteria
-- [ ] **REQ-026.1 (In-Band SDP Relay Bridging)**:
+- [x] **REQ-026.1 (In-Band SDP Relay Bridging)**:
   - Host transparently forwards sealed relay signaling frames between connected peers without modifying payloads.
-- [ ] **REQ-026.2 (Direct Mesh Snapping)**:
+- [x] **REQ-026.2 (Direct Mesh Snapping)**:
   - Secondary peers snap direct WebRTC DataChannels with 0 edge requests.
-- [ ] **REQ-026.3 (Gossip Message Flooding & Loop Suppression)**:
+- [x] **REQ-026.3 (Gossip Message Flooding & Loop Suppression)**:
   - Multi-hop chat messages flood across direct links with TTL hops and message deduplication.
-- [ ] **REQ-026.4 (Workspace Integrity & Regression)**:
+- [x] **REQ-026.4 (Workspace Integrity & Regression)**:
   - Full workspace test suite passes with 0 failures and 0 warnings.
