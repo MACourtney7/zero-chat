@@ -29,19 +29,6 @@
             cursor: not-allowed;
             transform: none;
         }
-        .join-banner {
-            padding: 10px 14px;
-            margin-bottom: 8px;
-            border-radius: 8px;
-            font-size: 0.85rem;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 8px;
-            background: rgba(56, 189, 248, 0.12);
-            border: 1px solid rgba(56, 189, 248, 0.25);
-            color: #bae6fd;
-        }
         .btn-action-full {
             width: 100%;
             padding: 12px 20px;
@@ -70,15 +57,16 @@
         <div class="chat-layout">
             <header class="chat-header glass-panel">
                 <div class="header-brand">
-                    <span class="brand-icon" id="peer-count">0</span>
+                    <span class="brand-icon">0</span>
                     <div class="brand-text">
                         <h1 class="brand-title">zero-chat.pages.dev</h1>
                         <span class="brand-tagline">SECURE P2P CHAT</span>
                     </div>
                 </div>
                 <div class="header-controls">
-                    <div id="status-badge" class="status-pill status-disconnected">
-                        <span class="status-indicator-dot"></span>
+                    <div id="peer-count" class="peer-count-badge">0</div>
+                    <div id="idle-status-capsule" class="status-capsule-disconnected">
+                        <span class="status-indicator-dot red-dot"></span>
                     </div>
                     <div id="peer-list" class="peer-list hidden"></div>
                     <button id="header-leave-btn" class="btn btn-leave btn-icon hidden" type="button" aria-label="Leave chat">
@@ -100,11 +88,6 @@
                 </button>
             </div>
 
-            <!-- Dynamic banner when opening an invite URL -->
-            <div id="joiner-banner" class="join-banner hidden">
-                <span id="joiner-status-text">🔗 Invite detected! Autodropping SDP answer to signaling edge...</span>
-            </div>
-
             <main id="messages-container" class="messages-container">
                 <div id="welcome-splash" class="welcome-splash">
                     <div class="welcome-header">
@@ -116,7 +99,7 @@
                             <div class="feature-icon">⚡</div>
                             <div class="feature-content">
                                 <span class="feature-title">Direct P2P Connection</span>
-                                <p class="feature-desc">Standalone browser-to-browser data channels with no intermediate relays or storage servers.</p>
+                                <p class="feature-desc">Private data channels with no intermediate relays or storage servers.</p>
                             </div>
                         </div>
                         <div class="feature-card">
@@ -187,17 +170,14 @@
 
         // DOM elements
         const inviteBar = document.getElementById("invite-bar");
-        const statusBadge = document.getElementById("status-badge");
-        const statusBadgeText = document.getElementById("status-badge-text");
         const peerCountEl = document.getElementById("peer-count");
+        const idleStatusCapsule = document.getElementById("idle-status-capsule");
         const peerListEl = document.getElementById("peer-list");
         const headerLeaveBtn = document.getElementById("header-leave-btn");
         const createRoomBar = document.getElementById("create-room-bar");
         const btnCreateRoom = document.getElementById("btn-create-room");
         const inviteInput = document.getElementById("invite-url-input");
         const btnCopyInvite = document.getElementById("copy-invite-button");
-        const joinerBanner = document.getElementById("joiner-banner");
-        const joinerStatusText = document.getElementById("joiner-status-text");
         const feed = document.getElementById("messages-container");
         const messageForm = document.getElementById("message-form");
         const msgInput = document.getElementById("message-input");
@@ -335,7 +315,25 @@
 
         function updateStatus(status, text) {
             console.debug(`[Status] ${status}: ${text}`);
-            if (statusBadgeText) statusBadgeText.textContent = text;
+        }
+
+        let transientStatusEl = null;
+
+        function showTransientStatus(text) {
+            hideWelcomeSplash();
+            clearTransientStatus();
+            transientStatusEl = document.createElement("div");
+            transientStatusEl.className = "system-message transient-status";
+            transientStatusEl.innerHTML = `<span class="transient-text">${text}</span><span class="ticking-dots"></span>`;
+            feed.appendChild(transientStatusEl);
+            feed.scrollTop = feed.scrollHeight;
+        }
+
+        function clearTransientStatus() {
+            if (transientStatusEl && transientStatusEl.parentNode) {
+                transientStatusEl.remove();
+            }
+            transientStatusEl = null;
         }
 
         const WELCOME_SPLASH_HTML = `
@@ -349,7 +347,7 @@
                         <div class="feature-icon">⚡</div>
                         <div class="feature-content">
                             <span class="feature-title">Direct P2P Connection</span>
-                            <p class="feature-desc">Standalone browser-to-browser data channels with no intermediate relays or storage servers.</p>
+                            <p class="feature-desc">Private data channels with no intermediate relays or storage servers.</p>
                         </div>
                     </div>
                     <div class="feature-card">
@@ -448,6 +446,7 @@
         }
 
         function appendSystemMessage(text) {
+            clearTransientStatus();
             hideWelcomeSplash();
             const el = document.createElement("div");
             el.className = "system-message";
@@ -481,7 +480,7 @@
                     hasActiveSession = true;
                     hideWelcomeSplash();
                     updateStatus("open", "P2P Established");
-                    if (statusBadge) statusBadge.classList.add("hidden");
+                    if (idleStatusCapsule) idleStatusCapsule.classList.add("hidden");
                     if (peerCountEl) {
                         peerCountEl.textContent = "1";
                     }
@@ -503,7 +502,6 @@
                         try { hostWs.close(); } catch (_) {}
                         hostWs = null;
                     }
-                    if (joinerBanner) joinerBanner.classList.add("hidden");
 
                     if (isJoining) {
                         appendSystemMessage("Joined chat");
@@ -512,10 +510,8 @@
                     }
                 } else if (st === "closed") {
                     updateStatus("closed", "Disconnected");
-                    if (statusBadge) {
-                        statusBadge.classList.remove("hidden");
-                        statusBadge.className = "status-pill status-disconnected";
-                        if (statusBadgeText) statusBadgeText.textContent = "Disconnected";
+                    if (idleStatusCapsule) {
+                        idleStatusCapsule.classList.remove("hidden");
                     }
                     if (peerCountEl) {
                         peerCountEl.textContent = "0";
@@ -597,6 +593,7 @@
                     try {
                         const drop = JSON.parse(ev.data);
                         if (drop && drop.sdp_answer && drop.sdp_answer.sdp) {
+                            showTransientStatus("Establishing secure connection");
                             updateStatus("connecting", "Received answer! Snapping P2P channel...");
                             await engine.apply_answer(drop.sdp_answer.sdp);
                         }
@@ -615,7 +612,7 @@
                 appendSystemMessage("Secure chat created");
             } catch (err) {
                 console.error("Chat creation failed:", err);
-                alert("Chat creation failed: " + err);
+                appendSystemMessage("Failed to create chat");
                 if (inviteBar) inviteBar.classList.add("hidden");
                 if (createRoomBar) {
                     createRoomBar.classList.remove("hidden");
@@ -646,8 +643,7 @@
 
                 isJoining = true;
                 isBurned = false;
-                joinerBanner.classList.remove("hidden");
-                joinerStatusText.textContent = "Found Chat Invite! Accepting offer and generating answer...";
+                showTransientStatus("Establishing secure connection");
                 updateStatus("signaling", "Connecting as peer...");
 
                 if (inviteBar) inviteBar.classList.add("hidden");
@@ -660,8 +656,6 @@
                 initEngineListeners();
 
                 const answerSdp = await engine.accept_offer_and_create_answer(invite.sdp_offer.sdp);
-
-                joinerStatusText.textContent = "Dispatching dead-drop answer to Cloudflare edge...";
 
                 const dropPayload = {
                     invite_uuid: invite.invite_uuid,
@@ -684,14 +678,12 @@
                     throw new Error(`Dead-drop rejected with HTTP ${resp.status}`);
                 }
 
-                joinerStatusText.textContent = "Answer delivered! Establishing direct P2P connection...";
-
                 // Strip hash from URL for privacy and zero forensic trace
                 history.replaceState(null, "", window.location.pathname);
             } catch (err) {
                 isJoining = false;
                 console.error("Joiner failed:", err);
-                joinerStatusText.textContent = "Connection error: " + err.message;
+                appendSystemMessage("Failed to establish connection");
                 updateStatus("disconnected", "Join failed");
             }
         }
@@ -736,6 +728,7 @@
             isBurned = false;
             isJoining = false;
             peerColorMap.clear();
+            clearTransientStatus();
             if (engine) {
                 engine.onStateChangeCb = null;
                 engine.close();
@@ -748,10 +741,8 @@
             feed.innerHTML = "";
             showWelcomeSplash();
             updateStatus("disconnected", "Disconnected");
-            if (statusBadge) {
-                statusBadge.classList.remove("hidden");
-                statusBadge.className = "status-pill status-disconnected";
-                if (statusBadgeText) statusBadgeText.textContent = "Disconnected";
+            if (idleStatusCapsule) {
+                idleStatusCapsule.classList.remove("hidden");
             }
             if (peerCountEl) {
                 peerCountEl.textContent = "0";
@@ -764,7 +755,6 @@
             if (burnRoomBar) burnRoomBar.classList.add("hidden");
             if (messageForm) messageForm.classList.add("hidden");
             if (inviteBar) inviteBar.classList.add("hidden");
-            if (joinerBanner) joinerBanner.classList.add("hidden");
             if (createRoomBar) {
                 createRoomBar.classList.remove("hidden");
                 btnCreateRoom.disabled = false;

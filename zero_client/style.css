@@ -331,6 +331,44 @@ html, body {
   box-shadow: 0 0 8px #3b82f6;
 }
 
+.status-capsule-disconnected {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 58px;
+  height: 26px;
+  border-radius: 9999px;
+  background: rgba(244, 63, 94, 0.12);
+  border: 1px solid rgba(244, 63, 94, 0.32);
+  flex-shrink: 0;
+  box-sizing: border-box;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+.status-capsule-disconnected .red-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: #f43f5e;
+  box-shadow: 0 0 6px rgba(244, 63, 94, 0.8);
+  display: inline-block;
+}
+
+.ticking-dots::after {
+  content: "";
+  display: inline-block;
+  animation: tickDots 1.5s infinite steps(1);
+}
+@keyframes tickDots {
+  0%   { content: ""; }
+  25%  { content: "."; }
+  50%  { content: ".."; }
+  75%  { content: "..."; }
+  100% { content: ""; }
+}
+
+
 /* Buttons */
 .btn {
   display: inline-flex;
@@ -983,10 +1021,6 @@ html, body {
   border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: 10px;
   transition: border-color 0.2s ease;
-}
-
-.feature-card:hover {
-  border-color: rgba(56, 189, 248, 0.2);
 }
 
 .feature-icon {
