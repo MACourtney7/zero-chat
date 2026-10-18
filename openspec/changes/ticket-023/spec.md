@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-023"
 title: "Automatic Message Purge on Dirty Peer Disconnect & Window Unload"
-state: "IN_PROGRESS"
+state: "COMPLETED"
 roadmap: "improved-leave-burn-lifecycle"
 depends_on: ["ticket-022"]
 created_at: "2026-10-18T18:38:00Z"
@@ -42,15 +42,15 @@ This task extends the selective burn lifecycle to dirty disconnects:
 ---
 
 ## 3. Requirements & Acceptance Criteria
-- [ ] **REQ-023.1 (Mesh Disconnect Message Burn Trigger)**:
+- [x] **REQ-023.1 (Mesh Disconnect Message Burn Trigger)**:
   - When `MeshTopology` removes a peer or detects `PeerLifecycleState::Closed`, it must trigger both `on_peer_left_callbacks` and `on_burn_peer_messages_callbacks` for that `peer_id`.
-- [ ] **REQ-023.2 (Client UI Abrupt Disconnect Purge)**:
+- [x] **REQ-023.2 (Client UI Abrupt Disconnect Purge)**:
   - When WebRTC state transitions to `"closed"` in `zero_client/index.html`, any messages attributed to the disconnected peer in `#messages-feed` must be removed from the DOM.
   - A clean system message `[Peer disconnected - messages burned]` must be logged to inform the remaining user.
-- [ ] **REQ-023.3 (Opportunistic Unload Signaling)**:
+- [x] **REQ-023.3 (Opportunistic Unload Signaling)**:
   - In `zero_client/index.html`, `beforeunload` and `pagehide` event handlers must best-effort dispatch a `leave_and_burn` frame over open DataChannels before teardown.
-- [ ] **REQ-023.4 (Automated Multi-Peer Dirty Disconnect Integration Test)**:
+- [x] **REQ-023.4 (Automated Multi-Peer Dirty Disconnect Integration Test)**:
   - An automated integration test `test_req_dirty_disconnect_triggers_peer_message_purge` in `tests/mesh_simulation_test.rs` must verify that abruptly severing a peer's channel triggers selective message purging on surviving nodes while preserving surviving mesh communication.
-- [ ] **REQ-023.5 (Workspace Regression & Linter Integrity)**:
+- [x] **REQ-023.5 (Workspace Regression & Linter Integrity)**:
   - Full workspace test suite (`cargo test --workspace`) passes with zero failures.
   - Zero clippy warnings across all workspace targets.
