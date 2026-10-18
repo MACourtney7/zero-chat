@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-026"
 title: "In-Band SDP Signaling Relay & Mesh Snapping in Browser Client"
-state: "PLANNING"
+state: "IN_PROGRESS"
 roadmap: "multi-user-mesh-chat"
 depends_on: ["ticket-025"]
 created_at: "2026-10-18T21:02:00Z"
