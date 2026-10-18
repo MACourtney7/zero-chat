@@ -280,19 +280,23 @@ impl MeshTopology {
         Ok(())
     }
 
-    /// Removes a peer from the mesh, closes its data channel, and triggers `on_peer_left` callbacks (REQ-006.5).
+    /// Removes a peer from the mesh, closes its data channel, and triggers `on_burn_peer_messages` and `on_peer_left` callbacks (REQ-006.5, REQ-023.1).
     pub fn remove_peer(&self, peer_id: &str) -> Result<(), MeshError> {
-        let (removed, callbacks) = {
+        let (removed, burn_callbacks, left_callbacks) = {
             let mut inner = self.inner.borrow_mut();
             let peer = inner.peers.remove(peer_id);
-            let cbs = inner.on_peer_left_callbacks.clone();
-            (peer, cbs)
+            let burn_cbs = inner.on_burn_peer_messages_callbacks.clone();
+            let left_cbs = inner.on_peer_left_callbacks.clone();
+            (peer, burn_cbs, left_cbs)
         };
 
         match removed {
             Some(peer) => {
                 let _ = peer.rtc_peer.close();
-                for cb in callbacks {
+                for cb in burn_callbacks {
+                    cb(peer_id);
+                }
+                for cb in left_callbacks {
                     cb(peer_id);
                 }
                 Ok(())
@@ -763,13 +767,15 @@ impl MeshTopology {
                         }
                     }
 
-                    // Remove peer_id and close its channel
-                    let _ = self.remove_peer(peer_id);
+                    // Remove peer_id and close its channel (triggers burn and left callbacks if peer was connected)
+                    let removed = self.remove_peer(peer_id);
 
-                    // Fire all on_burn_peer_messages callbacks with peer_id
-                    let callbacks = self.inner.borrow().on_burn_peer_messages_callbacks.clone();
-                    for cb in callbacks {
-                        cb(peer_id);
+                    // Fire all on_burn_peer_messages callbacks if peer was not connected locally
+                    if removed.is_err() {
+                        let callbacks = self.inner.borrow().on_burn_peer_messages_callbacks.clone();
+                        for cb in callbacks {
+                            cb(peer_id);
+                        }
                     }
 
                     Ok(())
@@ -1625,5 +1631,57 @@ mod tests {
         let (alice_sk, _alice_pk) = generate_kp();
         let mgr: MeshTopologyManager = MeshTopology::new("alice", alice_sk);
         assert_eq!(mgr.local_peer_id(), "alice");
+    }
+
+    #[test]
+    fn test_peer_disconnect_triggers_burn_and_left_callbacks() {
+        let (alice_sk, _alice_pk) = generate_kp();
+        let alice_mesh = MeshTopology::new("alice", alice_sk);
+
+        let left_log = Rc::new(RefCell::new(Vec::new()));
+        let l_clone = left_log.clone();
+        alice_mesh.on_peer_left(move |id| {
+            l_clone.borrow_mut().push(id.to_string());
+        });
+
+        let burn_log = Rc::new(RefCell::new(Vec::new()));
+        let b_clone = burn_log.clone();
+        alice_mesh.on_burn_peer_messages(move |id| {
+            b_clone.borrow_mut().push(id.to_string());
+        });
+
+        // 1. Add peer Bob
+        let (_bob_sk, bob_pk) = generate_kp();
+        let bob_peer = WebRtcPeer::new();
+        alice_mesh
+            .add_peer("bob", bob_pk, bob_peer)
+            .expect("add bob");
+        assert!(alice_mesh.has_peer("bob"));
+
+        // 2. Remove Bob via remove_peer
+        alice_mesh.remove_peer("bob").expect("remove bob");
+        assert!(!alice_mesh.has_peer("bob"));
+        assert_eq!(*burn_log.borrow(), vec!["bob".to_string()]);
+        assert_eq!(*left_log.borrow(), vec!["bob".to_string()]);
+
+        // 3. Add peer Charlie
+        let (_charlie_sk, charlie_pk) = generate_kp();
+        let charlie_peer = WebRtcPeer::new();
+        alice_mesh
+            .add_peer("charlie", charlie_pk, charlie_peer.clone())
+            .expect("add charlie");
+        assert!(alice_mesh.has_peer("charlie"));
+
+        // 4. Disconnect Charlie by closing WebRtcPeer (simulating PeerLifecycleState::Closed)
+        charlie_peer.close().expect("close charlie peer");
+        assert!(!alice_mesh.has_peer("charlie"));
+        assert_eq!(
+            *burn_log.borrow(),
+            vec!["bob".to_string(), "charlie".to_string()]
+        );
+        assert_eq!(
+            *left_log.borrow(),
+            vec!["bob".to_string(), "charlie".to_string()]
+        );
     }
 }
