@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-028"
 title: "Multi-Peer E2E Simulation & Mesh Snapping Validation Suite"
-state: "PLANNING"
+state: "IN_PROGRESS"
 roadmap: "multi-user-mesh-chat"
 depends_on: ["ticket-027"]
 created_at: "2026-10-18T21:02:00Z"
@@ -39,11 +39,11 @@ With multi-peer mesh connections, in-band relay signaling, and header add-peer i
 ---
 
 ## 3. Requirements & Acceptance Criteria
-- [ ] **REQ-028.1 (Multi-Node Connected Mesh Simulation Test)**:
+- [x] **REQ-028.1 (Multi-Node Connected Mesh Simulation Test)**:
   - Integration test verifies 3+ node mesh establishment and direct channel snapping.
-- [ ] **REQ-028.2 (Partial Peer Departure & Feed Survivability)**:
+- [x] **REQ-028.2 (Partial Peer Departure & Feed Survivability)**:
   - Verifies that when 1 node departs a 3-node mesh, surviving nodes continue communicating and purge only the departed peer's messages.
-- [ ] **REQ-028.3 (Full Workspace Test Suite & Linter Integrity)**:
+- [x] **REQ-028.3 (Full Workspace Test Suite & Linter Integrity)**:
   - `cargo test --workspace` passes with 100% success.
   - `cargo clippy --workspace --all-targets -- -D warnings` reports 0 warnings.
   - `cargo check --target wasm32-unknown-unknown -p zero_client` is clean.
