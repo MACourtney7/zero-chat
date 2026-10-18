@@ -6,7 +6,7 @@ system: "zero_chat"
 version: "1.0.0"
 milestone: "serverless-p2p-chat"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-17T08:48:00Z"
+updated_at: "2026-10-18T16:34:00Z"
 ---
 ```
 
@@ -69,7 +69,7 @@ zero_chat/
 │   │   ├── serverless-p2p-chat.md
 │   │   └── archive/
 │   └── changes/                    # Task specifications
-│       └── archive/                # Archived change proposals (ticket-001..017)
+│       └── archive/                # Archived change proposals (ticket-001..018)
 ├── tests/                          # Root integration test suites
 │   ├── e2e_handshake.rs            # Full loopback handshake & chat roundtrip
 │   └── mesh_simulation_test.rs     # 3+ peer in-band mesh simulation suite
@@ -110,12 +110,15 @@ zero_chat/
 
 ### 3.5 Ephemeral Chat UI (`zero_client::ui`, `style.css`)
 - Glassmorphic dark-mode interface with translucent panels (`backdrop-filter: blur(16px)`), pulsing connection badges, and responsive layouts.
-- Domain URL branding in top-bar header and `<title>` (`zero-chat.pages.dev`) with embedded SVG favicon matching the brand icon.
-- Merged peer counter badge integrated directly into the top-left "0" brand icon (`id="peer-count"`), updating dynamically from 0 to active peer counts.
-- Dynamic connection status pill with pulsing indicator dot and minimalist icon-only controls for Room Creation, Copying Invites, Sending Messages, Leaving, and Session Burning with native hover tooltips suppressed.
+- Domain URL branding in top-bar header and `<title>` (`zero-chat.pages.dev`) with embedded SVG favicon matching the static brand icon (`<span class="brand-icon">0</span>`).
+- Header controls feature fixed bounding alignment with an adaptive split badge architecture:
+  - **Disconnected State**: Standalone peer counter badge (`#peer-count`, displaying `0`) on the left and a double-width red-dot idle capsule (`#idle-status-capsule`, 58px x 26px with centered red glowing dot) on the right.
+  - **Connected State**: The idle capsule cleanly splits into the middle connection status pill (`#peer-list` / `#status-badge`) and the right circular 26px red exit button (`#header-leave-btn`), ensuring zero horizontal layout shifting across states.
+- Clean in-feed transient status messaging: Connection progress displays `"Establishing secure connection"` with an animated CSS ticking ellipsis (`.`, `..`, `...`) without timestamps, cleanly replaced in-place when permanent system messages are appended (`Joined chat`, `Peer joined chat`, or `Failed to establish connection`).
+- Direct chat creation logging: Room creation immediately outputs `"Secure chat created"` with timestamp.
+- Minimalist welcome splash with centered brand headline (`Zero accounts. Zero servers. Zero history.`), 3-step action flow (`Create Chat -> Share Link -> Talk P2P`), and 3 invariant feature cards (`Direct P2P Connection` with description `"Private data channels with no intermediate relays or storage servers."`, `Secure Communications`, `Ephemeral Sessions`) displayed strictly when the chat is empty; session burn and leave return the user cleanly to this home view.
 - Unified chat bubble styling across incoming and outgoing messages with left accent borders (emerald for self, cyan/palette for peers), `[dot] [timestamp]` header layout with regular arrow cursor, and clean message bodies without bulky verification footers.
 - Left-aligned system messages with monospace timestamps (`[HH:MM]`).
-- Minimalist welcome splash with centered brand headline (`Zero accounts. Zero servers. Zero history.`), 3-step action flow (`Create Chat -> Share Link -> Talk P2P`), and 3 feature cards (`Direct P2P Connection`, `Secure Communications`, `Ephemeral Sessions`) displayed strictly when the chat is empty; session burn and leave return the user cleanly to this home view.
 
 ### 3.6 Decentralized In-Band Gossip Mesh (`zero_client::mesh`, `envelope`)
 - **Opaque Bridge Relay (REQ-006.1)**: Room host acts as an in-band signaling bridge between existing peers (`Channel_AB`, `Channel_AC`). Relay frames (`RelaySdpOffer`, `RelaySdpAnswer`) contain end-to-end sealed payloads; relay nodes forward them verbatim without inspection.
