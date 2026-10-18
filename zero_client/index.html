@@ -50,6 +50,34 @@
             font-weight: 600;
             text-align: center;
         }
+        #header-add-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 26px;
+            height: 26px;
+            padding: 0;
+            border-radius: 9999px;
+            background: rgba(56, 189, 248, 0.12);
+            border: 1px solid rgba(56, 189, 248, 0.32);
+            color: var(--accent-cyan, #38bdf8);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            user-select: none;
+            -webkit-user-select: none;
+            box-sizing: border-box;
+            flex-shrink: 0;
+        }
+        #header-add-btn:hover {
+            background: rgba(56, 189, 248, 0.24);
+            border-color: rgba(56, 189, 248, 0.6);
+            color: #ffffff;
+            box-shadow: 0 0 10px rgba(56, 189, 248, 0.35);
+            transform: translateY(-1px);
+        }
+        #header-add-btn:active {
+            transform: translateY(0);
+        }
     </style>
 </head>
 <body>
@@ -64,6 +92,12 @@
                     </div>
                 </div>
                 <div class="header-controls">
+                    <button id="header-add-btn" class="btn btn-icon hidden" type="button" aria-label="Add peer">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                    </button>
                     <div id="peer-count" class="peer-count-badge">0</div>
                     <div id="idle-status-capsule" class="status-capsule-disconnected">
                         <span class="status-indicator-dot blue-dot"></span>
@@ -169,6 +203,7 @@
             </svg>`;
 
         // DOM elements
+        const headerAddBtn = document.getElementById("header-add-btn");
         const inviteBar = document.getElementById("invite-bar");
         const peerCountEl = document.getElementById("peer-count");
         const idleStatusCapsule = document.getElementById("idle-status-capsule");
@@ -550,6 +585,8 @@
                 if (peerColorMap.has(oldPeerId)) {
                     peerColorMap.set(newPeerId, peerColorMap.get(oldPeerId));
                 }
+                const existingBubbles = feed.querySelectorAll(`.message-bubble[data-peer-id="${oldPeerId}"]`);
+                existingBubbles.forEach((el) => el.setAttribute("data-peer-id", newPeerId));
             }
 
             close_peer(peerId) {
@@ -558,14 +595,14 @@
                 }
                 pendingOffers.delete(peerId);
                 const peer = this.peers.get(peerId);
-                if (!peer) return;
+                if (!peer || peer.state === "closed") return;
+                peer.state = "closed";
                 if (peer.dc) {
                     try { peer.dc.close(); } catch (_) {}
                 }
                 if (peer.pc) {
                     try { peer.pc.close(); } catch (_) {}
                 }
-                peer.state = "closed";
                 if (this.onPeerStateChangeCb) {
                     this.onPeerStateChangeCb(peerId, "closed");
                 }
@@ -799,28 +836,140 @@
         let opportunisticLeaveSent = false;
         const localPeerId = "peer-" + Math.random().toString(36).slice(2, 8);
 
-        function handlePeerDeparture() {
-            if (!peerDepartureHandled && hasActiveSession && !isBurned) {
+        let pendingInviteUrl = null;
+        let pendingInvitePeerId = null;
+        let pendingInviteWs = null;
+
+        function clearPendingInvite() {
+            pendingInviteUrl = null;
+            pendingInvitePeerId = null;
+            if (pendingInviteWs) {
+                try {
+                    pendingInviteWs.close();
+                } catch (_) {}
+                pendingInviteWs = null;
+            }
+        }
+
+        async function handleHeaderAddPeerClick() {
+            if (!hasActiveSession || !engine) return;
+
+            if (pendingInviteUrl) {
+                // Re-copy existing invite link silently without spawning duplicate cloud session or offer
+                if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+                    try {
+                        await navigator.clipboard.writeText(pendingInviteUrl);
+                    } catch (e) {
+                        console.warn("Clipboard copy failed:", e);
+                    }
+                }
+                return;
+            }
+
+            try {
+                const invitePeerId = "peer-" + Math.random().toString(36).slice(2, 8);
+                pendingInvitePeerId = invitePeerId;
+
+                const offerSdp = await engine.create_peer_offer(invitePeerId);
+
+                const doId = "room-" + Math.random().toString(36).slice(2, 10);
+                const hostSecretBytes = crypto.getRandomValues(new Uint8Array(32));
+                const hostSecretHex = Array.from(hostSecretBytes).map(b => b.toString(16).padStart(2, "0")).join("");
+
+                const inviteUuid = generateUuid();
+                const tokenHex = await computeHmacSha256Hex(hostSecretBytes, inviteUuid);
+                const hostPubkey = Array.from(crypto.getRandomValues(new Uint8Array(32)));
+
+                const invitePayload = {
+                    do_id: doId,
+                    invite_uuid: inviteUuid,
+                    token: tokenHex,
+                    sdp_offer: { sdp: offerSdp },
+                    host_public_key: hostPubkey,
+                    guest_private_key: null
+                };
+
+                const packedHash = "#payload=" + utf8ToBase64Url(JSON.stringify(invitePayload));
+                const inviteUrl = window.location.origin + window.location.pathname + packedHash;
+                pendingInviteUrl = inviteUrl;
+
+                const wsUrl = `${WORKER_WS_ORIGIN}/host/${doId}?secret=${hostSecretHex}`;
+                const ws = new WebSocket(wsUrl);
+                pendingInviteWs = ws;
+
+                ws.onmessage = async (ev) => {
+                    try {
+                        const drop = JSON.parse(ev.data);
+                        if (drop && drop.sdp_answer && drop.sdp_answer.sdp) {
+                            const targetPeerId = drop.peer_id || invitePeerId;
+                            if (drop.peer_id && drop.peer_id !== invitePeerId && engine.peers.has(invitePeerId)) {
+                                engine.rename_peer(invitePeerId, drop.peer_id);
+                            }
+                            await engine.apply_answer(drop.sdp_answer.sdp, targetPeerId);
+                            try {
+                                ws.close();
+                            } catch (_) {}
+                            if (pendingInviteWs === ws) {
+                                pendingInviteWs = null;
+                            }
+                        }
+                    } catch (err) {
+                        console.error("Failed to parse dropped answer for pending invite:", err);
+                    }
+                };
+
+                ws.onerror = (e) => console.warn("Pending invite signaling socket error:", e);
+
+                // Silently copy to clipboard
+                if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+                    try {
+                        await navigator.clipboard.writeText(inviteUrl);
+                    } catch (e) {
+                        console.warn("Clipboard copy failed:", e);
+                    }
+                }
+            } catch (err) {
+                console.error("Failed to create pending invite:", err);
+                clearPendingInvite();
+            }
+        }
+
+        function handlePeerDeparture(peerId = null) {
+            if (!hasActiveSession || isBurned) return;
+
+            // Selectively purge only that peer's message bubbles
+            if (peerId) {
+                const peerBubbles = feed.querySelectorAll(`.message-bubble[data-peer-id="${peerId}"]`);
+                peerBubbles.forEach((el) => el.remove());
+            }
+
+            // Emit a single "Peer left chat" notice
+            appendSystemMessage("Peer left chat");
+
+            const count = engine ? engine.openPeerCount : 0;
+            if (peerCountEl) {
+                peerCountEl.textContent = String(count);
+            }
+
+            if (count > 0) {
+                // Surviving peers remain in active chat
+                peerDepartureHandled = false;
+                if (headerAddBtn) headerAddBtn.classList.remove("hidden");
+                if (messageForm) messageForm.classList.remove("hidden");
+                if (msgInput) {
+                    msgInput.disabled = false;
+                }
+                if (sendBtn) sendBtn.disabled = false;
+            } else {
+                // ONLY when engine.openPeerCount === 0 (last peer disconnects):
                 peerDepartureHandled = true;
 
-                // REQ-024.2: Selectively purge remote peer messages on disconnect
+                // Also purge any remaining remote bubbles
                 const remoteBubbles = feed.querySelectorAll(".message-bubble:not(.message-outgoing)");
                 remoteBubbles.forEach((el) => el.remove());
 
-                // REQ-024.1: Exactly ONE system message
-                appendSystemMessage("Peer left chat");
-            }
-
-            if (hasActiveSession && !isBurned) {
-                // REQ-024.3: Disconnected Room Controls Preservation
-                if (peerCountEl) {
-                    peerCountEl.textContent = "0";
-                }
-                if (peerListEl) {
-                    peerListEl.classList.remove("hidden");
-                    if (!peerListEl.querySelector(".peer-pill")) {
-                        peerListEl.innerHTML = `<span class="peer-pill"><svg class="peer-lock-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></span>`;
-                    }
+                if (headerAddBtn) {
+                    headerAddBtn.classList.add("hidden");
                 }
                 if (headerLeaveBtn) {
                     headerLeaveBtn.classList.remove("hidden");
@@ -831,7 +980,6 @@
                 if (burnRoomBar) {
                     burnRoomBar.classList.remove("hidden");
                 }
-
                 if (messageForm) {
                     messageForm.classList.remove("hidden");
                 }
@@ -848,16 +996,23 @@
                 if (inviteBar) {
                     inviteBar.classList.add("hidden");
                 }
+                if (peerListEl) {
+                    peerListEl.classList.remove("hidden");
+                    if (!peerListEl.querySelector(".peer-pill")) {
+                        peerListEl.innerHTML = `<span class="peer-pill"><svg class="peer-lock-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></span>`;
+                    }
+                }
             }
         }
 
         function initEngineListeners() {
-            engine.onStateChangeCb = (st) => {
+            engine.onStateChangeCb = (st, peerId) => {
                 if (st === "open") {
                     hasActiveSession = true;
                     isBurned = false;
                     peerDepartureHandled = false;
                     opportunisticLeaveSent = false;
+                    clearPendingInvite();
                     hideWelcomeSplash();
                     updateStatus("open", "P2P Established");
                     if (idleStatusCapsule) idleStatusCapsule.classList.add("hidden");
@@ -868,6 +1023,7 @@
                         peerListEl.classList.remove("hidden");
                         peerListEl.innerHTML = `<span class="peer-pill"><svg class="peer-lock-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></span>`;
                     }
+                    if (headerAddBtn) headerAddBtn.classList.remove("hidden");
                     if (headerLeaveBtn) headerLeaveBtn.classList.remove("hidden");
                     if (burnRoomBar) burnRoomBar.classList.remove("hidden");
                     if (createRoomBar) createRoomBar.classList.add("hidden");
@@ -893,8 +1049,11 @@
                     }
                 } else if (st === "closed") {
                     updateStatus("closed", "Disconnected");
+                    if (headerAddBtn) headerAddBtn.classList.add("hidden");
                     if (hasActiveSession && !isBurned) {
-                        handlePeerDeparture();
+                        if (!peerDepartureHandled) {
+                            handlePeerDeparture(peerId);
+                        }
                     } else {
                         if (idleStatusCapsule) {
                             idleStatusCapsule.classList.remove("hidden");
@@ -906,6 +1065,7 @@
                             peerListEl.classList.add("hidden");
                             peerListEl.innerHTML = "";
                         }
+                        if (headerAddBtn) headerAddBtn.classList.add("hidden");
                         if (headerLeaveBtn) headerLeaveBtn.classList.add("hidden");
                         if (burnRoomBar) burnRoomBar.classList.add("hidden");
                         if (messageForm) messageForm.classList.add("hidden");
@@ -934,6 +1094,10 @@
                     peerCountEl.textContent = String(engine.openPeerCount);
                 }
                 if (peerState === "open") {
+                    clearPendingInvite();
+                    if (headerAddBtn) {
+                        headerAddBtn.classList.remove("hidden");
+                    }
                     if (hasActiveSession && engine && engine.openPeerCount > 1) {
                         appendSystemMessage(`Peer (${peerId}) joined chat`);
                     }
@@ -976,8 +1140,8 @@
                         }
                     }
                 } else if (peerState === "closed") {
-                    if (engine && engine.openPeerCount > 0) {
-                        appendSystemMessage(`Peer (${peerId}) disconnected`);
+                    if (hasActiveSession && !isBurned) {
+                        handlePeerDeparture(peerId);
                     }
                 }
             };
@@ -1001,8 +1165,8 @@
                             data.peer_id;
                         if (leavingPeerId && engine && engine.peers && engine.peers.has(leavingPeerId)) {
                             engine.close_peer(leavingPeerId);
-                        } else if (engine && engine.openPeerCount <= 1) {
-                            handlePeerDeparture();
+                        } else {
+                            handlePeerDeparture(leavingPeerId);
                         }
                         return;
                     }
@@ -1419,6 +1583,7 @@
             peerDepartureHandled = false;
             opportunisticLeaveSent = false;
             isJoining = false;
+            clearPendingInvite();
             peerColorMap.clear();
             seenMessageIds.clear();
             seenMessageOrder.length = 0;
@@ -1448,6 +1613,7 @@
                 peerListEl.classList.add("hidden");
                 peerListEl.innerHTML = "";
             }
+            if (headerAddBtn) headerAddBtn.classList.add("hidden");
             if (headerLeaveBtn) headerLeaveBtn.classList.add("hidden");
             if (burnRoomBar) burnRoomBar.classList.add("hidden");
             if (messageForm) messageForm.classList.add("hidden");
@@ -1483,6 +1649,10 @@
 
         window.addEventListener("beforeunload", sendOpportunisticLeave);
         window.addEventListener("pagehide", sendOpportunisticLeave);
+
+        if (headerAddBtn) {
+            headerAddBtn.addEventListener("click", handleHeaderAddPeerClick);
+        }
 
         if (headerLeaveBtn) {
             headerLeaveBtn.addEventListener("click", () => {
@@ -1525,6 +1695,9 @@
         // Expose constructors and relay helpers on window for external runners & tests
         window.ZeroWebRtcEngine = ZeroWebRtcEngine;
         window.initiateRelayHandshake = initiateRelayHandshake;
+        window.handleHeaderAddPeerClick = handleHeaderAddPeerClick;
+        window.getPendingInviteUrl = () => pendingInviteUrl;
+        window.headerAddBtn = headerAddBtn;
     </script>
 </body>
 </html>
