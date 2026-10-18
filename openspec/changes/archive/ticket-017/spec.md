@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-017"
 title: "Splash Card Update: Centered Value Proposition, 3-Step Flow, and Refined Feature Copy"
-state: "IN_PROGRESS"
+state: "COMPLETED"
 roadmap: "serverless-p2p-chat"
 depends_on: ["ticket-016"]
 created_at: "2026-10-18T16:11:00Z"
@@ -41,21 +41,21 @@ The objective of this task is to implement this exact formatting and copy across
   - Cryptographic packet sealing in `zero_protocol`.
 
 ## 3. Requirements & Acceptance Criteria
-- [ ] **REQ-017.1 (Centered Splash Headline & Step Flow)**: The top of the welcome splash card must display a centered header section (`.welcome-header`):
+- [x] **REQ-017.1 (Centered Splash Headline & Step Flow)**: The top of the welcome splash card must display a centered header section (`.welcome-header`):
   - Primary title: `"Zero accounts. Zero servers. Zero history."` (`.welcome-title`, centered).
   - Subtitle step flow: `"Create Chat -> Share Link -> Talk P2P"` (`.welcome-subtitle`, centered directly underneath).
-- [ ] **REQ-017.2 (Feature 1 - Direct P2P Connection)**: The first feature card must display:
+- [x] **REQ-017.2 (Feature 1 - Direct P2P Connection)**: The first feature card must display:
   - Title: `"Direct P2P Connection"`
   - Description: `"Standalone browser-to-browser data channels with no intermediate relays or storage servers."`
-- [ ] **REQ-017.3 (Feature 2 - Secure Communications)**: The second feature card must display:
+- [x] **REQ-017.3 (Feature 2 - Secure Communications)**: The second feature card must display:
   - Title: `"Secure Communications"`
   - Description: `"All messages are end-to-end encrypted."`
-- [ ] **REQ-017.4 (Feature 3 - Ephemeral Sessions)**: The third feature card must display:
+- [x] **REQ-017.4 (Feature 3 - Ephemeral Sessions)**: The third feature card must display:
   - Title: `"Ephemeral Sessions"`
   - Description: `"Chats are permanently destroyed the moment they are closed."`
-- [ ] **REQ-017.5 (Dual-Template Consistency)**: The updated layout and copy must be identical across both the static HTML markup in `zero_client/index.html` and the `WELCOME_SPLASH_HTML` template string in `<script>` so that resets (burn/leave) render the exact same splash view.
-- [ ] **REQ-017.6 (Visual Styling & Spacing)**: The header and feature list within `.welcome-splash` must have balanced padding, typography, and line-height in `zero_client/style.css`.
-- [ ] **REQ-017.7 (Test Suite & Non-Regression Integrity)**: All 86 workspace unit and integration tests (`cargo test --workspace`) must pass cleanly.
+- [x] **REQ-017.5 (Dual-Template Consistency)**: The updated layout and copy must be identical across both the static HTML markup in `zero_client/index.html` and the `WELCOME_SPLASH_HTML` template string in `<script>` so that resets (burn/leave) render the exact same splash view.
+- [x] **REQ-017.6 (Visual Styling & Spacing)**: The header and feature list within `.welcome-splash` must have balanced padding, typography, and line-height in `zero_client/style.css`.
+- [x] **REQ-017.7 (Test Suite & Non-Regression Integrity)**: All 86 workspace unit and integration tests (`cargo test --workspace`) must pass cleanly.
 
 ## 4. Architectural Design & Impacted Modules
 - `zero_client/index.html`:
