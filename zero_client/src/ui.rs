@@ -1072,4 +1072,48 @@ mod tests {
             .expect("burn non-existent second call failed");
         assert_eq!(ui.messages().len(), 2);
     }
+
+    #[test]
+    fn test_peer_departure_preserves_session_until_explicit_destroy() {
+        let ui = ChatUi::mount("app").expect("mount failed");
+        ui.set_status(ConnectionStatus::Connected)
+            .expect("set status failed");
+        assert_eq!(ui.status(), ConnectionStatus::Connected);
+
+        // Add a peer ("peer-bob"), append remote message from "peer-bob", append local message from "self"
+        ui.add_peer("peer-bob").expect("add peer failed");
+        ui.append_message("peer-bob", "Incoming from Bob", false, true)
+            .expect("append peer message failed");
+        ui.append_message("self", "Outgoing from self", true, true)
+            .expect("append self message failed");
+
+        assert_eq!(ui.peers(), vec!["peer-bob".to_string()]);
+        assert_eq!(ui.messages().len(), 2);
+
+        // Remove "peer-bob" and purge peer messages via burn_peer_messages("peer-bob")
+        ui.remove_peer("peer-bob").expect("remove peer failed");
+        ui.burn_peer_messages("peer-bob")
+            .expect("burn peer messages failed");
+
+        // Assert that ui.peers() is empty (0 peers), but the session is NOT destroyed:
+        // local message from "self" remains intact in ui.messages().
+        assert!(ui.peers().is_empty());
+        let msgs = ui.messages();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].0, "self");
+        assert_eq!(msgs[0].1, "Outgoing from self");
+        assert!(msgs[0].2); // is_self
+        assert!(msgs[0].3); // verified
+
+        // Explicitly invoke ui.destroy_session()
+        ui.destroy_session().expect("destroy session failed");
+
+        // Assert that all messages are now wiped, status is ConnectionStatus::Disconnected,
+        // and zero persistence is verified.
+        assert!(ui.messages().is_empty());
+        assert!(ui.peers().is_empty());
+        assert_eq!(ui.status(), ConnectionStatus::Disconnected);
+        assert!(ChatUi::verify_zero_persistence().is_ok());
+    }
 }
+
