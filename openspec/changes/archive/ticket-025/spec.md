@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-025"
 title: "Multi-Peer Browser WebRTC Engine & Connection Pool"
-state: "PLANNING"
+state: "COMPLETED"
 roadmap: "multi-user-mesh-chat"
 depends_on: []
 created_at: "2026-10-18T21:02:00Z"
@@ -40,11 +40,11 @@ This task refactors `ZeroWebRtcEngine` into a multi-peer WebRTC connection pool:
 ---
 
 ## 3. Requirements & Acceptance Criteria
-- [ ] **REQ-025.1 (Multi-Peer Pool Architecture)**:
+- [x] **REQ-025.1 (Multi-Peer Pool Architecture)**:
   - `ZeroWebRtcEngine` manages multiple `RTCPeerConnection` and `RTCDataChannel` instances indexed by unique `peerId`.
-- [ ] **REQ-025.2 (Message Broadcasting)**:
+- [x] **REQ-025.2 (Message Broadcasting)**:
   - `broadcast_text(text)` sends the payload to all currently open DataChannels in the pool.
-- [ ] **REQ-025.3 (Individual Peer Lifecycle Tracking)**:
+- [x] **REQ-025.3 (Individual Peer Lifecycle Tracking)**:
   - Individual peer disconnection transitions update only that peer's state; the engine remains active as long as at least one peer or active session exists.
-- [ ] **REQ-025.4 (Workspace Integrity & Compilation)**:
+- [x] **REQ-025.4 (Workspace Integrity & Compilation)**:
   - Clean HTML/JS syntax and 0 regressions across existing test suite (`cargo test --workspace`).
