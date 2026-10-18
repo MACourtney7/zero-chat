@@ -90,6 +90,12 @@ pub enum MeshRelaySignal {
     PeerLeft {
         peer_id: String,
     },
+    PeerLeftAndBurn {
+        peer_id: String,
+    },
+    GlobalBurnSession {
+        initiator_peer_id: String,
+    },
     RelaySdpOffer {
         from_peer_id: String,
         to_peer_id: String,
@@ -261,6 +267,50 @@ mod tests {
         let decoded_bytes: MeshRelayMessage =
             from_json_bytes(&bytes).expect("deserialize from bytes");
         assert_eq!(relay, decoded_bytes);
+    }
+
+    #[test]
+    fn test_mesh_relay_peer_left_and_burn_roundtrip() {
+        let mut relay = MeshRelayMessage::new(
+            "frame-burn-1",
+            3,
+            MeshRelaySignal::PeerLeftAndBurn {
+                peer_id: "peer-b".to_string(),
+            },
+        );
+        let json = to_json_string(&relay).expect("serialize to string");
+        let decoded: MeshRelayMessage = from_json_str(&json).expect("deserialize from str");
+        assert_eq!(relay, decoded);
+
+        let bytes = to_json_bytes(&relay).expect("serialize to bytes");
+        let decoded_bytes: MeshRelayMessage =
+            from_json_bytes(&bytes).expect("deserialize from bytes");
+        assert_eq!(relay, decoded_bytes);
+
+        assert!(relay.decrement_ttl());
+        assert_eq!(relay.ttl, 2);
+    }
+
+    #[test]
+    fn test_mesh_relay_global_burn_session_roundtrip() {
+        let mut relay = MeshRelayMessage::new(
+            "frame-burn-global-1",
+            3,
+            MeshRelaySignal::GlobalBurnSession {
+                initiator_peer_id: "peer-a".to_string(),
+            },
+        );
+        let json = to_json_string(&relay).expect("serialize to string");
+        let decoded: MeshRelayMessage = from_json_str(&json).expect("deserialize from str");
+        assert_eq!(relay, decoded);
+
+        let bytes = to_json_bytes(&relay).expect("serialize to bytes");
+        let decoded_bytes: MeshRelayMessage =
+            from_json_bytes(&bytes).expect("deserialize from bytes");
+        assert_eq!(relay, decoded_bytes);
+
+        assert!(relay.decrement_ttl());
+        assert_eq!(relay.ttl, 2);
     }
 
     #[test]
