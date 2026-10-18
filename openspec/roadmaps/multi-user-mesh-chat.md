@@ -32,8 +32,8 @@ This milestone expands Zero-Chat into a full-featured, zero-knowledge, multi-par
 | Ticket ID | Title | Thinking Level | Depends On | Concurrency Track | State |
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `ticket-025` | Multi-Peer Browser WebRTC Engine & Connection Pool | `MEDIUM` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
-| `ticket-026` | In-Band SDP Signaling Relay & Mesh Snapping in Browser Client | `HIGH` | `["ticket-025"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
-| `ticket-027` | Header Add-Peer Button, Single-Invite Lifecycle & Multi-User Room UI | `MEDIUM` | `["ticket-026"]` | `BLOCKED_ON_ticket-026` | `PLANNING` |
+| `ticket-026` | In-Band SDP Signaling Relay & Mesh Snapping in Browser Client | `HIGH` | `["ticket-025"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-027` | Header Add-Peer Button, Single-Invite Lifecycle & Multi-User Room UI | `MEDIUM` | `["ticket-026"]` | `PARALLEL_ELIGIBLE` | `PLANNING` |
 | `ticket-028` | Multi-Peer E2E Simulation & Mesh Snapping Validation Suite | `MEDIUM` | `["ticket-027"]` | `BLOCKED_ON_ticket-027` | `PLANNING` |
 
 ---
@@ -76,6 +76,6 @@ flowchart TD
 ## 5. Milestone Progress & Completion Criteria
 
 - [x] **Track 1 (`ticket-025`)**: Browser client holds multiple `RTCPeerConnection` instances in a pool and broadcasts messages to all open channels.
-- [ ] **Track 2 (`ticket-026`)**: Secondary peers snap direct WebRTC DataChannels via in-band SDP relay through the host with 0 cloud server requests.
+- [x] **Track 2 (`ticket-026`)**: Secondary peers snap direct WebRTC DataChannels via in-band SDP relay through the host with 0 cloud server requests.
 - [ ] **Track 3 (`ticket-027`)**: Header Add-Peer button located to the left of `#peer-count`, enforces single active invite lifecycle, copies quietly without tooltips, and supports dynamic N-peer counter.
 - [ ] **Track 4 (`ticket-028`)**: Automated multi-node integration test suite validates full multi-user mesh lifecycle and workspace test suite passes with 100% success.
