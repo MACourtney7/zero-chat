@@ -98,6 +98,11 @@ pub struct ConnectedPeer {
 
 pub type MessageCallback = Rc<dyn Fn(&str, &str)>; // (sender_id, plaintext)
 pub type PeerEventCallback = Rc<dyn Fn(&str)>; // (peer_id)
+pub type BurnPeerCallback = Rc<dyn Fn(&str)>;
+pub type GlobalBurnCallback = Rc<dyn Fn(&str)>;
+
+/// Alias for `MeshTopology` conforming to management layer nomenclature.
+pub type MeshTopologyManager = MeshTopology;
 
 /// Multi-peer WebRTC mesh topology manager.
 #[derive(Clone)]
@@ -115,9 +120,12 @@ struct MeshTopologyInner {
     seen_messages: HashSet<String>,
     seen_message_order: Vec<String>,
     max_seen_cache: usize,
+    has_burned: bool,
     on_message_callbacks: Vec<MessageCallback>,
     on_peer_joined_callbacks: Vec<PeerEventCallback>,
     on_peer_left_callbacks: Vec<PeerEventCallback>,
+    on_burn_peer_messages_callbacks: Vec<BurnPeerCallback>,
+    on_global_burn_callbacks: Vec<GlobalBurnCallback>,
 }
 
 impl MeshTopology {
@@ -137,9 +145,12 @@ impl MeshTopology {
                 seen_messages: HashSet::new(),
                 seen_message_order: Vec::new(),
                 max_seen_cache: 1024,
+                has_burned: false,
                 on_message_callbacks: Vec::new(),
                 on_peer_joined_callbacks: Vec::new(),
                 on_peer_left_callbacks: Vec::new(),
+                on_burn_peer_messages_callbacks: Vec::new(),
+                on_global_burn_callbacks: Vec::new(),
             })),
         }
     }
@@ -362,6 +373,22 @@ impl MeshTopology {
         self.inner
             .borrow_mut()
             .on_peer_left_callbacks
+            .push(Rc::new(callback));
+    }
+
+    /// Subscribes to peer selective burn events.
+    pub fn on_burn_peer_messages<F: Fn(&str) + 'static>(&self, callback: F) {
+        self.inner
+            .borrow_mut()
+            .on_burn_peer_messages_callbacks
+            .push(Rc::new(callback));
+    }
+
+    /// Subscribes to global session burn events.
+    pub fn on_global_burn<F: Fn(&str) + 'static>(&self, callback: F) {
+        self.inner
+            .borrow_mut()
+            .on_global_burn_callbacks
             .push(Rc::new(callback));
     }
 
@@ -700,6 +727,116 @@ impl MeshTopology {
                     Ok(())
                 }
 
+                MeshRelaySignal::PeerLeftAndBurn { ref peer_id } => {
+                    // Deduplicate using seen_messages / frame_id
+                    {
+                        let mut inner = self.inner.borrow_mut();
+                        if inner.seen_messages.contains(&relay_msg.frame_id) {
+                            return Ok(());
+                        }
+                        if inner.seen_message_order.len() >= inner.max_seen_cache {
+                            let oldest = inner.seen_message_order.remove(0);
+                            inner.seen_messages.remove(&oldest);
+                        }
+                        inner.seen_messages.insert(relay_msg.frame_id.clone());
+                        inner.seen_message_order.push(relay_msg.frame_id.clone());
+                    }
+
+                    // Forward to other connected peers if TTL > 1 (excluding incoming peer and leaving peer)
+                    if relay_msg.ttl > 1 {
+                        let targets: Vec<WebRtcPeer> = {
+                            let inner = self.inner.borrow();
+                            inner
+                                .peers
+                                .iter()
+                                .filter(|(id, _)| id.as_str() != from_peer_id && id.as_str() != peer_id)
+                                .map(|(_, p)| p.rtc_peer.clone())
+                                .collect()
+                        };
+
+                        let mut forwarded = relay_msg.clone();
+                        forwarded.ttl -= 1;
+                        if let Ok(fwd_json) = to_json_string(&forwarded) {
+                            for rtc in targets {
+                                let _ = rtc.send_text(&fwd_json);
+                            }
+                        }
+                    }
+
+                    // Remove peer_id and close its channel
+                    let _ = self.remove_peer(peer_id);
+
+                    // Fire all on_burn_peer_messages callbacks with peer_id
+                    let callbacks = self.inner.borrow().on_burn_peer_messages_callbacks.clone();
+                    for cb in callbacks {
+                        cb(peer_id);
+                    }
+
+                    Ok(())
+                }
+
+                MeshRelaySignal::GlobalBurnSession {
+                    ref initiator_peer_id,
+                } => {
+                    // Deduplicate if already burned
+                    {
+                        let mut inner = self.inner.borrow_mut();
+                        if inner.has_burned {
+                            return Ok(());
+                        }
+                        inner.has_burned = true;
+                    }
+
+                    // If relay_msg.ttl > 1, forward the message to other connected peers (excluding from_peer_id) before severing connections
+                    if relay_msg.ttl > 1 {
+                        let targets: Vec<WebRtcPeer> = {
+                            let inner = self.inner.borrow();
+                            inner
+                                .peers
+                                .iter()
+                                .filter(|(id, _)| id.as_str() != from_peer_id)
+                                .map(|(_, p)| p.rtc_peer.clone())
+                                .collect()
+                        };
+
+                        let mut forwarded = relay_msg.clone();
+                        forwarded.ttl -= 1;
+                        if let Ok(fwd_json) = to_json_string(&forwarded) {
+                            for rtc in targets {
+                                let _ = rtc.send_text(&fwd_json);
+                            }
+                        }
+                    }
+
+                    // Sever all connections, close all rtc_peer instances, and clear internal tables
+                    let (peers_to_close, pending_to_close, burn_cbs) = {
+                        let mut inner = self.inner.borrow_mut();
+                        let peers: Vec<WebRtcPeer> = inner.peers.values().map(|p| p.rtc_peer.clone()).collect();
+                        let pending: Vec<WebRtcPeer> = inner.pending_offers.values().cloned().collect();
+                        inner.peers.clear();
+                        inner.pending_offers.clear();
+                        inner.known_public_keys.clear();
+                        inner.seen_messages.clear();
+                        inner.seen_message_order.clear();
+                        let cbs = inner.on_global_burn_callbacks.clone();
+                        (peers, pending, cbs)
+                    };
+
+                    for p in peers_to_close {
+                        let _ = p.close();
+                    }
+                    for p in pending_to_close {
+                        let _ = p.close();
+                    }
+
+                    // Fire all on_global_burn callbacks with initiator_peer_id
+                    for cb in burn_cbs {
+                        cb(initiator_peer_id);
+                    }
+
+                    Ok(())
+                }
+
                 #[allow(unreachable_patterns)]
                 _ => Ok(()),
             }
@@ -788,6 +925,107 @@ impl MeshTopology {
         }
 
         Ok(message_uuid)
+    }
+
+    /// Broadcasts a leave and selective burn signal to all connected peers,
+    /// closing local peer connections and cleaning up topology state (REQ-020.2).
+    pub fn broadcast_leave_and_burn(&self) -> Result<(), MeshError> {
+        let frame_id = generate_message_uuid()?;
+        let relay_msg = MeshRelayMessage {
+            frame_id: frame_id.clone(),
+            ttl: 3,
+            signal: MeshRelaySignal::PeerLeftAndBurn {
+                peer_id: self.local_peer_id(),
+            },
+        };
+        let raw_json = to_json_string(&relay_msg)?;
+
+        // Record in local deduplication cache so echoed messages are suppressed
+        {
+            let mut inner = self.inner.borrow_mut();
+            if inner.seen_message_order.len() >= inner.max_seen_cache {
+                let oldest = inner.seen_message_order.remove(0);
+                inner.seen_messages.remove(&oldest);
+            }
+            inner.seen_messages.insert(frame_id.clone());
+            inner.seen_message_order.push(frame_id);
+        }
+
+        let (peers_to_close, pending_to_close) = {
+            let inner = self.inner.borrow();
+            let peers: Vec<WebRtcPeer> = inner.peers.values().map(|p| p.rtc_peer.clone()).collect();
+            let pending: Vec<WebRtcPeer> = inner.pending_offers.values().cloned().collect();
+            (peers, pending)
+        };
+
+        for p in &peers_to_close {
+            let _ = p.send_text(&raw_json);
+        }
+
+        {
+            let mut inner = self.inner.borrow_mut();
+            inner.peers.clear();
+            inner.pending_offers.clear();
+        }
+
+        for p in peers_to_close {
+            let _ = p.close();
+        }
+        for p in pending_to_close {
+            let _ = p.close();
+        }
+
+        Ok(())
+    }
+
+    /// Broadcasts a global burn signal across the entire mesh, severing all peer
+    /// connections, clearing routing tables, and triggering local global burn callbacks (REQ-020.4).
+    pub fn broadcast_global_burn(&self) -> Result<(), MeshError> {
+        let local_id = self.local_peer_id();
+        let frame_id = generate_message_uuid()?;
+        let relay_msg = MeshRelayMessage {
+            frame_id,
+            ttl: 3,
+            signal: MeshRelaySignal::GlobalBurnSession {
+                initiator_peer_id: local_id.clone(),
+            },
+        };
+        let raw_json = to_json_string(&relay_msg)?;
+
+        let (peers_to_close, pending_to_close, burn_cbs) = {
+            let mut inner = self.inner.borrow_mut();
+            inner.has_burned = true;
+            let peers: Vec<WebRtcPeer> = inner.peers.values().map(|p| p.rtc_peer.clone()).collect();
+            let pending: Vec<WebRtcPeer> = inner.pending_offers.values().cloned().collect();
+            let cbs = inner.on_global_burn_callbacks.clone();
+            (peers, pending, cbs)
+        };
+
+        for p in &peers_to_close {
+            let _ = p.send_text(&raw_json);
+        }
+
+        {
+            let mut inner = self.inner.borrow_mut();
+            inner.peers.clear();
+            inner.pending_offers.clear();
+            inner.known_public_keys.clear();
+            inner.seen_messages.clear();
+            inner.seen_message_order.clear();
+        }
+
+        for p in peers_to_close {
+            let _ = p.close();
+        }
+        for p in pending_to_close {
+            let _ = p.close();
+        }
+
+        for cb in burn_cbs {
+            cb(&local_id);
+        }
+
+        Ok(())
     }
 }
 
@@ -1241,5 +1479,151 @@ mod tests {
 
         let res = block_on(alice_mesh.handle_incoming_message("bob", "not json"));
         assert!(matches!(res, Err(MeshError::Protocol(_))));
+    }
+
+    #[test]
+    fn test_broadcast_leave_and_burn() {
+        let (alice_sk, alice_pk) = generate_kp();
+        let (bob_sk, bob_pk) = generate_kp();
+        let (charlie_sk, charlie_pk) = generate_kp();
+
+        let alice_mesh = MeshTopology::new("alice", alice_sk);
+        let bob_mesh = MeshTopology::new("bob", bob_sk);
+        let charlie_mesh = MeshTopology::new("charlie", charlie_sk);
+
+        // Fully connected mesh (triangle)
+        let alice_to_bob = WebRtcPeer::new();
+        let bob_to_alice = WebRtcPeer::new();
+        WebRtcPeer::pair_for_testing(&alice_to_bob, &bob_to_alice).unwrap();
+        alice_mesh.add_peer("bob", bob_pk, alice_to_bob).unwrap();
+        bob_mesh.add_peer("alice", alice_pk, bob_to_alice).unwrap();
+
+        let alice_to_charlie = WebRtcPeer::new();
+        let charlie_to_alice = WebRtcPeer::new();
+        WebRtcPeer::pair_for_testing(&alice_to_charlie, &charlie_to_alice).unwrap();
+        alice_mesh
+            .add_peer("charlie", charlie_pk, alice_to_charlie)
+            .unwrap();
+        charlie_mesh
+            .add_peer("alice", alice_pk, charlie_to_alice)
+            .unwrap();
+
+        let bob_to_charlie = WebRtcPeer::new();
+        let charlie_to_bob = WebRtcPeer::new();
+        WebRtcPeer::pair_for_testing(&bob_to_charlie, &charlie_to_bob).unwrap();
+        bob_mesh
+            .add_peer("charlie", charlie_pk, bob_to_charlie)
+            .unwrap();
+        charlie_mesh
+            .add_peer("bob", bob_pk, charlie_to_bob)
+            .unwrap();
+
+        assert_eq!(alice_mesh.peer_count(), 2);
+        assert_eq!(bob_mesh.peer_count(), 2);
+        assert_eq!(charlie_mesh.peer_count(), 2);
+
+        let alice_burn_log = Rc::new(RefCell::new(Vec::new()));
+        let a_log = alice_burn_log.clone();
+        alice_mesh.on_burn_peer_messages(move |peer_id| {
+            a_log.borrow_mut().push(peer_id.to_string());
+        });
+
+        let charlie_burn_log = Rc::new(RefCell::new(Vec::new()));
+        let c_log = charlie_burn_log.clone();
+        charlie_mesh.on_burn_peer_messages(move |peer_id| {
+            c_log.borrow_mut().push(peer_id.to_string());
+        });
+
+        bob_mesh.broadcast_leave_and_burn().unwrap();
+
+        assert_eq!(*alice_burn_log.borrow(), vec!["bob".to_string()]);
+        assert_eq!(*charlie_burn_log.borrow(), vec!["bob".to_string()]);
+
+        assert!(!alice_mesh.has_peer("bob"));
+        assert!(alice_mesh.has_peer("charlie"));
+        assert_eq!(alice_mesh.peer_count(), 1);
+
+        assert!(!charlie_mesh.has_peer("bob"));
+        assert!(charlie_mesh.has_peer("alice"));
+        assert_eq!(charlie_mesh.peer_count(), 1);
+
+        assert_eq!(bob_mesh.peer_count(), 0);
+    }
+
+    #[test]
+    fn test_broadcast_global_burn() {
+        let (alice_sk, alice_pk) = generate_kp();
+        let (bob_sk, bob_pk) = generate_kp();
+        let (charlie_sk, charlie_pk) = generate_kp();
+
+        let alice_mesh = MeshTopology::new("alice", alice_sk);
+        let bob_mesh = MeshTopology::new("bob", bob_sk);
+        let charlie_mesh = MeshTopology::new("charlie", charlie_sk);
+
+        // Fully connected mesh (triangle)
+        let alice_to_bob = WebRtcPeer::new();
+        let bob_to_alice = WebRtcPeer::new();
+        WebRtcPeer::pair_for_testing(&alice_to_bob, &bob_to_alice).unwrap();
+        alice_mesh.add_peer("bob", bob_pk, alice_to_bob).unwrap();
+        bob_mesh.add_peer("alice", alice_pk, bob_to_alice).unwrap();
+
+        let alice_to_charlie = WebRtcPeer::new();
+        let charlie_to_alice = WebRtcPeer::new();
+        WebRtcPeer::pair_for_testing(&alice_to_charlie, &charlie_to_alice).unwrap();
+        alice_mesh
+            .add_peer("charlie", charlie_pk, alice_to_charlie)
+            .unwrap();
+        charlie_mesh
+            .add_peer("alice", alice_pk, charlie_to_alice)
+            .unwrap();
+
+        let bob_to_charlie = WebRtcPeer::new();
+        let charlie_to_bob = WebRtcPeer::new();
+        WebRtcPeer::pair_for_testing(&bob_to_charlie, &charlie_to_bob).unwrap();
+        bob_mesh
+            .add_peer("charlie", charlie_pk, bob_to_charlie)
+            .unwrap();
+        charlie_mesh
+            .add_peer("bob", bob_pk, charlie_to_bob)
+            .unwrap();
+
+        let alice_global_burn = Rc::new(RefCell::new(Vec::new()));
+        let a_burn = alice_global_burn.clone();
+        alice_mesh.on_global_burn(move |initiator| {
+            a_burn.borrow_mut().push(initiator.to_string());
+        });
+
+        let bob_global_burn = Rc::new(RefCell::new(Vec::new()));
+        let b_burn = bob_global_burn.clone();
+        bob_mesh.on_global_burn(move |initiator| {
+            b_burn.borrow_mut().push(initiator.to_string());
+        });
+
+        let charlie_global_burn = Rc::new(RefCell::new(Vec::new()));
+        let c_burn = charlie_global_burn.clone();
+        charlie_mesh.on_global_burn(move |initiator| {
+            c_burn.borrow_mut().push(initiator.to_string());
+        });
+
+        alice_mesh.broadcast_global_burn().unwrap();
+
+        assert_eq!(*alice_global_burn.borrow(), vec!["alice".to_string()]);
+        assert_eq!(*bob_global_burn.borrow(), vec!["alice".to_string()]);
+        assert_eq!(*charlie_global_burn.borrow(), vec!["alice".to_string()]);
+
+        assert_eq!(alice_mesh.peer_count(), 0);
+        assert_eq!(bob_mesh.peer_count(), 0);
+        assert_eq!(charlie_mesh.peer_count(), 0);
+
+        assert_eq!(alice_mesh.seen_messages_count(), 0);
+        assert_eq!(bob_mesh.seen_messages_count(), 0);
+        assert_eq!(charlie_mesh.seen_messages_count(), 0);
+    }
+
+    #[test]
+    fn test_mesh_topology_manager_alias() {
+        let (alice_sk, _alice_pk) = generate_kp();
+        let mgr: MeshTopologyManager = MeshTopology::new("alice", alice_sk);
+        assert_eq!(mgr.local_peer_id(), "alice");
     }
 }
