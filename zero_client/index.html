@@ -408,6 +408,7 @@
             hideWelcomeSplash();
             const bubble = document.createElement("div");
             bubble.className = `message-bubble ${isSelf ? "message-outgoing" : "message-incoming"}`;
+            bubble.setAttribute("data-peer-id", isSelf ? "self" : (peerId || senderName || "peer-01"));
 
             const header = document.createElement("div");
             header.className = "message-header";
@@ -473,6 +474,7 @@
         let isJoining = false;
         let isBurned = false;
         let hasActiveSession = false;
+        const localPeerId = "peer-" + Math.random().toString(36).slice(2, 8);
 
         function initEngineListeners() {
             engine.onStateChangeCb = (st) => {
@@ -542,6 +544,50 @@
             };
 
             engine.onMessageCb = (text) => {
+                let data = null;
+                try {
+                    data = JSON.parse(text);
+                } catch (_) {}
+
+                if (data && typeof data === "object") {
+                    const isLeave = data.type === "leave_and_burn" ||
+                        data.signal === "leave_and_burn" ||
+                        data.action === "leave_and_burn" ||
+                        Boolean(data.signal && data.signal.PeerLeftAndBurn);
+
+                    if (isLeave) {
+                        const peerId = data.peer_id ||
+                            (data.signal && data.signal.PeerLeftAndBurn && data.signal.PeerLeftAndBurn.peer_id) ||
+                            "peer-01";
+                        let matched = feed.querySelectorAll(`.message-bubble[data-peer-id="${peerId}"]`);
+                        if (matched.length === 0 && peerId !== "peer-01") {
+                            matched = feed.querySelectorAll(`.message-bubble[data-peer-id="peer-01"]`);
+                        }
+                        matched.forEach((el) => el.remove());
+                        appendSystemMessage("[Peer left - messages burned]");
+                        if (peerCountEl) {
+                            const current = parseInt(peerCountEl.textContent, 10) || 1;
+                            const next = Math.max(0, current - 1);
+                            peerCountEl.textContent = next.toString();
+                            if (next === 0 && peerListEl) {
+                                peerListEl.classList.add("hidden");
+                                peerListEl.innerHTML = "";
+                            }
+                        }
+                        return;
+                    }
+
+                    const isBurn = data.type === "global_burn" ||
+                        data.signal === "global_burn" ||
+                        data.action === "global_burn" ||
+                        Boolean(data.signal && data.signal.GlobalBurnSession);
+
+                    if (isBurn) {
+                        resetToHome();
+                        return;
+                    }
+                }
+
                 appendMessageBubble("Peer", text, false, "peer-01");
             };
         }
@@ -766,10 +812,42 @@
         }
 
         if (headerLeaveBtn) {
-            headerLeaveBtn.addEventListener("click", resetToHome);
+            headerLeaveBtn.addEventListener("click", () => {
+                if (engine && engine.dc && engine.dc.readyState === "open") {
+                    try {
+                        const leaveMsg = JSON.stringify({
+                            type: "leave_and_burn",
+                            signal: "leave_and_burn",
+                            action: "leave_and_burn",
+                            peer_id: localPeerId
+                        });
+                        engine.send_text(leaveMsg);
+                    } catch (e) {
+                        console.error("Failed to send leave signal:", e);
+                    }
+                }
+                resetToHome();
+            });
         }
 
-        burnBtn.addEventListener("click", resetToHome);
+        if (burnBtn) {
+            burnBtn.addEventListener("click", () => {
+                if (engine && engine.dc && engine.dc.readyState === "open") {
+                    try {
+                        const burnMsg = JSON.stringify({
+                            type: "global_burn",
+                            signal: "global_burn",
+                            action: "global_burn",
+                            initiator_peer_id: localPeerId
+                        });
+                        engine.send_text(burnMsg);
+                    } catch (e) {
+                        console.error("Failed to send burn signal:", e);
+                    }
+                }
+                resetToHome();
+            });
+        }
 
         // 1. Auto-detect invite hash on initial page load (e.g. opening link in new tab)
         if (window.location.hash && window.location.hash.includes("payload=")) {
