@@ -255,6 +255,10 @@ impl ChatUi {
             "message-incoming"
         };
         bubble.set_class_name(&format!("message-bubble {direction_class}"));
+        let peer_attr = if is_self { "self" } else { sender_id };
+        bubble
+            .set_attribute("data-peer-id", peer_attr)
+            .map_err(|e| UiError::DomOperationFailed(format!("{e:?}")))?;
 
         // Header: Sender + Timestamp
         let header = document
@@ -355,6 +359,25 @@ impl ChatUi {
         self.messages_feed
             .set_scroll_top(self.messages_feed.scroll_height());
 
+        Ok(())
+    }
+
+    /// Selectively purges messages from the DOM associated with a specific peer ID (or "self").
+    pub fn burn_peer_messages(&self, peer_id: &str) -> Result<(), UiError> {
+        use wasm_bindgen::JsCast;
+
+        let mut curr = self.messages_feed.first_child();
+        while let Some(node) = curr {
+            let next = node.next_sibling();
+            if let Some(el) = node.dyn_ref::<web_sys::Element>() {
+                if el.get_attribute("data-peer-id").as_deref() == Some(peer_id) {
+                    self.messages_feed
+                        .remove_child(&node)
+                        .map_err(|e| UiError::DomOperationFailed(format!("{e:?}")))?;
+                }
+            }
+            curr = next;
+        }
         Ok(())
     }
 
@@ -651,6 +674,20 @@ impl ChatUi {
             .write()
             .map_err(|e| UiError::DomOperationFailed(e.to_string()))?;
         guard.push(alert_text.to_string());
+        Ok(())
+    }
+
+    /// Selectively purges messages from in-memory store matching the specified peer ID (or "self").
+    pub fn burn_peer_messages(&self, peer_id: &str) -> Result<(), UiError> {
+        let mut guard = self
+            .messages
+            .write()
+            .map_err(|e| UiError::DomOperationFailed(e.to_string()))?;
+        if peer_id == "self" {
+            guard.retain(|(_, _, is_self, _)| !*is_self);
+        } else {
+            guard.retain(|(sender, _, is_self, _)| *is_self || sender != peer_id);
+        }
         Ok(())
     }
 
@@ -982,5 +1019,57 @@ mod tests {
 
         ui.destroy_session().expect("destroy_session failed");
         assert!(ui.peers().is_empty());
+    }
+
+    #[test]
+    fn test_burn_peer_messages_selective() {
+        let ui = ChatUi::mount("app").expect("mount failed");
+
+        // Verify appending messages for "alice", "bob", and "self"
+        ui.append_message("alice", "Hello from Alice", false, true)
+            .expect("append alice failed");
+        ui.append_message("bob", "Hello from Bob", false, true)
+            .expect("append bob failed");
+        ui.append_message("self", "Hello from Self", true, true)
+            .expect("append self failed");
+
+        let msgs = ui.messages();
+        assert_eq!(msgs.len(), 3);
+
+        // Calling burn_peer_messages("alice") removes "alice" while keeping "bob" and "self"
+        ui.burn_peer_messages("alice").expect("burn alice failed");
+        let msgs = ui.messages();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].0, "bob");
+        assert_eq!(msgs[1].0, "self");
+
+        // Calling burn_peer_messages("self") removes "self" while keeping "bob"
+        ui.burn_peer_messages("self").expect("burn self failed");
+        let msgs = ui.messages();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].0, "bob");
+    }
+
+    #[test]
+    fn test_burn_peer_messages_nonexistent_idempotent() {
+        let ui = ChatUi::mount("app").expect("mount failed");
+
+        ui.append_message("bob", "Hello from Bob", false, true)
+            .expect("append bob failed");
+        ui.append_message("self", "Hello from Self", true, true)
+            .expect("append self failed");
+
+        // Purging non-existent peer is idempotent and does not error or affect other messages
+        ui.burn_peer_messages("non-existent-peer")
+            .expect("burn non-existent failed");
+        let msgs = ui.messages();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].0, "bob");
+        assert_eq!(msgs[1].0, "self");
+
+        // Subsequent call remains idempotent
+        ui.burn_peer_messages("non-existent-peer")
+            .expect("burn non-existent second call failed");
+        assert_eq!(ui.messages().len(), 2);
     }
 }
