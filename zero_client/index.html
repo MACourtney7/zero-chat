@@ -185,55 +185,151 @@
         const burnRoomBar = document.getElementById("burn-room-bar");
         const burnBtn = document.getElementById("destroy-session-button");
 
-        // WebRTC Engine (Browser native WebRTC with bundled candidate gathering)
+        // WebRTC Engine (Browser native WebRTC with multi-peer connection pool)
         class ZeroWebRtcEngine {
             constructor() {
-                const rtcConfig = {
+                this.rtcConfig = {
                     iceServers: [
                         { urls: "stun:stun.cloudflare.com:3478" },
                         { urls: "stun:stun.l.google.com:19302" }
                     ]
                 };
-                this.pc = new RTCPeerConnection(rtcConfig);
-                this.dc = null;
-                this.state = "disconnected";
-                this.onStateChangeCb = null;
-                this.onMessageCb = null;
-
-                this.pc.ondatachannel = (ev) => {
-                    this._attachChannel(ev.channel);
-                };
+                // Map<peerId, { pc: RTCPeerConnection, dc: RTCDataChannel, state: string, peerId: string }>
+                this.peers = new Map();
+                this.state = "disconnected"; // Overall engine state: "disconnected", "connecting", "open", "closed"
+                this.onStateChangeCb = null; // (state, peerId) => void
+                this.onPeerStateChangeCb = null; // (peerId, state) => void
+                this.onMessageCb = null; // (data, peerId) => void
             }
 
-            _setState(s) {
+            get openPeerCount() {
+                let count = 0;
+                for (const peer of this.peers.values()) {
+                    if (peer.state === "open" && peer.dc && peer.dc.readyState === "open") {
+                        count++;
+                    }
+                }
+                return count;
+            }
+
+            get dc() {
+                for (const peer of this.peers.values()) {
+                    if (peer.dc && peer.dc.readyState === "open") {
+                        return peer.dc;
+                    }
+                }
+                for (const peer of this.peers.values()) {
+                    if (peer.dc) {
+                        return peer.dc;
+                    }
+                }
+                return null;
+            }
+
+            get pc() {
+                for (const peer of this.peers.values()) {
+                    if (peer.pc) {
+                        return peer.pc;
+                    }
+                }
+                return null;
+            }
+
+            _setOverallState(s, peerId = null) {
                 if (this.state === s) return;
                 this.state = s;
-                if (this.onStateChangeCb) this.onStateChangeCb(s);
+                if (this.onStateChangeCb) {
+                    this.onStateChangeCb(s, peerId);
+                }
             }
 
-            _attachChannel(ch) {
-                this.dc = ch;
-                ch.onopen = () => this._setState("open");
-                ch.onclose = () => this._setState("closed");
-                ch.onerror = () => this._setState("closed");
-                ch.onmessage = (ev) => {
-                    if (this.onMessageCb) this.onMessageCb(ev.data);
+            _updateOverallState(peerId = null) {
+                if (this.openPeerCount > 0) {
+                    this._setOverallState("open", peerId);
+                    return;
+                }
+
+                let anyConnecting = false;
+                for (const peer of this.peers.values()) {
+                    if (peer.state === "connecting") {
+                        anyConnecting = true;
+                        break;
+                    }
+                }
+
+                if (anyConnecting) {
+                    this._setOverallState("connecting", peerId);
+                } else if (this.peers.size > 0) {
+                    this._setOverallState("closed", peerId);
+                } else {
+                    this._setOverallState("disconnected", peerId);
+                }
+            }
+
+            _setPeerState(peerId, newState) {
+                const peer = this.peers.get(peerId);
+                if (!peer) return;
+                if (peer.state === newState) return;
+                peer.state = newState;
+                if (this.onPeerStateChangeCb) {
+                    this.onPeerStateChangeCb(peerId, newState);
+                }
+                this._updateOverallState(peerId);
+            }
+
+            _handlePeerDisconnect(peerId) {
+                const peer = this.peers.get(peerId);
+                if (!peer || peer.state === "closed") return;
+                peer.state = "closed";
+                if (this.onPeerStateChangeCb) {
+                    this.onPeerStateChangeCb(peerId, "closed");
+                }
+                this._updateOverallState(peerId);
+            }
+
+            _attachDataChannel(peerId, ch) {
+                if (!ch) return;
+                let peer = this.peers.get(peerId);
+                if (!peer) {
+                    peer = { pc: null, dc: ch, state: "connecting", peerId };
+                    this.peers.set(peerId, peer);
+                } else {
+                    peer.dc = ch;
+                }
+
+                ch.onopen = () => {
+                    this._setPeerState(peerId, "open");
                 };
+                ch.onclose = () => {
+                    this._handlePeerDisconnect(peerId);
+                };
+                ch.onerror = () => {
+                    this._handlePeerDisconnect(peerId);
+                };
+                ch.onmessage = (ev) => {
+                    if (this.onMessageCb) {
+                        this.onMessageCb(ev.data, peerId);
+                    }
+                };
+
+                if (ch.readyState === "open") {
+                    this._setPeerState(peerId, "open");
+                }
             }
 
-            _waitForIceGatheringComplete() {
-                if (this.pc.iceGatheringState === "complete") return Promise.resolve();
+            _waitForIceGatheringComplete(pc) {
+                if (!pc || pc.iceGatheringState === "complete") return Promise.resolve();
                 return new Promise((resolve) => {
                     const check = () => {
-                        if (this.pc.iceGatheringState === "complete") {
-                            this.pc.removeEventListener("icegatheringstatechange", check);
+                        if (pc.iceGatheringState === "complete") {
+                            pc.removeEventListener("icegatheringstatechange", check);
                             resolve();
                         }
                     };
-                    this.pc.addEventListener("icegatheringstatechange", check);
-                    this.pc.addEventListener("icecandidate", (ev) => {
+                    pc.addEventListener("icegatheringstatechange", check);
+                    pc.addEventListener("icecandidate", (ev) => {
                         if (ev.candidate === null) {
-                            this.pc.removeEventListener("icegatheringstatechange", check);
+                            pc.removeEventListener("icegatheringstatechange", check);
                             resolve();
                         }
                     });
@@ -241,40 +337,165 @@
                 });
             }
 
-            async create_offer() {
-                const ch = this.pc.createDataChannel("zero-chat", { ordered: true });
-                this._attachChannel(ch);
-                this._setState("connecting");
-                const offer = await this.pc.createOffer();
-                await this.pc.setLocalDescription(offer);
-                await this._waitForIceGatheringComplete();
-                return this.pc.localDescription.sdp;
-            }
-
-            async accept_offer_and_create_answer(offerSdp) {
-                this._setState("connecting");
-                await this.pc.setRemoteDescription(new RTCSessionDescription({ type: "offer", sdp: offerSdp }));
-                const answer = await this.pc.createAnswer();
-                await this.pc.setLocalDescription(answer);
-                await this._waitForIceGatheringComplete();
-                return this.pc.localDescription.sdp;
-            }
-
-            async apply_answer(answerSdp) {
-                await this.pc.setRemoteDescription(new RTCSessionDescription({ type: "answer", sdp: answerSdp }));
-            }
-
-            send_text(text) {
-                if (!this.dc || this.dc.readyState !== "open") {
-                    throw new Error("P2P DataChannel not open");
+            async create_peer_offer(peerId = "peer-01") {
+                if (this.peers.has(peerId)) {
+                    this.close_peer(peerId);
                 }
-                this.dc.send(text);
+
+                const pc = new RTCPeerConnection(this.rtcConfig);
+                const dc = pc.createDataChannel("zero-chat", { ordered: true });
+                const peer = { pc, dc, state: "connecting", peerId };
+                this.peers.set(peerId, peer);
+
+                this._attachDataChannel(peerId, dc);
+
+                pc.onconnectionstatechange = () => {
+                    if (pc.connectionState === "failed" || pc.connectionState === "closed") {
+                        this._handlePeerDisconnect(peerId);
+                    }
+                };
+                pc.oniceconnectionstatechange = () => {
+                    if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "closed") {
+                        this._handlePeerDisconnect(peerId);
+                    }
+                };
+
+                this._updateOverallState(peerId);
+
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                await this._waitForIceGatheringComplete(pc);
+
+                this._updateOverallState(peerId);
+                return pc.localDescription.sdp;
+            }
+
+            async accept_peer_answer(peerId, answerSdp) {
+                if (answerSdp === undefined && typeof peerId === "string" && peerId.includes("v=0")) {
+                    answerSdp = peerId;
+                    peerId = "peer-01";
+                }
+                peerId = peerId || "peer-01";
+                const peer = this.peers.get(peerId);
+                if (!peer || !peer.pc) {
+                    throw new Error(`Peer connection not found for ${peerId}`);
+                }
+                await peer.pc.setRemoteDescription(new RTCSessionDescription({ type: "answer", sdp: answerSdp }));
+            }
+
+            async create_peer_answer(peerId, offerSdp) {
+                if (offerSdp === undefined && typeof peerId === "string" && peerId.includes("v=0")) {
+                    offerSdp = peerId;
+                    peerId = "peer-01";
+                }
+                peerId = peerId || "peer-01";
+                if (this.peers.has(peerId)) {
+                    this.close_peer(peerId);
+                }
+
+                const pc = new RTCPeerConnection(this.rtcConfig);
+                const peer = { pc, dc: null, state: "connecting", peerId };
+                this.peers.set(peerId, peer);
+
+                pc.ondatachannel = (ev) => {
+                    this._attachDataChannel(peerId, ev.channel);
+                };
+
+                pc.onconnectionstatechange = () => {
+                    if (pc.connectionState === "failed" || pc.connectionState === "closed") {
+                        this._handlePeerDisconnect(peerId);
+                    }
+                };
+                pc.oniceconnectionstatechange = () => {
+                    if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "closed") {
+                        this._handlePeerDisconnect(peerId);
+                    }
+                };
+
+                this._updateOverallState(peerId);
+
+                await pc.setRemoteDescription(new RTCSessionDescription({ type: "offer", sdp: offerSdp }));
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                await this._waitForIceGatheringComplete(pc);
+
+                this._updateOverallState(peerId);
+                return pc.localDescription.sdp;
+            }
+
+            async create_offer(peerId = "peer-01") {
+                return this.create_peer_offer(peerId);
+            }
+
+            async accept_offer_and_create_answer(offerSdp, peerId = "peer-01") {
+                return this.create_peer_answer(peerId, offerSdp);
+            }
+
+            async apply_answer(answerSdp, peerId = "peer-01") {
+                return this.accept_peer_answer(peerId, answerSdp);
+            }
+
+            broadcast_text(text) {
+                let sentCount = 0;
+                for (const peer of this.peers.values()) {
+                    if (peer.dc && peer.dc.readyState === "open") {
+                        try {
+                            peer.dc.send(text);
+                            sentCount++;
+                        } catch (e) {
+                            console.warn(`Failed to broadcast to peer ${peer.peerId}:`, e);
+                        }
+                    }
+                }
+                if (sentCount === 0) {
+                    throw new Error("No open WebRTC DataChannel in pool");
+                }
+                return sentCount;
+            }
+
+            send_text(text, peerId = null) {
+                if (peerId) {
+                    const peer = this.peers.get(peerId);
+                    if (!peer || !peer.dc || peer.dc.readyState !== "open") {
+                        throw new Error(`DataChannel for peer ${peerId} is not open`);
+                    }
+                    peer.dc.send(text);
+                    return 1;
+                }
+                return this.broadcast_text(text);
+            }
+
+            close_peer(peerId) {
+                const peer = this.peers.get(peerId);
+                if (!peer) return;
+                if (peer.dc) {
+                    try { peer.dc.close(); } catch (_) {}
+                }
+                if (peer.pc) {
+                    try { peer.pc.close(); } catch (_) {}
+                }
+                peer.state = "closed";
+                if (this.onPeerStateChangeCb) {
+                    this.onPeerStateChangeCb(peerId, "closed");
+                }
+                this._updateOverallState(peerId);
             }
 
             close() {
-                if (this.dc) this.dc.close();
-                this.pc.close();
-                this._setState("closed");
+                for (const [peerId, peer] of this.peers.entries()) {
+                    if (peer.dc) {
+                        try { peer.dc.close(); } catch (_) {}
+                    }
+                    if (peer.pc) {
+                        try { peer.pc.close(); } catch (_) {}
+                    }
+                    peer.state = "closed";
+                    if (this.onPeerStateChangeCb) {
+                        this.onPeerStateChangeCb(peerId, "closed");
+                    }
+                }
+                this.peers.clear();
+                this._setOverallState("closed");
             }
         }
 
@@ -541,7 +762,7 @@
                     updateStatus("open", "P2P Established");
                     if (idleStatusCapsule) idleStatusCapsule.classList.add("hidden");
                     if (peerCountEl) {
-                        peerCountEl.textContent = "1";
+                        peerCountEl.textContent = String(engine ? engine.openPeerCount : 1);
                     }
                     if (peerListEl) {
                         peerListEl.classList.remove("hidden");
@@ -608,7 +829,22 @@
                 }
             };
 
-            engine.onMessageCb = (text) => {
+            engine.onPeerStateChangeCb = (peerId, peerState) => {
+                if (peerCountEl && engine) {
+                    peerCountEl.textContent = String(engine.openPeerCount);
+                }
+                if (peerState === "open") {
+                    if (hasActiveSession && engine && engine.openPeerCount > 1) {
+                        appendSystemMessage(`Peer (${peerId}) joined chat`);
+                    }
+                } else if (peerState === "closed") {
+                    if (engine && engine.openPeerCount > 0) {
+                        appendSystemMessage(`Peer (${peerId}) disconnected`);
+                    }
+                }
+            };
+
+            engine.onMessageCb = (text, peerId) => {
                 let data = null;
                 try {
                     data = JSON.parse(text);
@@ -621,7 +857,12 @@
                         Boolean(data.signal && data.signal.PeerLeftAndBurn);
 
                     if (isLeave) {
-                        handlePeerDeparture();
+                        const leavingPeerId = peerId || data.peer_id;
+                        if (leavingPeerId && engine && engine.peers && engine.peers.has(leavingPeerId)) {
+                            engine.close_peer(leavingPeerId);
+                        } else if (engine && engine.openPeerCount <= 1) {
+                            handlePeerDeparture();
+                        }
                         return;
                     }
 
@@ -636,7 +877,7 @@
                     }
                 }
 
-                appendMessageBubble("Peer", text, false, "peer-01");
+                appendMessageBubble("Peer", text, false, peerId || "peer-01");
             };
         }
 
@@ -691,7 +932,7 @@
                         if (drop && drop.sdp_answer && drop.sdp_answer.sdp) {
                             showTransientStatus("Establishing secure connection");
                             updateStatus("connecting", "Received answer! Snapping P2P channel...");
-                            await engine.apply_answer(drop.sdp_answer.sdp);
+                            await engine.apply_answer(drop.sdp_answer.sdp, drop.peer_id || "peer-01");
                         }
                     } catch (err) {
                         console.error("Failed to parse dropped answer:", err);
@@ -831,6 +1072,7 @@
             clearTransientStatus();
             if (engine) {
                 engine.onStateChangeCb = null;
+                engine.onPeerStateChangeCb = null;
                 engine.close();
                 engine = null;
             }
