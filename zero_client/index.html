@@ -533,8 +533,13 @@
                     }
                     msgInput.disabled = true;
                     sendBtn.disabled = true;
+
+                    // REQ-023.2: Selectively purge remote peer messages on disconnect
+                    const remoteBubbles = feed.querySelectorAll(".message-bubble:not(.message-outgoing)");
+                    remoteBubbles.forEach((el) => el.remove());
+
                     if (hasActiveSession && !isBurned) {
-                        appendSystemMessage("Peer left chat");
+                        appendSystemMessage("[Peer disconnected - messages burned]");
                     }
                     hasActiveSession = false;
                     if (!isBurned) {
@@ -811,21 +816,26 @@
             history.replaceState(null, "", window.location.pathname);
         }
 
+        function sendOpportunisticLeave() {
+            if (engine && engine.dc && engine.dc.readyState === "open") {
+                try {
+                    const leaveMsg = JSON.stringify({
+                        type: "leave_and_burn",
+                        signal: "leave_and_burn",
+                        action: "leave_and_burn",
+                        peer_id: localPeerId
+                    });
+                    engine.send_text(leaveMsg);
+                } catch (_) {}
+            }
+        }
+
+        window.addEventListener("beforeunload", sendOpportunisticLeave);
+        window.addEventListener("pagehide", sendOpportunisticLeave);
+
         if (headerLeaveBtn) {
             headerLeaveBtn.addEventListener("click", () => {
-                if (engine && engine.dc && engine.dc.readyState === "open") {
-                    try {
-                        const leaveMsg = JSON.stringify({
-                            type: "leave_and_burn",
-                            signal: "leave_and_burn",
-                            action: "leave_and_burn",
-                            peer_id: localPeerId
-                        });
-                        engine.send_text(leaveMsg);
-                    } catch (e) {
-                        console.error("Failed to send leave signal:", e);
-                    }
-                }
+                sendOpportunisticLeave();
                 resetToHome();
             });
         }
