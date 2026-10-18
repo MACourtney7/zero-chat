@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-027"
 title: "Header Add-Peer Button, Single-Invite Lifecycle & Multi-User Room UI"
-state: "PLANNING"
+state: "IN_PROGRESS"
 roadmap: "multi-user-mesh-chat"
 depends_on: ["ticket-026"]
 created_at: "2026-10-18T21:02:00Z"
@@ -54,16 +54,16 @@ In an active multi-user room, users need an intuitive, non-wasteful way to invit
 ---
 
 ## 3. Requirements & Acceptance Criteria
-- [ ] **REQ-027.1 (Header Add-Peer Button Placement)**:
+- [x] **REQ-027.1 (Header Add-Peer Button Placement)**:
   - Button placed directly to the left of `#peer-count` badge in the header. Visible only in active chat.
-- [ ] **REQ-027.2 (Single Active Invite Lifecycle & Zero Cloud Waste)**:
+- [x] **REQ-027.2 (Single Active Invite Lifecycle & Zero Cloud Waste)**:
   - Generates exactly one pending invite bundle at a time.
   - Re-clicking while pending re-copies the existing valid link without spawning duplicate cloud sessions.
   - Clears pending state upon successful peer channel establishment.
-- [ ] **REQ-027.3 (Silent Copy & No Tooltip)**:
+- [x] **REQ-027.3 (Silent Copy & No Tooltip)**:
   - Copies link directly to clipboard; strictly no tooltip element rendered.
-- [ ] **REQ-027.4 (Dynamic Multi-Peer Counter & Partial Departure)**:
+- [x] **REQ-027.4 (Dynamic Multi-Peer Counter & Partial Departure)**:
   - `#peer-count` displays accurate peer count (e.g. 2, 3...).
   - When 1 of N peers leaves, only their messages are purged; session remains active for surviving peers with decremented counter.
-- [ ] **REQ-027.5 (Workspace Integrity & Tests)**:
+- [x] **REQ-027.5 (Workspace Integrity & Tests)**:
   - Full workspace test suite passes with 0 failures and 0 clippy warnings.

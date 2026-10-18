@@ -728,6 +728,11 @@ impl ChatUi {
         self.peers.read().expect("peers lock poisoned").clone()
     }
 
+    /// Returns the current number of active peers.
+    pub fn peer_count(&self) -> usize {
+        self.peers.read().expect("peers lock poisoned").len()
+    }
+
     /// Wipes all messages and destroys the ephemeral session (REQ-005.4 zero-footprint).
     pub fn destroy_session(&self) -> Result<(), UiError> {
         let mut msgs = self
@@ -968,13 +973,16 @@ mod tests {
     fn test_peer_list_add_and_remove() {
         let ui = ChatUi::mount("app").expect("mount failed");
         assert!(ui.peers().is_empty());
+        assert_eq!(ui.peer_count(), 0);
 
         ui.add_peer("peer-bob").expect("add peer-bob failed");
         assert_eq!(ui.peers(), vec!["peer-bob".to_string()]);
+        assert_eq!(ui.peer_count(), 1);
 
         // Duplicate add is idempotent
         ui.add_peer("peer-bob").expect("add duplicate failed");
         assert_eq!(ui.peers(), vec!["peer-bob".to_string()]);
+        assert_eq!(ui.peer_count(), 1);
 
         ui.add_peer("peer-charlie")
             .expect("add peer-charlie failed");
@@ -982,13 +990,16 @@ mod tests {
             ui.peers(),
             vec!["peer-bob".to_string(), "peer-charlie".to_string()]
         );
+        assert_eq!(ui.peer_count(), 2);
 
         ui.remove_peer("peer-bob").expect("remove peer-bob failed");
         assert_eq!(ui.peers(), vec!["peer-charlie".to_string()]);
+        assert_eq!(ui.peer_count(), 1);
 
         ui.remove_peer("non-existent")
             .expect("remove non-existent ok");
         assert_eq!(ui.peers(), vec!["peer-charlie".to_string()]);
+        assert_eq!(ui.peer_count(), 1);
     }
 
     #[test]
@@ -1114,6 +1125,97 @@ mod tests {
         assert!(ui.peers().is_empty());
         assert_eq!(ui.status(), ConnectionStatus::Disconnected);
         assert!(ChatUi::verify_zero_persistence().is_ok());
+    }
+
+    #[test]
+    fn test_multi_peer_partial_departure_preserves_surviving_peers() {
+        let ui = ChatUi::mount("app").expect("mount failed");
+        ui.set_status(ConnectionStatus::Connected)
+            .expect("set status failed");
+        assert_eq!(ui.status(), ConnectionStatus::Connected);
+
+        // Mount ChatUi, connect, and add 3 peers: "alice", "bob", "charlie"
+        ui.add_peer("alice").expect("add alice failed");
+        ui.add_peer("bob").expect("add bob failed");
+        ui.add_peer("charlie").expect("add charlie failed");
+        assert_eq!(ui.peer_count(), 3);
+        assert_eq!(
+            ui.peers(),
+            vec![
+                "alice".to_string(),
+                "bob".to_string(),
+                "charlie".to_string()
+            ]
+        );
+
+        // Append incoming messages for "bob" and "charlie", incoming for "alice", and self message
+        ui.append_message("bob", "Hello from Bob", false, true)
+            .expect("append bob message failed");
+        ui.append_message("charlie", "Hello from Charlie", false, true)
+            .expect("append charlie message failed");
+        ui.append_message("alice", "Hello from Alice", false, true)
+            .expect("append alice message failed");
+        ui.append_message("self", "Hello from Self", true, true)
+            .expect("append self message failed");
+
+        let initial_msgs = ui.messages();
+        assert_eq!(initial_msgs.len(), 4);
+
+        // Simulate Bob departing: remove "bob", burn "bob" messages
+        ui.remove_peer("bob").expect("remove bob failed");
+        ui.burn_peer_messages("bob").expect("burn bob failed");
+
+        // Assert ui.peer_count() is 2 and ui.peers() contains "alice" and "charlie"
+        assert_eq!(ui.peer_count(), 2);
+        assert_eq!(
+            ui.peers(),
+            vec!["alice".to_string(), "charlie".to_string()]
+        );
+
+        // Assert Bob's messages are gone, but Charlie's, Alice's, and Self's messages are retained
+        let msgs_after_bob = ui.messages();
+        assert_eq!(msgs_after_bob.len(), 3);
+        assert!(!msgs_after_bob.iter().any(|(s, _, _, _)| s == "bob"));
+        assert!(msgs_after_bob.iter().any(|(s, _, _, _)| s == "charlie"));
+        assert!(msgs_after_bob.iter().any(|(s, _, _, _)| s == "alice"));
+        assert!(msgs_after_bob.iter().any(|(s, _, is_self, _)| *is_self && s == "self"));
+
+        // Assert connection status remains Connected
+        assert_eq!(ui.status(), ConnectionStatus::Connected);
+
+        // Simulate Charlie departing: remove "charlie", burn "charlie" messages
+        ui.remove_peer("charlie").expect("remove charlie failed");
+        ui.burn_peer_messages("charlie").expect("burn charlie failed");
+
+        // Assert ui.peer_count() is 1 and surviving peer is Alice
+        assert_eq!(ui.peer_count(), 1);
+        assert_eq!(ui.peers(), vec!["alice".to_string()]);
+        let msgs_after_charlie = ui.messages();
+        assert_eq!(msgs_after_charlie.len(), 2);
+        assert!(!msgs_after_charlie.iter().any(|(s, _, _, _)| s == "charlie"));
+        assert!(msgs_after_charlie.iter().any(|(s, _, _, _)| s == "alice"));
+        assert!(msgs_after_charlie.iter().any(|(s, _, is_self, _)| *is_self && s == "self"));
+
+        // Simulate Alice departing: remove "alice", burn "alice" messages
+        ui.remove_peer("alice").expect("remove alice failed");
+        ui.burn_peer_messages("alice").expect("burn alice failed");
+
+        // Assert peer_count is 0, peers is empty
+        assert_eq!(ui.peer_count(), 0);
+        assert!(ui.peers().is_empty());
+
+        // Assert self messages are retained until explicit destroy_session()
+        let msgs_after_all_peers = ui.messages();
+        assert_eq!(msgs_after_all_peers.len(), 1);
+        assert_eq!(msgs_after_all_peers[0].0, "self");
+        assert_eq!(msgs_after_all_peers[0].1, "Hello from Self");
+        assert!(msgs_after_all_peers[0].2);
+
+        // Explicitly destroy session
+        ui.destroy_session().expect("destroy session failed");
+        assert!(ui.messages().is_empty());
+        assert_eq!(ui.status(), ConnectionStatus::Disconnected);
+        assert_eq!(ui.peer_count(), 0);
     }
 }
 
