@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-027"
 title: "Header Add-Peer Button, Single-Invite Lifecycle & Multi-User Room UI"
-state: "PLANNING"
+state: "IN_PROGRESS"
 roadmap: "multi-user-mesh-chat"
 depends_on: ["ticket-026"]
 created_at: "2026-10-18T21:02:00Z"
