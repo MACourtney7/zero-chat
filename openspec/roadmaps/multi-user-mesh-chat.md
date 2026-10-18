@@ -5,6 +5,7 @@ title: "Multi-User P2P Mesh Chat: Multi-Peer Engine, In-Band Relay Snapping & He
 version: "1.0.0"
 created_at: "2026-10-18T21:02:00Z"
 status: "COMPLETED"
+completed_at: "2026-10-18T22:38:00Z"
 ---
 
 # Milestone Roadmap: Multi-User P2P Mesh Chat
