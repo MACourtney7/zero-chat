@@ -1217,5 +1217,123 @@ mod tests {
         assert_eq!(ui.status(), ConnectionStatus::Disconnected);
         assert_eq!(ui.peer_count(), 0);
     }
+
+    #[test]
+    fn test_req_028_ui_dynamic_multi_peer_lifecycle_and_selective_purge() {
+        let ui = ChatUi::mount("app").expect("mount failed");
+        ui.set_status(ConnectionStatus::Connected)
+            .expect("set status failed");
+        assert_eq!(ui.status(), ConnectionStatus::Connected);
+
+        // Mount test double ChatUi, connect, and register 3 peers: "alice", "bob", "charlie"
+        ui.add_peer("alice").expect("add alice failed");
+        ui.add_peer("bob").expect("add bob failed");
+        ui.add_peer("charlie").expect("add charlie failed");
+
+        // Assert peer_count() is 3 and peers() contains all 3 peers
+        assert_eq!(ui.peer_count(), 3);
+        let peers = ui.peers();
+        assert!(peers.contains(&"alice".to_string()));
+        assert!(peers.contains(&"bob".to_string()));
+        assert!(peers.contains(&"charlie".to_string()));
+
+        // Append messages from all peers and self:
+        // - "alice": "Message from Alice"
+        // - "bob": "Message from Bob"
+        // - "charlie": "Message from Charlie"
+        // - "self": "Message from Self"
+        ui.append_message("alice", "Message from Alice", false, true)
+            .expect("append alice failed");
+        ui.append_message("bob", "Message from Bob", false, true)
+            .expect("append bob failed");
+        ui.append_message("charlie", "Message from Charlie", false, true)
+            .expect("append charlie failed");
+        ui.append_message("self", "Message from Self", true, true)
+            .expect("append self failed");
+
+        // Assert all 4 messages are present in UI
+        let msgs = ui.messages();
+        assert_eq!(msgs.len(), 4);
+        assert!(msgs
+            .iter()
+            .any(|(s, m, _, _)| s == "alice" && m == "Message from Alice"));
+        assert!(msgs
+            .iter()
+            .any(|(s, m, _, _)| s == "bob" && m == "Message from Bob"));
+        assert!(msgs
+            .iter()
+            .any(|(s, m, _, _)| s == "charlie" && m == "Message from Charlie"));
+        assert!(msgs
+            .iter()
+            .any(|(s, m, is_self, _)| *is_self && s == "self" && m == "Message from Self"));
+
+        // Simulate Bob departing:
+        // - Call remove_peer("bob")
+        // - Call burn_peer_messages("bob")
+        ui.remove_peer("bob").expect("remove bob failed");
+        ui.burn_peer_messages("bob")
+            .expect("burn bob messages failed");
+
+        // Verify surviving state:
+        // - peer_count() is 2
+        // - peers() contains "alice" and "charlie"
+        // - Bob's messages are removed
+        // - Alice's, Charlie's, and Self's messages remain intact
+        // - Connection status remains Connected
+        assert_eq!(ui.peer_count(), 2);
+        let peers_after_bob = ui.peers();
+        assert!(peers_after_bob.contains(&"alice".to_string()));
+        assert!(peers_after_bob.contains(&"charlie".to_string()));
+        assert!(!peers_after_bob.contains(&"bob".to_string()));
+
+        let msgs_after_bob = ui.messages();
+        assert_eq!(msgs_after_bob.len(), 3);
+        assert!(!msgs_after_bob.iter().any(|(s, _, _, _)| s == "bob"));
+        assert!(msgs_after_bob
+            .iter()
+            .any(|(s, m, _, _)| s == "alice" && m == "Message from Alice"));
+        assert!(msgs_after_bob
+            .iter()
+            .any(|(s, m, _, _)| s == "charlie" && m == "Message from Charlie"));
+        assert!(msgs_after_bob
+            .iter()
+            .any(|(s, m, is_self, _)| *is_self && s == "self" && m == "Message from Self"));
+        assert_eq!(ui.status(), ConnectionStatus::Connected);
+
+        // Simulate Charlie departing:
+        // - Call remove_peer("charlie")
+        // - Call burn_peer_messages("charlie")
+        ui.remove_peer("charlie").expect("remove charlie failed");
+        ui.burn_peer_messages("charlie")
+            .expect("burn charlie messages failed");
+
+        // Verify surviving state:
+        // - peer_count() is 1 ("alice")
+        // - Charlie's messages are removed; Alice's and Self's messages remain intact
+        assert_eq!(ui.peer_count(), 1);
+        let peers_after_charlie = ui.peers();
+        assert_eq!(peers_after_charlie, vec!["alice".to_string()]);
+
+        let msgs_after_charlie = ui.messages();
+        assert_eq!(msgs_after_charlie.len(), 2);
+        assert!(!msgs_after_charlie.iter().any(|(s, _, _, _)| s == "charlie"));
+        assert!(msgs_after_charlie
+            .iter()
+            .any(|(s, m, _, _)| s == "alice" && m == "Message from Alice"));
+        assert!(msgs_after_charlie
+            .iter()
+            .any(|(s, m, is_self, _)| *is_self && s == "self" && m == "Message from Self"));
+
+        // Call destroy_session():
+        // - Verify all messages cleared
+        // - Verify peer_count() is 0, peers() is empty
+        // - Verify connection status transitions to Disconnected
+        ui.destroy_session().expect("destroy session failed");
+        assert!(ui.messages().is_empty());
+        assert_eq!(ui.peer_count(), 0);
+        assert!(ui.peers().is_empty());
+        assert_eq!(ui.status(), ConnectionStatus::Disconnected);
+    }
 }
+
 
