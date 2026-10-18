@@ -98,6 +98,8 @@ pub struct ConnectedPeer {
 
 pub type MessageCallback = Rc<dyn Fn(&str, &str)>; // (sender_id, plaintext)
 pub type PeerEventCallback = Rc<dyn Fn(&str)>; // (peer_id)
+pub type BurnPeerCallback = Rc<dyn Fn(&str)>;
+pub type GlobalBurnCallback = Rc<dyn Fn(&str)>;
 
 /// Alias for `MeshTopology` conforming to management layer nomenclature.
 pub type MeshTopologyManager = MeshTopology;
@@ -122,8 +124,8 @@ struct MeshTopologyInner {
     on_message_callbacks: Vec<MessageCallback>,
     on_peer_joined_callbacks: Vec<PeerEventCallback>,
     on_peer_left_callbacks: Vec<PeerEventCallback>,
-    on_burn_peer_messages_callbacks: Vec<Rc<dyn Fn(&str)>>,
-    on_global_burn_callbacks: Vec<Rc<dyn Fn(&str)>>,
+    on_burn_peer_messages_callbacks: Vec<BurnPeerCallback>,
+    on_global_burn_callbacks: Vec<GlobalBurnCallback>,
 }
 
 impl MeshTopology {
