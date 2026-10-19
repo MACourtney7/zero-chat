@@ -4,8 +4,9 @@
 ---
 ticket_id: "ticket-029"
 title: "Multi-User Chat Usability and Mesh Lifecycle Fixes"
-state: "IN_PROGRESS"
+state: "COMPLETED"
 created_at: "2026-10-19T21:12:00Z"
+completed_at: "2026-10-19T21:55:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-029/main"
 max_review_cycles: 3
@@ -55,27 +56,27 @@ Testing of the multi-user mesh chat functionality revealed usability friction in
 
 ## 3. Requirements & Acceptance Criteria
 
-- [ ] **REQ-029.1 (Simplified Home View Create Chat & Direct Clipboard Copy)**:
+- [x] **REQ-029.1 (Simplified Home View Create Chat & Direct Clipboard Copy)**:
   - The read-only `#invite-bar` and `#copy-invite-button` are removed from the home view.
   - Clicking `#btn-create-room` initiates the room, immediately copies the generated invite URL to `navigator.clipboard`, and displays a clear on-click indication (e.g. button feedback state and system notice) that the share link was copied.
   - While waiting for a peer to join, subsequent clicks re-copy the active invite link and re-display the copied feedback.
-- [ ] **REQ-029.2 (Consistent Peer System Messages)**:
+- [x] **REQ-029.2 (Consistent Peer System Messages)**:
   - System messages for peer arrival must strictly and consistently read `"Peer joined chat"` without leaking internal IDs like `(peer-svomrn)`.
   - Departures must consistently read `"Peer left chat"`.
   - Self-joining reads `"Joined chat"`, and room creation reads `"Secure chat created"`.
-- [ ] **REQ-029.3 (Peer Counter Synchronization Across Full Mesh)**:
+- [x] **REQ-029.3 (Peer Counter Synchronization Across Full Mesh)**:
   - Real, unique peer IDs are used across all signaling envelopes (`host_peer_id`, `joiner_peer_id`).
   - Glare tie-breaker is strictly `myPeerId < remotePeerId`, enabling all secondary peers to establish direct DataChannels.
   - When a 3rd peer joins, every client in the room updates `#peer-count` in unison to reflect the correct number of connected peers (e.g. `2` on all 3 clients).
-- [ ] **REQ-029.4 (Selective Message Purge on 3rd Peer Departure)**:
+- [x] **REQ-029.4 (Selective Message Purge on 3rd Peer Departure)**:
   - When a 3rd peer departs (`leave_and_burn` or channel close), `leavingPeerId` accurately resolves to the 3rd peer's ID across all clients.
   - Only the 3rd peer's message bubbles (`.message-bubble[data-peer-id="..."]`) are purged from remaining clients' feeds.
   - Surviving peers emit a single `"Peer left chat"` notice and decrement `#peer-count`.
-- [ ] **REQ-029.5 (Feed Continuity on Host/Original Peer Departure)**:
+- [x] **REQ-029.5 (Feed Continuity on Host/Original Peer Departure)**:
   - When the 1st or 2nd user leaves a multi-user chat with surviving participants, surviving participants maintain direct DataChannels.
   - Only the departing peer's messages are purged; other surviving peers' messages and own messages are strictly preserved.
   - The chat remains active until the last peer leaves.
-- [ ] **REQ-029.6 (Workspace Integrity & Test Verification)**:
+- [x] **REQ-029.6 (Workspace Integrity & Test Verification)**:
   - All workspace tests pass (`cargo test --workspace`), zero clippy warnings (`cargo clippy --workspace --all-targets -- -D warnings`), and `wasm32-unknown-unknown` compiles cleanly.
 
 ---
