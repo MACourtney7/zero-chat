@@ -527,11 +527,19 @@ html, body {
   justify-content: center;
   padding: 12px 20px;
   font-size: 0.9rem;
+  font-weight: 600;
+  gap: 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .btn-action-full svg,
 #btn-create-room svg {
   display: block;
+  flex-shrink: 0;
 }
 
 .btn-emerald {
@@ -539,12 +547,35 @@ html, body {
   border: 1px solid rgba(16, 185, 129, 0.4) !important;
   color: #ffffff !important;
   box-shadow: 0 4px 14px rgba(16, 185, 129, 0.28);
-  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, background 0.2s ease, border-color 0.2s ease;
 }
 
 .btn-emerald:hover:not(:disabled) {
   background: linear-gradient(135deg, #34d399 0%, #059669 100%) !important;
   box-shadow: 0 6px 20px rgba(16, 185, 129, 0.42);
+  transform: translateY(-1px);
+}
+
+#btn-create-room.btn-copied {
+  background: linear-gradient(135deg, #059669 0%, #047857 100%) !important;
+  border-color: rgba(52, 211, 153, 0.6) !important;
+  color: #ecfdf5 !important;
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.45), 0 4px 14px rgba(0, 0, 0, 0.3) !important;
+  transform: translateY(-1px);
+}
+
+#btn-create-room.btn-waiting {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.18) 0%, rgba(5, 150, 105, 0.3) 100%) !important;
+  border: 1px solid rgba(52, 211, 153, 0.35) !important;
+  color: #a7f3d0 !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2) !important;
+  font-size: 0.85rem;
+}
+
+#btn-create-room.btn-waiting:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.28) 0%, rgba(5, 150, 105, 0.42) 100%) !important;
+  border-color: rgba(52, 211, 153, 0.55) !important;
+  color: #ffffff !important;
   transform: translateY(-1px);
 }
 
@@ -922,53 +953,6 @@ html, body {
 #message-input::placeholder,
 .message-input::placeholder {
   color: var(--text-muted);
-}
-
-/* Footer Invite Bar */
-.invite-bar {
-  width: 100%;
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-
-.invite-bar .invite-input {
-  flex: 1;
-  background: rgba(10, 11, 14, 0.65);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-  padding: 10px 14px;
-  color: var(--text-primary);
-  font-size: 0.88rem;
-  font-family: var(--font-mono);
-  outline: none;
-  min-width: 0;
-}
-
-.invite-bar .invite-input:focus {
-  border-color: var(--accent-emerald);
-  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
-}
-
-.invite-bar .btn-copy {
-  flex-shrink: 0;
-  height: 40px;
-  width: 44px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(18, 24, 38, 0.8);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.invite-bar .btn-copy:hover {
-  background: rgba(16, 185, 129, 0.15);
-  border-color: rgba(16, 185, 129, 0.4);
-  color: var(--accent-emerald);
 }
 
 /* Welcome Splash Styling */

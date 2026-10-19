@@ -33,6 +33,10 @@
             width: 100%;
             padding: 12px 20px;
             font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
             text-align: center;
         }
         .create-room-bar {
@@ -157,23 +161,13 @@
             <footer class="chat-footer glass-panel">
                 <!-- Full-width Create Private Room bar when disconnected -->
                 <div id="create-room-bar" class="create-room-bar">
-                    <button id="btn-create-room" class="btn-action btn-action-full btn-emerald btn-icon" type="button" aria-label="Create Private Chat">
+                    <button id="btn-create-room" class="btn-action btn-action-full btn-emerald" type="button" aria-label="Create Chat">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
                             <line x1="12" y1="8" x2="12" y2="14"></line>
                             <line x1="9" y1="11" x2="15" y2="11"></line>
                         </svg>
-                    </button>
-                </div>
-
-                <!-- Room Invite Link & Copy Bar in footer action slot -->
-                <div id="invite-bar" class="invite-bar hidden">
-                    <input id="invite-url-input" class="invite-input" type="text" readonly placeholder="Generating invite link..." />
-                    <button id="copy-invite-button" class="btn btn-copy btn-icon" type="button" aria-label="Copy Invite Link">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                        </svg>
+                        <span>Create Chat</span>
                     </button>
                 </div>
 
@@ -195,30 +189,59 @@
         const WORKER_ORIGIN = "https://network.zero-chat.workers.dev";
         const WORKER_WS_ORIGIN = "wss://network.zero-chat.workers.dev";
 
-        const CREATE_ROOM_ICON_HTML = `
+        const CREATE_ROOM_DEFAULT_HTML = `
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
                 <line x1="12" y1="8" x2="12" y2="14"></line>
                 <line x1="9" y1="11" x2="15" y2="11"></line>
-            </svg>`;
+            </svg>
+            <span class="btn-text">Create Chat</span>`;
+        const CREATE_ROOM_ICON_HTML = CREATE_ROOM_DEFAULT_HTML;
 
         // DOM elements
         const headerAddBtn = document.getElementById("header-add-btn");
-        const inviteBar = document.getElementById("invite-bar");
         const peerCountEl = document.getElementById("peer-count");
         const idleStatusCapsule = document.getElementById("idle-status-capsule");
         const peerListEl = document.getElementById("peer-list");
         const headerLeaveBtn = document.getElementById("header-leave-btn");
         const createRoomBar = document.getElementById("create-room-bar");
         const btnCreateRoom = document.getElementById("btn-create-room");
-        const inviteInput = document.getElementById("invite-url-input");
-        const btnCopyInvite = document.getElementById("copy-invite-button");
         const feed = document.getElementById("messages-container");
         const messageForm = document.getElementById("message-form");
         const msgInput = document.getElementById("message-input");
         const sendBtn = document.getElementById("send-button");
         const burnRoomBar = document.getElementById("burn-room-bar");
         const burnBtn = document.getElementById("destroy-session-button");
+
+        let activeHostInviteUrl = null;
+        let createRoomFeedbackTimer = null;
+        const announcedJoinPeers = new Set();
+        const departedPeers = new Set();
+
+        function setCreateRoomCopiedFeedback() {
+            if (createRoomFeedbackTimer) {
+                clearTimeout(createRoomFeedbackTimer);
+                createRoomFeedbackTimer = null;
+            }
+            btnCreateRoom.classList.add("btn-copied");
+            btnCreateRoom.classList.remove("btn-waiting");
+            btnCreateRoom.innerHTML = `
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                <span class="btn-text">Link copied to clipboard!</span>`;
+
+            createRoomFeedbackTimer = setTimeout(() => {
+                btnCreateRoom.classList.remove("btn-copied");
+                btnCreateRoom.classList.add("btn-waiting");
+                btnCreateRoom.innerHTML = `
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                    <span class="btn-text">Share link copied · Waiting for peer...</span>`;
+            }, 2500);
+        }
 
         // Deduplication & Glare Avoidance State
         const MAX_SEEN_CACHE = 1000;
@@ -886,6 +909,7 @@
                     token: tokenHex,
                     sdp_offer: { sdp: offerSdp },
                     host_public_key: hostPubkey,
+                    host_peer_id: (engine && engine.localPeerId) || localPeerId,
                     guest_private_key: null
                 };
 
@@ -901,8 +925,10 @@
                     try {
                         const drop = JSON.parse(ev.data);
                         if (drop && drop.sdp_answer && drop.sdp_answer.sdp) {
-                            const targetPeerId = drop.peer_id || invitePeerId;
-                            if (drop.peer_id && drop.peer_id !== invitePeerId && engine.peers.has(invitePeerId)) {
+                            const targetPeerId = drop.joiner_peer_id || drop.peer_id || invitePeerId;
+                            if (drop.joiner_peer_id && drop.joiner_peer_id !== invitePeerId && engine.peers.has(invitePeerId)) {
+                                engine.rename_peer(invitePeerId, drop.joiner_peer_id);
+                            } else if (drop.peer_id && drop.peer_id !== invitePeerId && engine.peers.has(invitePeerId)) {
                                 engine.rename_peer(invitePeerId, drop.peer_id);
                             }
                             await engine.apply_answer(drop.sdp_answer.sdp, targetPeerId);
@@ -939,6 +965,12 @@
 
             // Selectively purge only that peer's message bubbles
             if (peerId) {
+                if (departedPeers.has(peerId)) {
+                    return;
+                }
+                departedPeers.add(peerId);
+                announcedJoinPeers.delete(peerId);
+
                 const peerBubbles = feed.querySelectorAll(`.message-bubble[data-peer-id="${peerId}"]`);
                 peerBubbles.forEach((el) => el.remove());
             }
@@ -993,9 +1025,6 @@
                 if (createRoomBar) {
                     createRoomBar.classList.add("hidden");
                 }
-                if (inviteBar) {
-                    inviteBar.classList.add("hidden");
-                }
                 if (peerListEl) {
                     peerListEl.classList.remove("hidden");
                     if (!peerListEl.querySelector(".peer-pill")) {
@@ -1016,8 +1045,8 @@
                     hideWelcomeSplash();
                     updateStatus("open", "P2P Established");
                     if (idleStatusCapsule) idleStatusCapsule.classList.add("hidden");
-                    if (peerCountEl) {
-                        peerCountEl.textContent = String(engine ? engine.openPeerCount : 1);
+                    if (peerCountEl && engine) {
+                        peerCountEl.textContent = String(engine.openPeerCount);
                     }
                     if (peerListEl) {
                         peerListEl.classList.remove("hidden");
@@ -1027,7 +1056,6 @@
                     if (headerLeaveBtn) headerLeaveBtn.classList.remove("hidden");
                     if (burnRoomBar) burnRoomBar.classList.remove("hidden");
                     if (createRoomBar) createRoomBar.classList.add("hidden");
-                    if (inviteBar) inviteBar.classList.add("hidden");
                     if (messageForm) messageForm.classList.remove("hidden");
                     if (msgInput) {
                         msgInput.disabled = false;
@@ -1044,8 +1072,10 @@
 
                     if (isJoining) {
                         appendSystemMessage("Joined chat");
+                        if (peerId) announcedJoinPeers.add(peerId);
                     } else {
                         appendSystemMessage("Peer joined chat");
+                        if (peerId) announcedJoinPeers.add(peerId);
                     }
                 } else if (st === "closed") {
                     updateStatus("closed", "Disconnected");
@@ -1069,11 +1099,11 @@
                         if (headerLeaveBtn) headerLeaveBtn.classList.add("hidden");
                         if (burnRoomBar) burnRoomBar.classList.add("hidden");
                         if (messageForm) messageForm.classList.add("hidden");
-                        if (inviteBar) inviteBar.classList.add("hidden");
                         if (createRoomBar) {
                             createRoomBar.classList.remove("hidden");
                             btnCreateRoom.disabled = false;
-                            btnCreateRoom.innerHTML = CREATE_ROOM_ICON_HTML;
+                            btnCreateRoom.className = "btn-action btn-action-full btn-emerald";
+                            btnCreateRoom.innerHTML = CREATE_ROOM_DEFAULT_HTML;
                         }
                         if (msgInput) {
                             msgInput.disabled = true;
@@ -1098,12 +1128,15 @@
                     if (headerAddBtn) {
                         headerAddBtn.classList.remove("hidden");
                     }
-                    if (hasActiveSession && engine && engine.openPeerCount > 1) {
-                        appendSystemMessage(`Peer (${peerId}) joined chat`);
+                    if (!announcedJoinPeers.has(peerId)) {
+                        announcedJoinPeers.add(peerId);
+                        if (hasActiveSession) {
+                            appendSystemMessage("Peer joined chat");
+                        }
                     }
 
-                    // Host Peer Introduction (REQ-026.2)
-                    if (engine && !isJoining) {
+                    // Universal Peer Introduction (REQ-029.3)
+                    if (engine) {
                         for (const [existingPeerId, existingPeer] of engine.peers.entries()) {
                             if (existingPeerId !== peerId && existingPeer.state === "open" && existingPeer.dc && existingPeer.dc.readyState === "open") {
                                 const msgToNew = {
@@ -1160,9 +1193,35 @@
                         Boolean(data.signal && (data.signal.PeerLeftAndBurn || data.signal === "leave_and_burn"));
 
                     if (isLeave) {
-                        const leavingPeerId = incomingPeerId ||
-                            (data.signal && data.signal.PeerLeftAndBurn && data.signal.PeerLeftAndBurn.peer_id) ||
-                            data.peer_id;
+                        const leavingPeerId = (data.signal && data.signal.PeerLeftAndBurn && data.signal.PeerLeftAndBurn.peer_id) ||
+                            data.peer_id ||
+                            incomingPeerId;
+
+                        // Forward leave signal to other open peers if needed (REQ-029.4)
+                        if (engine && engine.peers) {
+                            const fwdTtl = (data.ttl !== undefined ? data.ttl : 3) - 1;
+                            if (fwdTtl > 0) {
+                                const fwdMsg = {
+                                    frame_id: generateUuid(),
+                                    ttl: fwdTtl,
+                                    peer_id: leavingPeerId,
+                                    signal: {
+                                        PeerLeftAndBurn: {
+                                            peer_id: leavingPeerId
+                                        }
+                                    }
+                                };
+                                const fwdJson = JSON.stringify(fwdMsg);
+                                for (const [pId, p] of engine.peers.entries()) {
+                                    if (pId !== incomingPeerId && pId !== leavingPeerId && p.state === "open" && p.dc && p.dc.readyState === "open") {
+                                        try {
+                                            p.dc.send(fwdJson);
+                                        } catch (_) {}
+                                    }
+                                }
+                            }
+                        }
+
                         if (leavingPeerId && engine && engine.peers && engine.peers.has(leavingPeerId)) {
                             engine.close_peer(leavingPeerId);
                         } else {
@@ -1293,8 +1352,8 @@
                                 const isPending = pendingOffers.has(remotePeerId) || (engine.pendingOffers && engine.pendingOffers.has(remotePeerId));
 
                                 if (!peerExists && !isPending) {
-                                    // Glare avoidance rule (REQ-026.2)
-                                    const shouldInitiate = isJoining || (myPeerId < remotePeerId);
+                                    // Glare avoidance rule (REQ-029.3): purely deterministic lexicographical tie-breaker
+                                    const shouldInitiate = myPeerId < remotePeerId;
                                     if (shouldInitiate) {
                                         await initiateRelayHandshake(incomingPeerId, remotePeerId);
                                     }
@@ -1371,6 +1430,19 @@
         // HOST WORKFLOW: Create room, offer, signaling websocket, and invite link
         // =========================================================================
         async function createRoomAsHost() {
+            if (activeHostInviteUrl) {
+                // Subsequent click while waiting for a peer: re-copy link and re-trigger feedback
+                if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+                    try {
+                        await navigator.clipboard.writeText(activeHostInviteUrl);
+                    } catch (e) {
+                        console.warn("Clipboard copy failed:", e);
+                    }
+                }
+                setCreateRoomCopiedFeedback();
+                return;
+            }
+
             isBurned = false;
             isJoining = false;
             peerDepartureHandled = false;
@@ -1384,7 +1456,8 @@
                 window.engine = engine;
                 initEngineListeners();
 
-                const offerSdp = await engine.create_offer();
+                const initialPeerId = "peer-joiner";
+                const offerSdp = await engine.create_offer(initialPeerId);
 
                 // Generate random room DO ID and 32-byte host secret
                 const doId = "room-" + Math.random().toString(36).slice(2, 10);
@@ -1402,11 +1475,13 @@
                     token: tokenHex,
                     sdp_offer: { sdp: offerSdp },
                     host_public_key: hostPubkey,
+                    host_peer_id: (engine && engine.localPeerId) || localPeerId,
                     guest_private_key: null
                 };
 
                 const packedHash = "#payload=" + utf8ToBase64Url(JSON.stringify(invitePayload));
                 const inviteUrl = window.location.origin + window.location.pathname + packedHash;
+                activeHostInviteUrl = inviteUrl;
 
                 // Connect host signaling WebSocket
                 updateStatus("signaling", "Awaiting peer connection...");
@@ -1419,9 +1494,11 @@
                         if (drop && drop.sdp_answer && drop.sdp_answer.sdp) {
                             showTransientStatus("Establishing secure connection");
                             updateStatus("connecting", "Received answer! Snapping P2P channel...");
-                            const targetPeerId = drop.peer_id || "peer-01";
-                            if (drop.peer_id && drop.peer_id !== "peer-01" && engine.peers.has("peer-01")) {
-                                engine.rename_peer("peer-01", drop.peer_id);
+                            const targetPeerId = drop.joiner_peer_id || drop.peer_id || initialPeerId;
+                            if (targetPeerId !== initialPeerId && engine.peers.has(initialPeerId)) {
+                                engine.rename_peer(initialPeerId, targetPeerId);
+                            } else if (targetPeerId !== "peer-01" && engine.peers.has("peer-01")) {
+                                engine.rename_peer("peer-01", targetPeerId);
                             }
                             await engine.apply_answer(drop.sdp_answer.sdp, targetPeerId);
                         }
@@ -1432,20 +1509,30 @@
 
                 hostWs.onerror = (e) => console.warn("Signaling socket error:", e);
 
-                // Show copyable invite controls in footer action slot (replacing create-room-bar)
-                if (createRoomBar) createRoomBar.classList.add("hidden");
-                if (inviteBar) inviteBar.classList.remove("hidden");
-                inviteInput.value = inviteUrl;
+                // Automatically copy inviteUrl directly to navigator.clipboard (REQ-029.1)
+                if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+                    try {
+                        await navigator.clipboard.writeText(inviteUrl);
+                    } catch (e) {
+                        console.warn("Clipboard copy failed:", e);
+                    }
+                }
+
+                // Enable button and provide visual copied feedback
+                btnCreateRoom.disabled = false;
+                setCreateRoomCopiedFeedback();
 
                 appendSystemMessage("Secure chat created");
+                appendSystemMessage("Invite link copied to clipboard");
             } catch (err) {
                 console.error("Chat creation failed:", err);
                 appendSystemMessage("Failed to create chat");
-                if (inviteBar) inviteBar.classList.add("hidden");
+                activeHostInviteUrl = null;
                 if (createRoomBar) {
                     createRoomBar.classList.remove("hidden");
                     btnCreateRoom.disabled = false;
-                    btnCreateRoom.innerHTML = CREATE_ROOM_ICON_HTML;
+                    btnCreateRoom.className = "btn-action btn-action-full btn-emerald";
+                    btnCreateRoom.innerHTML = CREATE_ROOM_DEFAULT_HTML;
                 }
                 updateStatus("disconnected", "Error creating chat");
             }
@@ -1476,7 +1563,6 @@
                 showTransientStatus("Establishing secure connection");
                 updateStatus("signaling", "Connecting as peer...");
 
-                if (inviteBar) inviteBar.classList.add("hidden");
                 if (createRoomBar) createRoomBar.classList.add("hidden");
 
                 const jsonStr = base64UrlToUtf8(rawPayload);
@@ -1486,13 +1572,16 @@
                 window.engine = engine;
                 initEngineListeners();
 
-                const answerSdp = await engine.accept_offer_and_create_answer(invite.sdp_offer.sdp);
+                const hostPeerId = invite.host_peer_id || "peer-host";
+                const answerSdp = await engine.accept_offer_and_create_answer(invite.sdp_offer.sdp, hostPeerId);
 
                 const dropPayload = {
                     invite_uuid: invite.invite_uuid,
                     token: invite.token,
                     sdp_answer: { sdp: answerSdp },
-                    joiner_public_key: Array.from(crypto.getRandomValues(new Uint8Array(32)))
+                    joiner_public_key: Array.from(crypto.getRandomValues(new Uint8Array(32))),
+                    joiner_peer_id: (engine && engine.localPeerId) || localPeerId,
+                    peer_id: (engine && engine.localPeerId) || localPeerId
                 };
 
                 const dropUrl = `${WORKER_ORIGIN}/drop/${invite.do_id}/${invite.invite_uuid}`;
@@ -1521,21 +1610,6 @@
 
         // Event bindings
         btnCreateRoom.addEventListener("click", createRoomAsHost);
-
-        btnCopyInvite.addEventListener("click", async () => {
-            await navigator.clipboard.writeText(inviteInput.value);
-            btnCopyInvite.innerHTML = `
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>`;
-            setTimeout(() => {
-                btnCopyInvite.innerHTML = `
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                    </svg>`;
-            }, 1500);
-        });
 
         function doSendMessage() {
             if (!msgInput.value.trim() || !engine) return;
@@ -1583,11 +1657,18 @@
             peerDepartureHandled = false;
             opportunisticLeaveSent = false;
             isJoining = false;
+            activeHostInviteUrl = null;
+            if (createRoomFeedbackTimer) {
+                clearTimeout(createRoomFeedbackTimer);
+                createRoomFeedbackTimer = null;
+            }
             clearPendingInvite();
             peerColorMap.clear();
             seenMessageIds.clear();
             seenMessageOrder.length = 0;
             pendingOffers.clear();
+            announcedJoinPeers.clear();
+            departedPeers.clear();
             clearTransientStatus();
             if (engine) {
                 engine.onStateChangeCb = null;
@@ -1617,11 +1698,11 @@
             if (headerLeaveBtn) headerLeaveBtn.classList.add("hidden");
             if (burnRoomBar) burnRoomBar.classList.add("hidden");
             if (messageForm) messageForm.classList.add("hidden");
-            if (inviteBar) inviteBar.classList.add("hidden");
             if (createRoomBar) {
                 createRoomBar.classList.remove("hidden");
                 btnCreateRoom.disabled = false;
-                btnCreateRoom.innerHTML = CREATE_ROOM_ICON_HTML;
+                btnCreateRoom.className = "btn-action btn-action-full btn-emerald";
+                btnCreateRoom.innerHTML = CREATE_ROOM_DEFAULT_HTML;
             }
             if (msgInput) {
                 msgInput.disabled = true;
@@ -1697,6 +1778,7 @@
         window.initiateRelayHandshake = initiateRelayHandshake;
         window.handleHeaderAddPeerClick = handleHeaderAddPeerClick;
         window.getPendingInviteUrl = () => pendingInviteUrl;
+        window.getActiveHostInviteUrl = () => activeHostInviteUrl;
         window.headerAddBtn = headerAddBtn;
     </script>
 </body>
