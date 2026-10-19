@@ -1334,6 +1334,124 @@ mod tests {
         assert!(ui.peers().is_empty());
         assert_eq!(ui.status(), ConnectionStatus::Disconnected);
     }
+
+    #[test]
+    fn test_req_029_multi_remote_peer_removal_selective_message_purge() {
+        let ui = ChatUi::mount("app").expect("mount failed");
+        ui.set_status(ConnectionStatus::Connected)
+            .expect("set status failed");
+        assert_eq!(ui.status(), ConnectionStatus::Connected);
+
+        // Register 3 remote peers: "alice" (host), "bob", "charlie"
+        ui.add_peer("alice").expect("add alice failed");
+        ui.add_peer("bob").expect("add bob failed");
+        ui.add_peer("charlie").expect("add charlie failed");
+        assert_eq!(ui.peer_count(), 3);
+        assert_eq!(
+            ui.peers(),
+            vec![
+                "alice".to_string(),
+                "bob".to_string(),
+                "charlie".to_string()
+            ]
+        );
+
+        // Populate multiple messages from each remote peer and self
+        ui.append_message("alice", "First message from Alice", false, true)
+            .expect("append alice msg 1 failed");
+        ui.append_message("bob", "First message from Bob", false, true)
+            .expect("append bob msg 1 failed");
+        ui.append_message("charlie", "First message from Charlie", false, true)
+            .expect("append charlie msg 1 failed");
+        ui.append_message("self", "First message from Self", true, true)
+            .expect("append self msg 1 failed");
+        ui.append_message("alice", "Second message from Alice", false, true)
+            .expect("append alice msg 2 failed");
+        ui.append_message("bob", "Second message from Bob", false, true)
+            .expect("append bob msg 2 failed");
+        ui.append_message("charlie", "Second message from Charlie", false, true)
+            .expect("append charlie msg 2 failed");
+        ui.append_message("self", "Second message from Self", true, true)
+            .expect("append self msg 2 failed");
+
+        let initial_msgs = ui.messages();
+        assert_eq!(initial_msgs.len(), 8);
+
+        // Step 1: 3rd peer ("charlie") departs: remove peer and burn messages
+        ui.remove_peer("charlie").expect("remove charlie failed");
+        ui.burn_peer_messages("charlie")
+            .expect("burn charlie messages failed");
+
+        // Assert peer count drops to 2, Charlie is removed, Alice and Bob remain
+        assert_eq!(ui.peer_count(), 2);
+        assert_eq!(
+            ui.peers(),
+            vec!["alice".to_string(), "bob".to_string()]
+        );
+
+        // Assert Charlie's messages are selectively purged, while Alice, Bob, and Self messages remain intact
+        let msgs_after_charlie = ui.messages();
+        assert_eq!(msgs_after_charlie.len(), 6);
+        assert!(!msgs_after_charlie.iter().any(|(s, _, _, _)| s == "charlie"));
+        assert_eq!(
+            msgs_after_charlie
+                .iter()
+                .filter(|(s, _, _, _)| s == "alice")
+                .count(),
+            2
+        );
+        assert_eq!(
+            msgs_after_charlie
+                .iter()
+                .filter(|(s, _, _, _)| s == "bob")
+                .count(),
+            2
+        );
+        assert_eq!(
+            msgs_after_charlie
+                .iter()
+                .filter(|(s, _, is_self, _)| *is_self && s == "self")
+                .count(),
+            2
+        );
+        assert_eq!(ui.status(), ConnectionStatus::Connected);
+
+        // Step 2: Host / 1st peer ("alice") departs: remove peer and burn messages
+        ui.remove_peer("alice").expect("remove alice failed");
+        ui.burn_peer_messages("alice")
+            .expect("burn alice messages failed");
+
+        // Assert peer count drops to 1, Alice is removed, Bob remains
+        assert_eq!(ui.peer_count(), 1);
+        assert_eq!(ui.peers(), vec!["bob".to_string()]);
+
+        // Assert Alice's messages are selectively purged, Bob and Self messages remain intact
+        let msgs_after_alice = ui.messages();
+        assert_eq!(msgs_after_alice.len(), 4);
+        assert!(!msgs_after_alice.iter().any(|(s, _, _, _)| s == "alice"));
+        assert!(!msgs_after_alice.iter().any(|(s, _, _, _)| s == "charlie"));
+        assert_eq!(
+            msgs_after_alice
+                .iter()
+                .filter(|(s, _, _, _)| s == "bob")
+                .count(),
+            2
+        );
+        assert_eq!(
+            msgs_after_alice
+                .iter()
+                .filter(|(s, _, is_self, _)| *is_self && s == "self")
+                .count(),
+            2
+        );
+        assert_eq!(ui.status(), ConnectionStatus::Connected);
+
+        // Final cleanup
+        ui.destroy_session().expect("destroy session failed");
+        assert!(ui.messages().is_empty());
+        assert_eq!(ui.peer_count(), 0);
+        assert_eq!(ui.status(), ConnectionStatus::Disconnected);
+    }
 }
 
 
