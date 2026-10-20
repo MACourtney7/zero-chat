@@ -1452,6 +1452,91 @@ mod tests {
         assert_eq!(ui.peer_count(), 0);
         assert_eq!(ui.status(), ConnectionStatus::Disconnected);
     }
+
+    #[test]
+    fn test_req_030_ui_peer_counter_dynamic_lifecycle_and_symmetry() {
+        let ui = ChatUi::mount("app").expect("mount failed");
+        assert_eq!(ui.peer_count(), 0);
+        assert!(ui.peers().is_empty());
+
+        // Dynamic increments: 0 -> 1 -> 2 -> 3 (REQ-030.2)
+        ui.add_peer("alice").expect("add alice");
+        assert_eq!(ui.peer_count(), 1);
+        assert_eq!(ui.peers(), vec!["alice".to_string()]);
+
+        ui.add_peer("bob").expect("add bob");
+        assert_eq!(ui.peer_count(), 2);
+        assert_eq!(ui.peers(), vec!["alice".to_string(), "bob".to_string()]);
+
+        ui.add_peer("charlie").expect("add charlie");
+        assert_eq!(ui.peer_count(), 3);
+        assert_eq!(
+            ui.peers(),
+            vec![
+                "alice".to_string(),
+                "bob".to_string(),
+                "charlie".to_string()
+            ]
+        );
+
+        // Idempotent duplicate addition does not increment counter
+        ui.add_peer("bob").expect("add bob duplicate");
+        assert_eq!(ui.peer_count(), 3);
+        assert_eq!(
+            ui.peers(),
+            vec![
+                "alice".to_string(),
+                "bob".to_string(),
+                "charlie".to_string()
+            ]
+        );
+
+        // Dynamic decrements via remove_peer: 3 -> 2 -> 1 -> 0 (REQ-030.3)
+        ui.remove_peer("charlie").expect("remove charlie");
+        assert_eq!(ui.peer_count(), 2);
+        assert_eq!(ui.peers(), vec!["alice".to_string(), "bob".to_string()]);
+
+        ui.remove_peer("alice").expect("remove alice");
+        assert_eq!(ui.peer_count(), 1);
+        assert_eq!(ui.peers(), vec!["bob".to_string()]);
+
+        // Removing non-existent peer is a safe no-op
+        ui.remove_peer("unknown").expect("remove unknown");
+        assert_eq!(ui.peer_count(), 1);
+        assert_eq!(ui.peers(), vec!["bob".to_string()]);
+
+        ui.remove_peer("bob").expect("remove bob");
+        assert_eq!(ui.peer_count(), 0);
+        assert!(ui.peers().is_empty());
+
+        // Full synchronization via set_peers
+        let initial_batch = vec![
+            "peer-1".to_string(),
+            "peer-2".to_string(),
+            "peer-3".to_string(),
+        ];
+        ui.set_peers(&initial_batch).expect("set_peers 3");
+        assert_eq!(ui.peer_count(), 3);
+        assert_eq!(ui.peers(), initial_batch);
+
+        // Replace with 2 peers
+        let updated_batch = vec!["peer-1".to_string(), "peer-3".to_string()];
+        ui.set_peers(&updated_batch).expect("set_peers 2");
+        assert_eq!(ui.peer_count(), 2);
+        assert_eq!(ui.peers(), updated_batch);
+
+        // Replace with empty slice
+        ui.set_peers(&[]).expect("set_peers empty");
+        assert_eq!(ui.peer_count(), 0);
+        assert!(ui.peers().is_empty());
+
+        // Destroy session resets peer count and clears peer list
+        ui.add_peer("peer-x").expect("add peer-x");
+        assert_eq!(ui.peer_count(), 1);
+        ui.destroy_session().expect("destroy session");
+        assert_eq!(ui.peer_count(), 0);
+        assert!(ui.peers().is_empty());
+    }
 }
 
 
