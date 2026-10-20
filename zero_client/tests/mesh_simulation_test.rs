@@ -1,6 +1,6 @@
 //! Multi-node mesh simulation test suite for ZeroChat.
 //!
-//! Validates REQ-006.1 through REQ-006.5, REQ-022.1, REQ-022.2, REQ-023.4, REQ-028.1, REQ-028.2, REQ-029.4, and REQ-029.5:
+//! Validates REQ-006.1 through REQ-006.5, REQ-022.1, REQ-022.2, REQ-023.4, REQ-028.1, REQ-028.2, REQ-029.4, REQ-029.5, and REQ-030.1 through REQ-030.5:
 //! - REQ-006.1: Host bridges signaling messages between existing peers without inspecting or
 //!   decrypting their end-to-end payloads.
 //! - REQ-006.2: Third participant (Charlie) establishes direct `Channel_BC` data channel with Bob
@@ -16,6 +16,10 @@
 //! - REQ-028.2: Partial peer departure & feed survivability test (selective purge, channel continuity).
 //! - REQ-029.4: 3rd peer departure selective purge test (feed continuity and selective purging).
 //! - REQ-029.5: Host departure survivability simulation test (Channel_BC survivability, selective message purge, continued communication).
+//! - REQ-030.1: Multi-peer secondary inviter mesh snapping (User 2 invites User 3, direct Channel_AC snapped via Bob's bridge with 0 cloud edge hits).
+//! - REQ-030.2: Unified multi-peer counter synchronization (all 3 nodes report peer count == 2).
+//! - REQ-030.3: Symmetric departure counter updates across surviving peers (Scenarios A, B, and C).
+//! - REQ-030.4: Host departure survivability (surviving nodes maintain direct DataChannel with symmetric peer count decrements).
 
 
 use std::cell::RefCell;
@@ -2999,6 +3003,815 @@ fn test_req_029_4_third_peer_departure_selective_purge() {
     assert_eq!(bob_to_alice.state(), PeerLifecycleState::Open, "Channel_AB Bob side remains Open");
 }
 
+/// REQ-030.1 & REQ-030.2: Multi-Peer Join with 2nd User as Inviter, Mesh Snapping & Counter Synchronization.
+///
+/// Validates:
+/// 1. Establish 3 nodes: Alice (creator/host), Bob (joined Alice), Charlie (invited by Bob).
+/// 2. Step 1: Alice <-> Bob connected via `Channel_AB`. Both report peer count = 1.
+/// 3. Step 2: Bob invites Charlie (`Channel_BC`).
+/// 4. Step 3: Bob introduces Alice and Charlie via in-band relay signaling (`PeerJoined`, `RelaySdpOffer`, `RelaySdpAnswer` through Bob).
+/// 5. Step 4: Direct `Channel_AC` data channel is established between Alice and Charlie with 0 cloud edge hits.
+/// 6. Step 5: Assert ALL 3 nodes (Alice, Bob, Charlie) report peer count == 2 (in both MeshTopology and ChatUi).
+/// 7. Step 6: Test broadcast messaging across all 3 nodes, verifying delivery and loop suppression.
+#[test]
+fn test_req_030_secondary_inviter_mesh_snapping_and_counters() {
+    let (alice_sk, alice_pk) = generate_kp();
+    let (bob_sk, bob_pk) = generate_kp();
+    let (charlie_sk, charlie_pk) = generate_kp();
 
+    let alice_mesh = MeshTopology::new("alice", alice_sk);
+    let bob_mesh = MeshTopology::new("bob", bob_sk);
+    let charlie_mesh = MeshTopology::new("charlie", charlie_sk);
 
+    let alice_ui = Rc::new(ChatUi::mount("alice-app").expect("mount Alice UI"));
+    let bob_ui = Rc::new(ChatUi::mount("bob-app").expect("mount Bob UI"));
+    let charlie_ui = Rc::new(ChatUi::mount("charlie-app").expect("mount Charlie UI"));
+
+    alice_ui
+        .set_status(ConnectionStatus::Connected)
+        .expect("Alice connected");
+    bob_ui
+        .set_status(ConnectionStatus::Connected)
+        .expect("Bob connected");
+    charlie_ui
+        .set_status(ConnectionStatus::Connected)
+        .expect("Charlie connected");
+
+    // Wire on_peer_joined and on_peer_left callbacks
+    let a_ui_j = alice_ui.clone();
+    alice_mesh.on_peer_joined(move |peer_id| {
+        let _ = a_ui_j.add_peer(peer_id);
+    });
+    let a_ui_l = alice_ui.clone();
+    alice_mesh.on_peer_left(move |peer_id| {
+        let _ = a_ui_l.remove_peer(peer_id);
+    });
+
+    let b_ui_j = bob_ui.clone();
+    bob_mesh.on_peer_joined(move |peer_id| {
+        let _ = b_ui_j.add_peer(peer_id);
+    });
+    let b_ui_l = bob_ui.clone();
+    bob_mesh.on_peer_left(move |peer_id| {
+        let _ = b_ui_l.remove_peer(peer_id);
+    });
+
+    let c_ui_j = charlie_ui.clone();
+    charlie_mesh.on_peer_joined(move |peer_id| {
+        let _ = c_ui_j.add_peer(peer_id);
+    });
+    let c_ui_l = charlie_ui.clone();
+    charlie_mesh.on_peer_left(move |peer_id| {
+        let _ = c_ui_l.remove_peer(peer_id);
+    });
+
+    // Step 1: Alice <-> Bob connected via Channel_AB
+    let alice_to_bob = WebRtcPeer::new();
+    let bob_to_alice = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&alice_to_bob, &bob_to_alice).expect("pair Alice-Bob");
+    alice_mesh
+        .add_peer("bob", bob_pk, alice_to_bob)
+        .expect("Alice adds Bob");
+    bob_mesh
+        .add_peer("alice", alice_pk, bob_to_alice)
+        .expect("Bob adds Alice");
+
+    assert_eq!(alice_mesh.peer_count(), 1, "Alice mesh reports peer count = 1");
+    assert_eq!(bob_mesh.peer_count(), 1, "Bob mesh reports peer count = 1");
+    assert_eq!(alice_ui.peer_count(), 1, "Alice UI reports peer count = 1");
+    assert_eq!(bob_ui.peer_count(), 1, "Bob UI reports peer count = 1");
+    assert_eq!(charlie_mesh.peer_count(), 0, "Charlie mesh is not yet connected");
+
+    // Step 2: Bob invites Charlie (Channel_BC)
+    let bob_to_charlie = WebRtcPeer::new();
+    let charlie_to_bob = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&bob_to_charlie, &charlie_to_bob).expect("pair Bob-Charlie");
+    bob_mesh
+        .add_peer("charlie", charlie_pk, bob_to_charlie)
+        .expect("Bob adds Charlie");
+    charlie_mesh
+        .add_peer("bob", bob_pk, charlie_to_bob)
+        .expect("Charlie adds Bob");
+
+    assert_eq!(bob_mesh.peer_count(), 2, "Bob connected to both Alice and Charlie");
+    assert_eq!(charlie_mesh.peer_count(), 1, "Charlie connected to Bob");
+
+    // Step 3: Bob introduces Alice and Charlie via in-band relay signaling
+    // (PeerJoined, RelaySdpOffer, RelaySdpAnswer through Bob)
+    let cloud_edge_hits = 0usize;
+    block_on(charlie_mesh.initiate_relay_handshake("bob", "alice", alice_pk))
+        .expect("initiate in-band relay handshake from Charlie to Alice via Bob");
+
+    // Step 4: Direct Channel_AC data channel is established between Alice and Charlie with 0 cloud edge hits
+    assert_eq!(
+        cloud_edge_hits, 0,
+        "0 cloud edge hits during direct snap over Bob's bridge"
+    );
+    assert!(alice_mesh.has_peer("charlie"), "Alice registers direct peer Charlie");
+    assert!(charlie_mesh.has_peer("alice"), "Charlie registers direct peer Alice");
+
+    let alice_to_charlie = alice_mesh
+        .get_peer("charlie")
+        .expect("Alice has peer Charlie")
+        .rtc_peer;
+    let charlie_to_alice = charlie_mesh
+        .get_peer("alice")
+        .expect("Charlie has peer Alice")
+        .rtc_peer;
+    WebRtcPeer::pair_for_testing(&alice_to_charlie, &charlie_to_alice).expect("pair Channel_AC");
+
+    // Step 5: Assert ALL 3 nodes (Alice, Bob, Charlie) report peer count == 2
+    assert_eq!(alice_mesh.peer_count(), 2, "Alice mesh peer count == 2");
+    assert_eq!(bob_mesh.peer_count(), 2, "Bob mesh peer count == 2");
+    assert_eq!(charlie_mesh.peer_count(), 2, "Charlie mesh peer count == 2");
+
+    assert_eq!(alice_ui.peer_count(), 2, "Alice UI peer count == 2");
+    assert_eq!(bob_ui.peer_count(), 2, "Bob UI peer count == 2");
+    assert_eq!(charlie_ui.peer_count(), 2, "Charlie UI peer count == 2");
+
+    // Step 6: Test broadcast messaging across all 3 nodes, verifying delivery and loop suppression
+    let alice_feed = Rc::new(RefCell::new(Vec::new()));
+    let a_feed = alice_feed.clone();
+    alice_mesh.on_message(move |sender, msg| {
+        a_feed.borrow_mut().push((sender.to_string(), msg.to_string()));
+    });
+
+    let bob_feed = Rc::new(RefCell::new(Vec::new()));
+    let b_feed = bob_feed.clone();
+    bob_mesh.on_message(move |sender, msg| {
+        b_feed.borrow_mut().push((sender.to_string(), msg.to_string()));
+    });
+
+    let charlie_feed = Rc::new(RefCell::new(Vec::new()));
+    let c_feed = charlie_feed.clone();
+    charlie_mesh.on_message(move |sender, msg| {
+        c_feed.borrow_mut().push((sender.to_string(), msg.to_string()));
+    });
+
+    // 6a. Alice broadcasts: Bob and Charlie receive exactly once
+    let msg_alice = "Hello from Alice (host)";
+    let alice_uuid = alice_mesh.broadcast_chat(msg_alice).expect("Alice broadcast");
+
+    assert_eq!(
+        *bob_feed.borrow(),
+        vec![("alice".to_string(), msg_alice.to_string())]
+    );
+    assert_eq!(
+        *charlie_feed.borrow(),
+        vec![("alice".to_string(), msg_alice.to_string())]
+    );
+    assert_eq!(alice_feed.borrow().len(), 0, "Alice suppresses self-echo");
+    assert!(bob_mesh.has_seen_message(&alice_uuid));
+    assert!(charlie_mesh.has_seen_message(&alice_uuid));
+
+    // 6b. Bob broadcasts: Alice and Charlie receive exactly once
+    let msg_bob = "Hello from Bob (inviter hub)";
+    let bob_uuid = bob_mesh.broadcast_chat(msg_bob).expect("Bob broadcast");
+
+    assert_eq!(
+        *alice_feed.borrow(),
+        vec![("bob".to_string(), msg_bob.to_string())]
+    );
+    assert_eq!(
+        *charlie_feed.borrow(),
+        vec![
+            ("alice".to_string(), msg_alice.to_string()),
+            ("bob".to_string(), msg_bob.to_string()),
+        ]
+    );
+    assert_eq!(bob_feed.borrow().len(), 1, "Bob suppresses self-echo");
+    assert!(alice_mesh.has_seen_message(&bob_uuid));
+    assert!(charlie_mesh.has_seen_message(&bob_uuid));
+
+    // 6c. Charlie broadcasts: Alice and Bob receive exactly once
+    let msg_charlie = "Hello from Charlie (joiner)";
+    let charlie_uuid = charlie_mesh.broadcast_chat(msg_charlie).expect("Charlie broadcast");
+
+    assert_eq!(
+        *alice_feed.borrow(),
+        vec![
+            ("bob".to_string(), msg_bob.to_string()),
+            ("charlie".to_string(), msg_charlie.to_string()),
+        ]
+    );
+    assert_eq!(
+        *bob_feed.borrow(),
+        vec![
+            ("alice".to_string(), msg_alice.to_string()),
+            ("charlie".to_string(), msg_charlie.to_string()),
+        ]
+    );
+    assert_eq!(charlie_feed.borrow().len(), 2, "Charlie suppresses self-echo");
+    assert!(alice_mesh.has_seen_message(&charlie_uuid));
+    assert!(bob_mesh.has_seen_message(&charlie_uuid));
+
+    // Loop suppression checks: Exactly 2 messages delivered to Alice, Bob, and Charlie
+    assert_eq!(
+        alice_feed.borrow().len(),
+        2,
+        "Alice delivered exactly 2 distinct messages"
+    );
+    assert_eq!(
+        bob_feed.borrow().len(),
+        2,
+        "Bob delivered exactly 2 distinct messages"
+    );
+    assert_eq!(
+        charlie_feed.borrow().len(),
+        2,
+        "Charlie delivered exactly 2 distinct messages"
+    );
+}
+
+/// Helper context for REQ-030 asymmetric departure tests.
+struct Req030ScenarioContext {
+    alice_mesh: MeshTopology,
+    bob_mesh: MeshTopology,
+    charlie_mesh: MeshTopology,
+    alice_ui: Rc<ChatUi>,
+    bob_ui: Rc<ChatUi>,
+    charlie_ui: Rc<ChatUi>,
+    alice_to_bob: WebRtcPeer,
+    bob_to_alice: WebRtcPeer,
+    bob_to_charlie: WebRtcPeer,
+    charlie_to_bob: WebRtcPeer,
+    alice_to_charlie: WebRtcPeer,
+    charlie_to_alice: WebRtcPeer,
+}
+
+/// Sets up a 3-node connected mesh where Alice is the creator, Bob joins Alice,
+/// Bob invites Charlie, and Alice and Charlie establish direct Channel_AC via Bob's bridge.
+fn setup_req_030_mesh_scenario() -> Req030ScenarioContext {
+    let (alice_sk, alice_pk) = generate_kp();
+    let (bob_sk, bob_pk) = generate_kp();
+    let (charlie_sk, charlie_pk) = generate_kp();
+
+    let alice_mesh = MeshTopology::new("alice", alice_sk);
+    let bob_mesh = MeshTopology::new("bob", bob_sk);
+    let charlie_mesh = MeshTopology::new("charlie", charlie_sk);
+
+    let alice_ui = Rc::new(ChatUi::mount("alice-app").expect("mount Alice UI"));
+    let bob_ui = Rc::new(ChatUi::mount("bob-app").expect("mount Bob UI"));
+    let charlie_ui = Rc::new(ChatUi::mount("charlie-app").expect("mount Charlie UI"));
+
+    alice_ui
+        .set_status(ConnectionStatus::Connected)
+        .expect("Alice connected");
+    bob_ui
+        .set_status(ConnectionStatus::Connected)
+        .expect("Bob connected");
+    charlie_ui
+        .set_status(ConnectionStatus::Connected)
+        .expect("Charlie connected");
+
+    // Connect Alice <-> Bob (Channel_AB)
+    let alice_to_bob = WebRtcPeer::new();
+    let bob_to_alice = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&alice_to_bob, &bob_to_alice).expect("pair Alice-Bob");
+    alice_mesh
+        .add_peer("bob", bob_pk, alice_to_bob.clone())
+        .expect("Alice adds Bob");
+    bob_mesh
+        .add_peer("alice", alice_pk, bob_to_alice.clone())
+        .expect("Bob adds Alice");
+    alice_ui.add_peer("bob").expect("Alice UI adds Bob");
+    bob_ui.add_peer("alice").expect("Bob UI adds Alice");
+
+    // Connect Bob <-> Charlie (Channel_BC, Bob is inviter)
+    let bob_to_charlie = WebRtcPeer::new();
+    let charlie_to_bob = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&bob_to_charlie, &charlie_to_bob).expect("pair Bob-Charlie");
+    bob_mesh
+        .add_peer("charlie", charlie_pk, bob_to_charlie.clone())
+        .expect("Bob adds Charlie");
+    charlie_mesh
+        .add_peer("bob", bob_pk, charlie_to_bob.clone())
+        .expect("Charlie adds Bob");
+    bob_ui.add_peer("charlie").expect("Bob UI adds Charlie");
+    charlie_ui.add_peer("bob").expect("Charlie UI adds Bob");
+
+    // Snap direct Channel_AC via in-band relay through Bob
+    block_on(charlie_mesh.initiate_relay_handshake("bob", "alice", alice_pk))
+        .expect("relay handshake Charlie-Alice via Bob");
+
+    let alice_to_charlie = alice_mesh
+        .get_peer("charlie")
+        .expect("Alice has peer Charlie")
+        .rtc_peer;
+    let charlie_to_alice = charlie_mesh
+        .get_peer("alice")
+        .expect("Charlie has peer Alice")
+        .rtc_peer;
+    WebRtcPeer::pair_for_testing(&alice_to_charlie, &charlie_to_alice).expect("pair Channel_AC");
+    alice_ui.add_peer("charlie").expect("Alice UI adds Charlie");
+    charlie_ui.add_peer("alice").expect("Charlie UI adds Alice");
+
+    // Wire on_message callbacks
+    let a_ui_m = alice_ui.clone();
+    alice_mesh.on_message(move |sender, text| {
+        let _ = a_ui_m.append_message(sender, text, false, true);
+    });
+    let b_ui_m = bob_ui.clone();
+    bob_mesh.on_message(move |sender, text| {
+        let _ = b_ui_m.append_message(sender, text, false, true);
+    });
+    let c_ui_m = charlie_ui.clone();
+    charlie_mesh.on_message(move |sender, text| {
+        let _ = c_ui_m.append_message(sender, text, false, true);
+    });
+
+    // Wire on_burn_peer_messages callbacks
+    let a_ui_b = alice_ui.clone();
+    alice_mesh.on_burn_peer_messages(move |peer_id| {
+        let _ = a_ui_b.burn_peer_messages(peer_id);
+    });
+    let b_ui_b = bob_ui.clone();
+    bob_mesh.on_burn_peer_messages(move |peer_id| {
+        let _ = b_ui_b.burn_peer_messages(peer_id);
+    });
+    let c_ui_b = charlie_ui.clone();
+    charlie_mesh.on_burn_peer_messages(move |peer_id| {
+        let _ = c_ui_b.burn_peer_messages(peer_id);
+    });
+
+    // Wire on_peer_left callbacks
+    let a_ui_l = alice_ui.clone();
+    alice_mesh.on_peer_left(move |peer_id| {
+        let _ = a_ui_l.remove_peer(peer_id);
+    });
+    let b_ui_l = bob_ui.clone();
+    bob_mesh.on_peer_left(move |peer_id| {
+        let _ = b_ui_l.remove_peer(peer_id);
+    });
+    let c_ui_l = charlie_ui.clone();
+    charlie_mesh.on_peer_left(move |peer_id| {
+        let _ = c_ui_l.remove_peer(peer_id);
+    });
+
+    // Verify all 3 report peer count == 2 initially
+    assert_eq!(alice_mesh.peer_count(), 2);
+    assert_eq!(bob_mesh.peer_count(), 2);
+    assert_eq!(charlie_mesh.peer_count(), 2);
+    assert_eq!(alice_ui.peer_count(), 2);
+    assert_eq!(bob_ui.peer_count(), 2);
+    assert_eq!(charlie_ui.peer_count(), 2);
+
+    Req030ScenarioContext {
+        alice_mesh,
+        bob_mesh,
+        charlie_mesh,
+        alice_ui,
+        bob_ui,
+        charlie_ui,
+        alice_to_bob,
+        bob_to_alice,
+        bob_to_charlie,
+        charlie_to_bob,
+        alice_to_charlie,
+        charlie_to_alice,
+    }
+}
+
+/// REQ-030.3 & REQ-030.4: Asymmetric Departure Scenarios with Symmetric Counter Decrements.
+///
+/// Validates:
+/// - Scenario A: Charlie (3rd user) leaves:
+///   - Alice and Bob remain connected via `Channel_AB`.
+///   - Peer count drops from 2 to 1 on BOTH Alice and Bob.
+///   - Only Charlie's messages are purged; Alice's and Bob's messages remain in feeds.
+/// - Scenario B: Bob (2nd user / hub) leaves:
+///   - Alice and Charlie maintain their direct `Channel_AC`.
+///   - Peer count drops from 2 to 1 on BOTH Alice and Charlie.
+///   - Only Bob's messages are purged; Alice and Charlie continue chatting over `Channel_AC`.
+/// - Scenario C: Alice (1st user / host) leaves:
+///   - Bob and Charlie maintain `Channel_BC`.
+///   - Peer count drops from 2 to 1 on BOTH Bob and Charlie.
+///   - Only Alice's messages are purged; Bob and Charlie continue chatting over `Channel_BC`.
+#[test]
+fn test_req_030_departure_counter_symmetry() {
+    // =========================================================================
+    // Scenario A: Charlie (3rd user) leaves
+    // =========================================================================
+    {
+        let ctx = setup_req_030_mesh_scenario();
+
+        // Populate messages from all 3 peers
+        let msg_alice = "Message from Alice";
+        let msg_bob = "Message from Bob";
+        let msg_charlie = "Message from Charlie";
+
+        ctx.alice_mesh.broadcast_chat(msg_alice).expect("Alice broadcast");
+        ctx.alice_ui
+            .append_message("alice", msg_alice, true, true)
+            .expect("Alice append self");
+
+        ctx.bob_mesh.broadcast_chat(msg_bob).expect("Bob broadcast");
+        ctx.bob_ui
+            .append_message("bob", msg_bob, true, true)
+            .expect("Bob append self");
+
+        ctx.charlie_mesh
+            .broadcast_chat(msg_charlie)
+            .expect("Charlie broadcast");
+        ctx.charlie_ui
+            .append_message("charlie", msg_charlie, true, true)
+            .expect("Charlie append self");
+
+        assert_eq!(ctx.alice_ui.messages().len(), 3);
+        assert_eq!(ctx.bob_ui.messages().len(), 3);
+        assert_eq!(ctx.charlie_ui.messages().len(), 3);
+
+        // Charlie departs via broadcast_leave_and_burn()
+        ctx.charlie_mesh
+            .broadcast_leave_and_burn()
+            .expect("Charlie departs");
+
+        // 1. Assert Alice and Bob remain connected via Channel_AB
+        assert_eq!(
+            ctx.alice_to_bob.state(),
+            PeerLifecycleState::Open,
+            "Channel_AB Alice side remains Open"
+        );
+        assert_eq!(
+            ctx.bob_to_alice.state(),
+            PeerLifecycleState::Open,
+            "Channel_AB Bob side remains Open"
+        );
+        assert!(ctx.alice_mesh.has_peer("bob"), "Alice mesh retains peer Bob");
+        assert!(ctx.bob_mesh.has_peer("alice"), "Bob mesh retains peer Alice");
+
+        // 2. Assert peer count drops from 2 to 1 on BOTH Alice and Bob
+        assert_eq!(
+            ctx.alice_mesh.peer_count(),
+            1,
+            "Alice mesh peer count drops 2 -> 1"
+        );
+        assert_eq!(
+            ctx.bob_mesh.peer_count(),
+            1,
+            "Bob mesh peer count drops 2 -> 1"
+        );
+        assert_eq!(
+            ctx.alice_ui.peer_count(),
+            1,
+            "Alice UI peer count drops 2 -> 1"
+        );
+        assert_eq!(
+            ctx.bob_ui.peer_count(),
+            1,
+            "Bob UI peer count drops 2 -> 1"
+        );
+        assert_eq!(ctx.alice_ui.peers(), vec!["bob".to_string()]);
+        assert_eq!(ctx.bob_ui.peers(), vec!["alice".to_string()]);
+        assert!(!ctx.alice_mesh.has_peer("charlie"));
+        assert!(!ctx.bob_mesh.has_peer("charlie"));
+
+        // 3. Assert only Charlie's messages are purged; Alice's and Bob's messages remain in feeds
+        let alice_msgs = ctx.alice_ui.messages();
+        assert_eq!(alice_msgs.len(), 2, "Alice UI has 2 messages remaining");
+        assert!(
+            !alice_msgs.iter().any(|(s, _, _, _)| s == "charlie"),
+            "Charlie's messages purged from Alice UI"
+        );
+        assert!(alice_msgs
+            .iter()
+            .any(|(s, t, is_self, _)| s == "alice" && t == msg_alice && *is_self));
+        assert!(alice_msgs
+            .iter()
+            .any(|(s, t, is_self, _)| s == "bob" && t == msg_bob && !*is_self));
+
+        let bob_msgs = ctx.bob_ui.messages();
+        assert_eq!(bob_msgs.len(), 2, "Bob UI has 2 messages remaining");
+        assert!(
+            !bob_msgs.iter().any(|(s, _, _, _)| s == "charlie"),
+            "Charlie's messages purged from Bob UI"
+        );
+        assert!(bob_msgs
+            .iter()
+            .any(|(s, t, is_self, _)| s == "alice" && t == msg_alice && !*is_self));
+        assert!(bob_msgs
+            .iter()
+            .any(|(s, t, is_self, _)| s == "bob" && t == msg_bob && *is_self));
+
+        // Continued communication between Alice and Bob over Channel_AB
+        let msg_post = "Continued chat between Alice and Bob";
+        ctx.alice_mesh
+            .broadcast_chat(msg_post)
+            .expect("Alice broadcast post-departure");
+        ctx.alice_ui
+            .append_message("alice", msg_post, true, true)
+            .expect("Alice append self");
+        assert_eq!(ctx.bob_ui.messages().len(), 3);
+        assert_eq!(
+            ctx.bob_ui.messages().last(),
+            Some(&("alice".to_string(), msg_post.to_string(), false, true))
+        );
+
+        let bob_reply = "Reply from Bob to Alice";
+        ctx.bob_mesh
+            .broadcast_chat(bob_reply)
+            .expect("Bob broadcast reply");
+        ctx.bob_ui
+            .append_message("bob", bob_reply, true, true)
+            .expect("Bob append self");
+        assert_eq!(ctx.alice_ui.messages().len(), 4);
+        assert_eq!(ctx.bob_ui.messages().len(), 4);
+        assert_eq!(
+            ctx.alice_ui.messages().last(),
+            Some(&("bob".to_string(), bob_reply.to_string(), false, true))
+        );
+    }
+
+    // =========================================================================
+    // Scenario B: Bob (2nd user / hub) leaves
+    // =========================================================================
+    {
+        let ctx = setup_req_030_mesh_scenario();
+
+        // Populate messages from all 3 peers
+        let msg_alice = "Message from Alice";
+        let msg_bob = "Message from Bob";
+        let msg_charlie = "Message from Charlie";
+
+        ctx.alice_mesh.broadcast_chat(msg_alice).expect("Alice broadcast");
+        ctx.alice_ui
+            .append_message("alice", msg_alice, true, true)
+            .expect("Alice append self");
+
+        ctx.bob_mesh.broadcast_chat(msg_bob).expect("Bob broadcast");
+        ctx.bob_ui
+            .append_message("bob", msg_bob, true, true)
+            .expect("Bob append self");
+
+        ctx.charlie_mesh
+            .broadcast_chat(msg_charlie)
+            .expect("Charlie broadcast");
+        ctx.charlie_ui
+            .append_message("charlie", msg_charlie, true, true)
+            .expect("Charlie append self");
+
+        assert_eq!(ctx.alice_ui.messages().len(), 3);
+        assert_eq!(ctx.bob_ui.messages().len(), 3);
+        assert_eq!(ctx.charlie_ui.messages().len(), 3);
+
+        // Bob (hub inviter) departs via broadcast_leave_and_burn()
+        ctx.bob_mesh
+            .broadcast_leave_and_burn()
+            .expect("Bob departs");
+
+        // 1. Assert Alice and Charlie maintain their direct Channel_AC
+        assert_eq!(
+            ctx.alice_to_charlie.state(),
+            PeerLifecycleState::Open,
+            "Channel_AC Alice side remains Open"
+        );
+        assert_eq!(
+            ctx.charlie_to_alice.state(),
+            PeerLifecycleState::Open,
+            "Channel_AC Charlie side remains Open"
+        );
+        assert!(
+            ctx.alice_mesh.has_peer("charlie"),
+            "Alice retains direct peer Charlie"
+        );
+        assert!(
+            ctx.charlie_mesh.has_peer("alice"),
+            "Charlie retains direct peer Alice"
+        );
+
+        // 2. Assert peer count drops from 2 to 1 on BOTH Alice and Charlie
+        assert_eq!(
+            ctx.alice_mesh.peer_count(),
+            1,
+            "Alice mesh peer count drops 2 -> 1"
+        );
+        assert_eq!(
+            ctx.charlie_mesh.peer_count(),
+            1,
+            "Charlie mesh peer count drops 2 -> 1"
+        );
+        assert_eq!(
+            ctx.alice_ui.peer_count(),
+            1,
+            "Alice UI peer count drops 2 -> 1"
+        );
+        assert_eq!(
+            ctx.charlie_ui.peer_count(),
+            1,
+            "Charlie UI peer count drops 2 -> 1"
+        );
+        assert_eq!(ctx.alice_ui.peers(), vec!["charlie".to_string()]);
+        assert_eq!(ctx.charlie_ui.peers(), vec!["alice".to_string()]);
+        assert!(!ctx.alice_mesh.has_peer("bob"));
+        assert!(!ctx.charlie_mesh.has_peer("bob"));
+
+        // 3. Assert only Bob's messages are purged; Alice and Charlie can continue chatting over Channel_AC
+        let alice_msgs = ctx.alice_ui.messages();
+        assert_eq!(alice_msgs.len(), 2, "Alice UI has 2 messages remaining");
+        assert!(
+            !alice_msgs.iter().any(|(s, _, _, _)| s == "bob"),
+            "Bob's messages purged from Alice UI"
+        );
+        assert!(alice_msgs
+            .iter()
+            .any(|(s, t, is_self, _)| s == "alice" && t == msg_alice && *is_self));
+        assert!(alice_msgs
+            .iter()
+            .any(|(s, t, is_self, _)| s == "charlie" && t == msg_charlie && !*is_self));
+
+        let charlie_msgs = ctx.charlie_ui.messages();
+        assert_eq!(charlie_msgs.len(), 2, "Charlie UI has 2 messages remaining");
+        assert!(
+            !charlie_msgs.iter().any(|(s, _, _, _)| s == "bob"),
+            "Bob's messages purged from Charlie UI"
+        );
+        assert!(charlie_msgs
+            .iter()
+            .any(|(s, t, is_self, _)| s == "alice" && t == msg_alice && !*is_self));
+        assert!(charlie_msgs
+            .iter()
+            .any(|(s, t, is_self, _)| s == "charlie" && t == msg_charlie && *is_self));
+
+        // Continued communication between Alice and Charlie over direct Channel_AC
+        let alice_post_msg = "Post-Bob-departure message from Alice to Charlie";
+        ctx.alice_mesh
+            .broadcast_chat(alice_post_msg)
+            .expect("Alice broadcast post-departure");
+        ctx.alice_ui
+            .append_message("alice", alice_post_msg, true, true)
+            .expect("Alice append self");
+
+        assert_eq!(ctx.charlie_ui.messages().len(), 3);
+        assert_eq!(
+            ctx.charlie_ui.messages().last(),
+            Some(&("alice".to_string(), alice_post_msg.to_string(), false, true))
+        );
+
+        let charlie_post_reply = "Post-Bob-departure reply from Charlie to Alice";
+        ctx.charlie_mesh
+            .broadcast_chat(charlie_post_reply)
+            .expect("Charlie broadcast reply");
+        ctx.charlie_ui
+            .append_message("charlie", charlie_post_reply, true, true)
+            .expect("Charlie append self");
+
+        assert_eq!(ctx.charlie_ui.messages().len(), 4);
+        assert_eq!(ctx.alice_ui.messages().len(), 4);
+        assert_eq!(
+            ctx.alice_ui.messages().last(),
+            Some(&(
+                "charlie".to_string(),
+                charlie_post_reply.to_string(),
+                false,
+                true
+            ))
+        );
+    }
+
+    // =========================================================================
+    // Scenario C: Alice (1st user / host) leaves
+    // =========================================================================
+    {
+        let ctx = setup_req_030_mesh_scenario();
+
+        // Populate messages from all 3 peers
+        let msg_alice = "Message from Alice";
+        let msg_bob = "Message from Bob";
+        let msg_charlie = "Message from Charlie";
+
+        ctx.alice_mesh.broadcast_chat(msg_alice).expect("Alice broadcast");
+        ctx.alice_ui
+            .append_message("alice", msg_alice, true, true)
+            .expect("Alice append self");
+
+        ctx.bob_mesh.broadcast_chat(msg_bob).expect("Bob broadcast");
+        ctx.bob_ui
+            .append_message("bob", msg_bob, true, true)
+            .expect("Bob append self");
+
+        ctx.charlie_mesh
+            .broadcast_chat(msg_charlie)
+            .expect("Charlie broadcast");
+        ctx.charlie_ui
+            .append_message("charlie", msg_charlie, true, true)
+            .expect("Charlie append self");
+
+        assert_eq!(ctx.alice_ui.messages().len(), 3);
+        assert_eq!(ctx.bob_ui.messages().len(), 3);
+        assert_eq!(ctx.charlie_ui.messages().len(), 3);
+
+        // Alice (1st user / room creator) departs via broadcast_leave_and_burn()
+        ctx.alice_mesh
+            .broadcast_leave_and_burn()
+            .expect("Alice departs");
+
+        // 1. Assert Bob and Charlie maintain Channel_BC
+        assert_eq!(
+            ctx.bob_to_charlie.state(),
+            PeerLifecycleState::Open,
+            "Channel_BC Bob side remains Open"
+        );
+        assert_eq!(
+            ctx.charlie_to_bob.state(),
+            PeerLifecycleState::Open,
+            "Channel_BC Charlie side remains Open"
+        );
+        assert!(
+            ctx.bob_mesh.has_peer("charlie"),
+            "Bob retains direct peer Charlie"
+        );
+        assert!(
+            ctx.charlie_mesh.has_peer("bob"),
+            "Charlie retains direct peer Bob"
+        );
+
+        // 2. Assert peer count drops from 2 to 1 on BOTH Bob and Charlie
+        assert_eq!(
+            ctx.bob_mesh.peer_count(),
+            1,
+            "Bob mesh peer count drops 2 -> 1"
+        );
+        assert_eq!(
+            ctx.charlie_mesh.peer_count(),
+            1,
+            "Charlie mesh peer count drops 2 -> 1"
+        );
+        assert_eq!(
+            ctx.bob_ui.peer_count(),
+            1,
+            "Bob UI peer count drops 2 -> 1"
+        );
+        assert_eq!(
+            ctx.charlie_ui.peer_count(),
+            1,
+            "Charlie UI peer count drops 2 -> 1"
+        );
+        assert_eq!(ctx.bob_ui.peers(), vec!["charlie".to_string()]);
+        assert_eq!(ctx.charlie_ui.peers(), vec!["bob".to_string()]);
+        assert!(!ctx.bob_mesh.has_peer("alice"));
+        assert!(!ctx.charlie_mesh.has_peer("alice"));
+
+        // 3. Assert only Alice's messages are purged; Bob's and Charlie's messages remain in feeds
+        let bob_msgs = ctx.bob_ui.messages();
+        assert_eq!(bob_msgs.len(), 2, "Bob UI has 2 messages remaining");
+        assert!(
+            !bob_msgs.iter().any(|(s, _, _, _)| s == "alice"),
+            "Alice's messages purged from Bob UI"
+        );
+        assert!(bob_msgs
+            .iter()
+            .any(|(s, t, is_self, _)| s == "bob" && t == msg_bob && *is_self));
+        assert!(bob_msgs
+            .iter()
+            .any(|(s, t, is_self, _)| s == "charlie" && t == msg_charlie && !*is_self));
+
+        let charlie_msgs = ctx.charlie_ui.messages();
+        assert_eq!(charlie_msgs.len(), 2, "Charlie UI has 2 messages remaining");
+        assert!(
+            !charlie_msgs.iter().any(|(s, _, _, _)| s == "alice"),
+            "Alice's messages purged from Charlie UI"
+        );
+        assert!(charlie_msgs
+            .iter()
+            .any(|(s, t, is_self, _)| s == "bob" && t == msg_bob && !*is_self));
+        assert!(charlie_msgs
+            .iter()
+            .any(|(s, t, is_self, _)| s == "charlie" && t == msg_charlie && *is_self));
+
+        // Continued communication between Bob and Charlie over Channel_BC
+        let bob_post_msg = "Post-host-departure message from Bob to Charlie";
+        ctx.bob_mesh
+            .broadcast_chat(bob_post_msg)
+            .expect("Bob broadcast post-departure");
+        ctx.bob_ui
+            .append_message("bob", bob_post_msg, true, true)
+            .expect("Bob append self");
+
+        assert_eq!(ctx.charlie_ui.messages().len(), 3);
+        assert_eq!(
+            ctx.charlie_ui.messages().last(),
+            Some(&("bob".to_string(), bob_post_msg.to_string(), false, true))
+        );
+
+        let charlie_post_reply = "Post-host-departure reply from Charlie to Bob";
+        ctx.charlie_mesh
+            .broadcast_chat(charlie_post_reply)
+            .expect("Charlie broadcast reply");
+        ctx.charlie_ui
+            .append_message("charlie", charlie_post_reply, true, true)
+            .expect("Charlie append self");
+
+        assert_eq!(ctx.charlie_ui.messages().len(), 4);
+        assert_eq!(ctx.bob_ui.messages().len(), 4);
+        assert_eq!(
+            ctx.bob_ui.messages().last(),
+            Some(&(
+                "charlie".to_string(),
+                charlie_post_reply.to_string(),
+                false,
+                true
+            ))
+        );
+    }
+}
 
