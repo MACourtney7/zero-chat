@@ -6,3 +6,5 @@ target/
 # Agentic Software Factory runtime
 .factory/
 dist/
+
+CODEBASE_AUDIT.md
