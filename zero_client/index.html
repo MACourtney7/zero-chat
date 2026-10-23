@@ -218,9 +218,16 @@
         const announcedJoinPeers = new Set();
         const departedPeers = new Set();
         const activeSessionPeers = new Set();
+        const knownSessionMembers = new Set();
+        const memberHandshakeState = new Map();
+        let reconciliationTimer = null;
+        const RECONCILIATION_INTERVAL_MS = 2000;
+        const TIE_BREAKER_GRACE_MS = 4000;
+        const MAX_HANDSHAKE_RETRIES = 5;
 
         function updatePeerCountDisplay() {
-            const count = Math.max(engine ? engine.openPeerCount : 0, activeSessionPeers.size);
+            // Truthful peer count: strictly open DataChannels only (REQ-031.5)
+            const count = engine ? engine.openPeerCount : 0;
             if (peerCountEl) {
                 peerCountEl.textContent = String(count);
             }
@@ -454,9 +461,43 @@
                 });
             }
 
+            _teardownPeerQuietly(peerId) {
+                if (this.pendingOffers) {
+                    this.pendingOffers.delete(peerId);
+                }
+                pendingOffers.delete(peerId);
+                const peer = this.peers.get(peerId);
+                if (!peer) return;
+                peer.state = "closed";
+                if (peer.dc) {
+                    try {
+                        peer.dc.onopen = null;
+                        peer.dc.onclose = null;
+                        peer.dc.onerror = null;
+                        peer.dc.onmessage = null;
+                        peer.dc.close();
+                    } catch (_) {}
+                }
+                if (peer.pc) {
+                    try {
+                        peer.pc.onconnectionstatechange = null;
+                        peer.pc.oniceconnectionstatechange = null;
+                        peer.pc.ondatachannel = null;
+                        peer.pc.close();
+                    } catch (_) {}
+                }
+                this.peers.delete(peerId);
+                this._updateOverallState(peerId);
+            }
+
             async create_peer_offer(peerId = "peer-01") {
-                if (this.peers.has(peerId)) {
-                    this.close_peer(peerId);
+                const existing = this.peers.get(peerId);
+                if (existing) {
+                    if (existing.state === "open" && existing.dc && existing.dc.readyState === "open") {
+                        // Idempotent: already open, do not tear down or disrupt live link (REQ-031.2)
+                        return (existing.pc && existing.pc.localDescription) ? existing.pc.localDescription.sdp : "";
+                    }
+                    this._teardownPeerQuietly(peerId);
                 }
 
                 const pc = new RTCPeerConnection(this.rtcConfig);
@@ -510,8 +551,13 @@
                     peerId = "peer-01";
                 }
                 peerId = peerId || "peer-01";
-                if (this.peers.has(peerId)) {
-                    this.close_peer(peerId);
+                const existing = this.peers.get(peerId);
+                if (existing) {
+                    if (existing.state === "open" && existing.dc && existing.dc.readyState === "open") {
+                        // Idempotent: already open, do not tear down or disrupt live link (REQ-031.2)
+                        return (existing.pc && existing.pc.localDescription) ? existing.pc.localDescription.sdp : "";
+                    }
+                    this._teardownPeerQuietly(peerId);
                 }
 
                 const pc = new RTCPeerConnection(this.rtcConfig);
@@ -557,12 +603,18 @@
             }
 
             async initiate_relay_handshake(relayPeerId, targetPeerId) {
+                const existing = this.peers.get(targetPeerId);
+                if (existing && existing.state === "open" && existing.dc && existing.dc.readyState === "open") {
+                    return; // Already open
+                }
+
                 if (this.pendingOffers) {
                     this.pendingOffers.add(targetPeerId);
                 }
                 pendingOffers.add(targetPeerId);
                 try {
                     const offerSdp = await this.create_peer_offer(targetPeerId);
+                    if (!offerSdp) return;
                     const nonce = Array.from(crypto.getRandomValues(new Uint8Array(12)));
                     const ciphertext = Array.from(new TextEncoder().encode(offerSdp));
                     const offerMsg = {
@@ -632,6 +684,15 @@
                 if (activeSessionPeers.has(oldPeerId)) {
                     activeSessionPeers.delete(oldPeerId);
                     activeSessionPeers.add(newPeerId);
+                }
+                if (knownSessionMembers.has(oldPeerId)) {
+                    knownSessionMembers.delete(oldPeerId);
+                    knownSessionMembers.add(newPeerId);
+                }
+                if (memberHandshakeState.has(oldPeerId)) {
+                    const st = memberHandshakeState.get(oldPeerId);
+                    memberHandshakeState.delete(oldPeerId);
+                    memberHandshakeState.set(newPeerId, st);
                 }
                 if (announcedJoinPeers.has(oldPeerId)) {
                     announcedJoinPeers.delete(oldPeerId);
@@ -1002,6 +1063,117 @@
             }
         }
 
+        function startReconciliationTimer() {
+            if (!reconciliationTimer) {
+                reconciliationTimer = setInterval(reconcileMesh, RECONCILIATION_INTERVAL_MS);
+            }
+        }
+
+        function stopReconciliationTimer() {
+            if (reconciliationTimer) {
+                clearInterval(reconciliationTimer);
+                reconciliationTimer = null;
+            }
+        }
+
+        async function reconcileMesh() {
+            if (!hasActiveSession || isBurned || !engine) return;
+
+            const myPeerId = (engine && engine.localPeerId) || localPeerId;
+
+            // 1. Collect currently open peers
+            const openPeers = [];
+            for (const [pId, p] of engine.peers.entries()) {
+                if (p.state === "open" && p.dc && p.dc.readyState === "open") {
+                    const realId = p.peerId || pId;
+                    openPeers.push(realId);
+                    knownSessionMembers.add(realId);
+                }
+            }
+
+            if (openPeers.length === 0) {
+                return;
+            }
+
+            const now = Date.now();
+
+            // 2. Reconcile known session members against open or connecting channels
+            for (const remotePeerId of Array.from(knownSessionMembers)) {
+                if (remotePeerId === myPeerId) continue;
+
+                const peer = engine.peers.get(remotePeerId);
+                const isOpen = peer && peer.state === "open" && peer.dc && peer.dc.readyState === "open";
+                const isConnecting = peer && (peer.state === "connecting" || (peer.dc && peer.dc.readyState === "connecting"));
+
+                if (isOpen) {
+                    memberHandshakeState.delete(remotePeerId);
+                    continue;
+                }
+
+                let st = memberHandshakeState.get(remotePeerId);
+                if (!st) {
+                    st = {
+                        firstSeen: now,
+                        attempts: 0,
+                        lastAttempt: 0,
+                        failedSurfaced: false
+                    };
+                    memberHandshakeState.set(remotePeerId, st);
+                }
+
+                if (isConnecting) {
+                    const connectingDuration = now - st.lastAttempt;
+                    if (connectingDuration < 8000) {
+                        continue;
+                    }
+                    // Stalled connection attempt: clean up quietly so retry can proceed
+                    engine._teardownPeerQuietly(remotePeerId);
+                }
+
+                if (st.attempts >= MAX_HANDSHAKE_RETRIES) {
+                    if (!st.failedSurfaced) {
+                        st.failedSurfaced = true;
+                        console.warn(`[Reconciliation] Max retries reached for peer ${remotePeerId}`);
+                        appendSystemMessage("Could not connect directly to a participant");
+                    }
+                    continue;
+                }
+
+                // Deterministic tie-breaker:
+                // myPeerId < remotePeerId initiates immediately.
+                // The other side initiates after grace window (TIE_BREAKER_GRACE_MS) if still unlinked (REQ-031.3).
+                const isPreferredInitiator = myPeerId < remotePeerId;
+                const elapsedSinceFirstSeen = now - st.firstSeen;
+                const backoff = st.attempts === 0 ? 0 : Math.min(10000, 2000 * Math.pow(1.5, st.attempts));
+                const elapsedSinceLastAttempt = now - st.lastAttempt;
+
+                if (!isPreferredInitiator && elapsedSinceFirstSeen < TIE_BREAKER_GRACE_MS) {
+                    continue;
+                }
+
+                if (st.attempts > 0 && elapsedSinceLastAttempt < backoff) {
+                    continue;
+                }
+
+                const relayPeerId = openPeers.find(id => id !== remotePeerId);
+                if (!relayPeerId) {
+                    continue;
+                }
+
+                st.attempts++;
+                st.lastAttempt = now;
+                console.debug(`[Reconciliation] Attempt ${st.attempts}/${MAX_HANDSHAKE_RETRIES} to snap direct link with ${remotePeerId} via ${relayPeerId}`);
+
+                try {
+                    pendingOffers.delete(remotePeerId);
+                    if (engine.pendingOffers) engine.pendingOffers.delete(remotePeerId);
+                    await initiateRelayHandshake(relayPeerId, remotePeerId);
+                } catch (err) {
+                    console.warn(`[Reconciliation] Relay handshake attempt to ${remotePeerId} failed:`, err);
+                }
+            }
+        }
+
         function handlePeerDeparture(peerId = null) {
             if (!hasActiveSession || isBurned) return;
 
@@ -1013,6 +1185,8 @@
                 departedPeers.add(peerId);
                 announcedJoinPeers.delete(peerId);
                 activeSessionPeers.delete(peerId);
+                knownSessionMembers.delete(peerId);
+                memberHandshakeState.delete(peerId);
 
                 const peerBubbles = feed.querySelectorAll(`.message-bubble[data-peer-id="${peerId}"]`);
                 peerBubbles.forEach((el) => el.remove());
@@ -1023,7 +1197,8 @@
 
             updatePeerCountDisplay();
 
-            const survivingCount = Math.max(engine ? engine.openPeerCount : 0, activeSessionPeers.size);
+            // Truthful surviving count: open channels only (REQ-031.5)
+            const survivingCount = engine ? engine.openPeerCount : 0;
 
             if (survivingCount > 0) {
                 // Surviving peers remain in active chat
@@ -1036,42 +1211,55 @@
                 }
                 if (sendBtn) sendBtn.disabled = false;
             } else {
-                // ONLY when engine.openPeerCount === 0 AND activeSessionPeers.size === 0 (last peer disconnects):
-                peerDepartureHandled = true;
+                let anyConnecting = false;
+                if (engine && engine.peers) {
+                    for (const p of engine.peers.values()) {
+                        if (p.state === "connecting" || (p.dc && p.dc.readyState === "connecting")) {
+                            anyConnecting = true;
+                            break;
+                        }
+                    }
+                }
 
-                // Also purge any remaining remote bubbles
-                const remoteBubbles = feed.querySelectorAll(".message-bubble:not(.message-outgoing)");
-                remoteBubbles.forEach((el) => el.remove());
+                if (!anyConnecting) {
+                    // All peers have departed and none are connecting
+                    peerDepartureHandled = true;
+                    stopReconciliationTimer();
 
-                if (headerAddBtn) {
-                    headerAddBtn.classList.add("hidden");
-                }
-                if (headerLeaveBtn) {
-                    headerLeaveBtn.classList.remove("hidden");
-                }
-                if (idleStatusCapsule) {
-                    idleStatusCapsule.classList.add("hidden");
-                }
-                if (burnRoomBar) {
-                    burnRoomBar.classList.remove("hidden");
-                }
-                if (messageForm) {
-                    messageForm.classList.remove("hidden");
-                }
-                if (msgInput) {
-                    msgInput.disabled = true;
-                    msgInput.placeholder = "Peer left chat";
-                }
-                if (sendBtn) {
-                    sendBtn.disabled = true;
-                }
-                if (createRoomBar) {
-                    createRoomBar.classList.add("hidden");
-                }
-                if (peerListEl) {
-                    peerListEl.classList.remove("hidden");
-                    if (!peerListEl.querySelector(".peer-pill")) {
-                        peerListEl.innerHTML = `<span class="peer-pill"><svg class="peer-lock-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></span>`;
+                    // Also purge any remaining remote bubbles
+                    const remoteBubbles = feed.querySelectorAll(".message-bubble:not(.message-outgoing)");
+                    remoteBubbles.forEach((el) => el.remove());
+
+                    if (headerAddBtn) {
+                        headerAddBtn.classList.add("hidden");
+                    }
+                    if (headerLeaveBtn) {
+                        headerLeaveBtn.classList.remove("hidden");
+                    }
+                    if (idleStatusCapsule) {
+                        idleStatusCapsule.classList.add("hidden");
+                    }
+                    if (burnRoomBar) {
+                        burnRoomBar.classList.remove("hidden");
+                    }
+                    if (messageForm) {
+                        messageForm.classList.remove("hidden");
+                    }
+                    if (msgInput) {
+                        msgInput.disabled = true;
+                        msgInput.placeholder = "Peer left chat";
+                    }
+                    if (sendBtn) {
+                        sendBtn.disabled = true;
+                    }
+                    if (createRoomBar) {
+                        createRoomBar.classList.add("hidden");
+                    }
+                    if (peerListEl) {
+                        peerListEl.classList.remove("hidden");
+                        if (!peerListEl.querySelector(".peer-pill")) {
+                            peerListEl.innerHTML = `<span class="peer-pill"><svg class="peer-lock-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></span>`;
+                        }
                     }
                 }
             }
@@ -1089,8 +1277,11 @@
                     updateStatus("open", "P2P Established");
                     if (idleStatusCapsule) idleStatusCapsule.classList.add("hidden");
                     if (peerId) {
+                        departedPeers.delete(peerId);
                         activeSessionPeers.add(peerId);
+                        knownSessionMembers.add(peerId);
                     }
+                    startReconciliationTimer();
                     updatePeerCountDisplay();
                     if (peerListEl) {
                         peerListEl.classList.remove("hidden");
@@ -1164,7 +1355,11 @@
 
             engine.onPeerStateChangeCb = (peerId, peerState) => {
                 if (peerState === "open") {
+                    departedPeers.delete(peerId); // Clear departed flag on legitimate reconnect / open (REQ-031.5)
                     activeSessionPeers.add(peerId);
+                    knownSessionMembers.add(peerId);
+                    memberHandshakeState.delete(peerId);
+                    startReconciliationTimer();
                     updatePeerCountDisplay();
                     clearPendingInvite();
                     if (headerAddBtn) {
@@ -1177,16 +1372,18 @@
                         }
                     }
 
-                    // Universal Peer Introduction (REQ-029.3)
+                    // Universal Peer Introduction (REQ-029.3 / REQ-031.2)
                     if (engine) {
                         for (const [existingPeerId, existingPeer] of engine.peers.entries()) {
                             if (existingPeerId !== peerId && existingPeer.state === "open" && existingPeer.dc && existingPeer.dc.readyState === "open") {
+                                const realExistingId = existingPeer.peerId || existingPeerId;
+                                const realNewId = peerId;
                                 const msgToNew = {
                                     frame_id: generateUuid(),
                                     ttl: 3,
                                     signal: {
                                         PeerJoined: {
-                                            peer_id: existingPeerId,
+                                            peer_id: realExistingId,
                                             public_key: new Array(32).fill(0)
                                         }
                                     }
@@ -1196,7 +1393,7 @@
                                     ttl: 3,
                                     signal: {
                                         PeerJoined: {
-                                            peer_id: peerId,
+                                            peer_id: realNewId,
                                             public_key: new Array(32).fill(0)
                                         }
                                     }
@@ -1204,12 +1401,12 @@
                                 try {
                                     engine.send_text(JSON.stringify(msgToNew), peerId);
                                 } catch (e) {
-                                    console.warn(`Failed to introduce ${existingPeerId} to ${peerId}:`, e);
+                                    console.warn(`Failed to introduce ${realExistingId} to ${peerId}:`, e);
                                 }
                                 try {
                                     engine.send_text(JSON.stringify(msgToExisting), existingPeerId);
                                 } catch (e) {
-                                    console.warn(`Failed to introduce ${peerId} to ${existingPeerId}:`, e);
+                                    console.warn(`Failed to introduce ${realNewId} to ${existingPeerId}:`, e);
                                 }
                             }
                         }
@@ -1266,8 +1463,9 @@
 
                         if (leavingPeerId && engine && engine.peers && engine.peers.has(leavingPeerId)) {
                             engine.close_peer(leavingPeerId);
+                        } else {
+                            handlePeerDeparture(leavingPeerId);
                         }
-                        handlePeerDeparture(leavingPeerId);
                         return;
                     }
 
@@ -1316,9 +1514,17 @@
                                     }
 
                                     activeSessionPeers.add(from_peer_id);
+                                    knownSessionMembers.add(from_peer_id);
                                     updatePeerCountDisplay();
 
+                                    // If already open, do not disrupt existing connection
+                                    const existingPeer = engine.peers.get(from_peer_id);
+                                    if (existingPeer && existingPeer.state === "open" && existingPeer.dc && existingPeer.dc.readyState === "open") {
+                                        return;
+                                    }
+
                                     const answerSdp = await engine.create_peer_answer(from_peer_id, offerSdp);
+                                    if (!answerSdp) return;
                                     const nonce = Array.from(crypto.getRandomValues(new Uint8Array(12)));
                                     const ciphertext = Array.from(new TextEncoder().encode(answerSdp));
 
@@ -1376,11 +1582,13 @@
                                     }
 
                                     activeSessionPeers.add(from_peer_id);
+                                    knownSessionMembers.add(from_peer_id);
                                     updatePeerCountDisplay();
 
                                     await engine.accept_peer_answer(from_peer_id, answerSdp);
                                     pendingOffers.delete(from_peer_id);
                                     if (engine.pendingOffers) engine.pendingOffers.delete(from_peer_id);
+                                    memberHandshakeState.delete(from_peer_id);
                                 } catch (err) {
                                     console.error(`Failed to apply RelaySdpAnswer from ${from_peer_id}:`, err);
                                 }
@@ -1395,14 +1603,16 @@
 
                             if (remotePeerId && remotePeerId !== myPeerId) {
                                 activeSessionPeers.add(remotePeerId);
+                                knownSessionMembers.add(remotePeerId);
                                 updatePeerCountDisplay();
 
                                 const peerObj = engine && engine.peers && engine.peers.get(remotePeerId);
-                                const peerExists = peerObj && (peerObj.state === "open" || peerObj.state === "connecting");
+                                const peerOpen = peerObj && peerObj.state === "open" && peerObj.dc && peerObj.dc.readyState === "open";
+                                const peerConnecting = peerObj && peerObj.state === "connecting";
                                 const isPending = pendingOffers.has(remotePeerId) || (engine.pendingOffers && engine.pendingOffers.has(remotePeerId));
 
-                                if (!peerExists && !isPending) {
-                                    // Glare avoidance rule (REQ-029.3): purely deterministic lexicographical tie-breaker
+                                if (!peerOpen && !peerConnecting && !isPending) {
+                                    // Glare avoidance rule (REQ-029.3 / REQ-031.2): deterministic tie-breaker
                                     const shouldInitiate = myPeerId < remotePeerId;
                                     if (shouldInitiate) {
                                         await initiateRelayHandshake(incomingPeerId, remotePeerId);
@@ -1664,6 +1874,12 @@
         function doSendMessage() {
             if (!msgInput.value.trim() || !engine) return;
             const text = msgInput.value.trim();
+
+            if (engine.openPeerCount === 0) {
+                appendSystemMessage("Message not sent: no connected peers");
+                return;
+            }
+
             msgInput.value = "";
 
             const messageUuid = generateUuid();
@@ -1693,6 +1909,7 @@
                 appendMessageBubble("You", text, true);
             } catch (e) {
                 console.error("Send error:", e);
+                appendSystemMessage("Failed to deliver message");
             }
         }
 
@@ -1702,6 +1919,7 @@
         });
 
         function resetToHome() {
+            stopReconciliationTimer();
             hasActiveSession = false;
             isBurned = true;
             peerDepartureHandled = false;
@@ -1719,6 +1937,9 @@
             pendingOffers.clear();
             announcedJoinPeers.clear();
             departedPeers.clear();
+            activeSessionPeers.clear();
+            knownSessionMembers.clear();
+            memberHandshakeState.clear();
             clearTransientStatus();
             if (engine) {
                 engine.onStateChangeCb = null;
@@ -1737,7 +1958,6 @@
             if (idleStatusCapsule) {
                 idleStatusCapsule.classList.remove("hidden");
             }
-            activeSessionPeers.clear();
             updatePeerCountDisplay();
             if (peerListEl) {
                 peerListEl.classList.add("hidden");
@@ -1765,13 +1985,17 @@
             if (opportunisticLeaveSent) return;
             if (engine && engine.dc && engine.dc.readyState === "open") {
                 try {
+                    const myId = (engine && engine.localPeerId) || localPeerId;
                     const leaveMsg = JSON.stringify({
                         type: "leave_and_burn",
-                        signal: "leave_and_burn",
-                        action: "leave_and_burn",
-                        peer_id: localPeerId
+                        peer_id: myId,
+                        signal: {
+                            PeerLeftAndBurn: {
+                                peer_id: myId
+                            }
+                        }
                     });
-                    engine.send_text(leaveMsg);
+                    engine.broadcast_text(leaveMsg);
                     opportunisticLeaveSent = true;
                 } catch (_) {}
             }
@@ -1830,6 +2054,9 @@
         window.getActiveHostInviteUrl = () => activeHostInviteUrl;
         window.headerAddBtn = headerAddBtn;
         window.activeSessionPeers = activeSessionPeers;
+        window.knownSessionMembers = knownSessionMembers;
+        window.reconcileMesh = reconcileMesh;
+        window.memberHandshakeState = memberHandshakeState;
         window.updatePeerCountDisplay = updatePeerCountDisplay;
     </script>
 </body>
