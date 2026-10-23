@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Fast lint gate mirroring the fmt/clippy steps of .github/workflows/ci.yml.
+# Tests and wasm builds are covered by the factory validator before merge.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+echo "[pre-push] cargo fmt"
+cargo fmt --all -- --check
+echo "[pre-push] cargo clippy"
+cargo clippy --workspace --all-targets -- -D warnings
+echo "[pre-push] lint checks passed"

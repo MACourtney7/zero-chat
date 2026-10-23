@@ -753,7 +753,9 @@ impl MeshTopology {
                             inner
                                 .peers
                                 .iter()
-                                .filter(|(id, _)| id.as_str() != from_peer_id && id.as_str() != peer_id)
+                                .filter(|(id, _)| {
+                                    id.as_str() != from_peer_id && id.as_str() != peer_id
+                                })
                                 .map(|(_, p)| p.rtc_peer.clone())
                                 .collect()
                         };
@@ -817,8 +819,10 @@ impl MeshTopology {
                     // Sever all connections, close all rtc_peer instances, and clear internal tables
                     let (peers_to_close, pending_to_close, burn_cbs) = {
                         let mut inner = self.inner.borrow_mut();
-                        let peers: Vec<WebRtcPeer> = inner.peers.values().map(|p| p.rtc_peer.clone()).collect();
-                        let pending: Vec<WebRtcPeer> = inner.pending_offers.values().cloned().collect();
+                        let peers: Vec<WebRtcPeer> =
+                            inner.peers.values().map(|p| p.rtc_peer.clone()).collect();
+                        let pending: Vec<WebRtcPeer> =
+                            inner.pending_offers.values().cloned().collect();
                         inner.peers.clear();
                         inner.pending_offers.clear();
                         inner.known_public_keys.clear();

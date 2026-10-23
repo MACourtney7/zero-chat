@@ -21,7 +21,6 @@
 //! - REQ-030.3: Symmetric departure counter updates across surviving peers (Scenarios A, B, and C).
 //! - REQ-030.4: Host departure survivability (surviving nodes maintain direct DataChannel with symmetric peer count decrements).
 
-
 use std::cell::RefCell;
 use std::future::Future;
 use std::pin::pin;
@@ -1208,14 +1207,8 @@ fn test_req_leave_and_burn_selective_message_purging() {
         1,
         "Charlie must have 1 peer remaining"
     );
-    assert!(
-        alice_mesh.has_peer("charlie"),
-        "Alice must retain Charlie"
-    );
-    assert!(
-        charlie_mesh.has_peer("alice"),
-        "Charlie must retain Alice"
-    );
+    assert!(alice_mesh.has_peer("charlie"), "Alice must retain Charlie");
+    assert!(charlie_mesh.has_peer("alice"), "Charlie must retain Alice");
 
     // Assert Alice's UI messages no longer contain any messages from "bob", but DO contain Alice's and Charlie's messages
     let alice_msgs_post_burn = alice_ui.messages();
@@ -1293,12 +1286,7 @@ fn test_req_leave_and_burn_selective_message_purging() {
     );
     assert_eq!(
         charlie_msgs_final.last(),
-        Some(&(
-            "alice".to_string(),
-            post_leave_msg.to_string(),
-            false,
-            true
-        )),
+        Some(&("alice".to_string(), post_leave_msg.to_string(), false, true)),
         "Charlie UI last message must match post-leave message from Alice"
     );
 }
@@ -1820,14 +1808,8 @@ fn test_req_dirty_disconnect_triggers_peer_message_purge() {
         1,
         "Charlie must have 1 peer remaining"
     );
-    assert!(
-        alice_mesh.has_peer("charlie"),
-        "Alice must retain Charlie"
-    );
-    assert!(
-        charlie_mesh.has_peer("alice"),
-        "Charlie must retain Alice"
-    );
+    assert!(alice_mesh.has_peer("charlie"), "Alice must retain Charlie");
+    assert!(charlie_mesh.has_peer("alice"), "Charlie must retain Alice");
 
     // Assert Alice and Charlie both triggered on_burn_peer_messages with "bob"
     assert_eq!(
@@ -1929,12 +1911,7 @@ fn test_req_dirty_disconnect_triggers_peer_message_purge() {
     );
     assert_eq!(
         charlie_msgs_final.last(),
-        Some(&(
-            "alice".to_string(),
-            surviving_msg.to_string(),
-            false,
-            true
-        )),
+        Some(&("alice".to_string(), surviving_msg.to_string(), false, true)),
         "Charlie UI last message must match surviving message from Alice"
     );
 }
@@ -2051,9 +2028,17 @@ fn test_req_028_1_multi_node_connected_mesh_simulation() {
     );
 
     // Peer counter verification: Assert all nodes report 2 connected peers
-    assert_eq!(alice_mesh.peer_count(), 2, "Alice reports 2 connected peers");
+    assert_eq!(
+        alice_mesh.peer_count(),
+        2,
+        "Alice reports 2 connected peers"
+    );
     assert_eq!(bob_mesh.peer_count(), 2, "Bob reports 2 connected peers");
-    assert_eq!(charlie_mesh.peer_count(), 2, "Charlie reports 2 connected peers");
+    assert_eq!(
+        charlie_mesh.peer_count(),
+        2,
+        "Charlie reports 2 connected peers"
+    );
 
     assert_eq!(alice_mesh.connected_peers().len(), 2);
     assert_eq!(bob_mesh.connected_peers().len(), 2);
@@ -2063,24 +2048,32 @@ fn test_req_028_1_multi_node_connected_mesh_simulation() {
     let alice_feed = Rc::new(RefCell::new(Vec::new()));
     let a_feed = alice_feed.clone();
     alice_mesh.on_message(move |sender, msg| {
-        a_feed.borrow_mut().push((sender.to_string(), msg.to_string()));
+        a_feed
+            .borrow_mut()
+            .push((sender.to_string(), msg.to_string()));
     });
 
     let bob_feed = Rc::new(RefCell::new(Vec::new()));
     let b_feed = bob_feed.clone();
     bob_mesh.on_message(move |sender, msg| {
-        b_feed.borrow_mut().push((sender.to_string(), msg.to_string()));
+        b_feed
+            .borrow_mut()
+            .push((sender.to_string(), msg.to_string()));
     });
 
     let charlie_feed = Rc::new(RefCell::new(Vec::new()));
     let c_feed = charlie_feed.clone();
     charlie_mesh.on_message(move |sender, msg| {
-        c_feed.borrow_mut().push((sender.to_string(), msg.to_string()));
+        c_feed
+            .borrow_mut()
+            .push((sender.to_string(), msg.to_string()));
     });
 
     // 1. Alice broadcasts a message: assert both Bob and Charlie receive it
     let alice_msg = "Broadcast from Alice to mesh";
-    let alice_uuid = alice_mesh.broadcast_chat(alice_msg).expect("Alice broadcast");
+    let alice_uuid = alice_mesh
+        .broadcast_chat(alice_msg)
+        .expect("Alice broadcast");
 
     assert_eq!(
         *bob_feed.borrow(),
@@ -2092,16 +2085,20 @@ fn test_req_028_1_multi_node_connected_mesh_simulation() {
         vec![("alice".to_string(), alice_msg.to_string())],
         "Charlie receives Alice's message"
     );
-    assert_eq!(
-        alice_feed.borrow().len(),
-        0,
-        "Alice suppresses self-echo"
-    );
+    assert_eq!(alice_feed.borrow().len(), 0, "Alice suppresses self-echo");
 
     // Loop suppression verification for Alice's broadcast:
     // Despite multiple paths (Alice->Bob directly, and Alice->Charlie->Bob), Bob only receives 1 message.
-    assert_eq!(bob_feed.borrow().len(), 1, "Bob receives exactly 1 copy of Alice's broadcast");
-    assert_eq!(charlie_feed.borrow().len(), 1, "Charlie receives exactly 1 copy of Alice's broadcast");
+    assert_eq!(
+        bob_feed.borrow().len(),
+        1,
+        "Bob receives exactly 1 copy of Alice's broadcast"
+    );
+    assert_eq!(
+        charlie_feed.borrow().len(),
+        1,
+        "Charlie receives exactly 1 copy of Alice's broadcast"
+    );
     assert!(bob_mesh.has_seen_message(&alice_uuid));
     assert!(charlie_mesh.has_seen_message(&alice_uuid));
 
@@ -2129,14 +2126,24 @@ fn test_req_028_1_multi_node_connected_mesh_simulation() {
     );
 
     // Loop suppression verification for Bob's broadcast
-    assert_eq!(alice_feed.borrow().len(), 1, "Alice receives exactly 1 copy of Bob's broadcast");
-    assert_eq!(charlie_feed.borrow().len(), 2, "Charlie receives exactly 1 copy of Bob's broadcast");
+    assert_eq!(
+        alice_feed.borrow().len(),
+        1,
+        "Alice receives exactly 1 copy of Bob's broadcast"
+    );
+    assert_eq!(
+        charlie_feed.borrow().len(),
+        2,
+        "Charlie receives exactly 1 copy of Bob's broadcast"
+    );
     assert!(alice_mesh.has_seen_message(&bob_uuid));
     assert!(charlie_mesh.has_seen_message(&bob_uuid));
 
     // 3. Charlie broadcasts a message: assert both Alice and Bob receive it
     let charlie_msg = "Broadcast from Charlie to all nodes";
-    let charlie_uuid = charlie_mesh.broadcast_chat(charlie_msg).expect("Charlie broadcast");
+    let charlie_uuid = charlie_mesh
+        .broadcast_chat(charlie_msg)
+        .expect("Charlie broadcast");
 
     assert_eq!(
         *alice_feed.borrow(),
@@ -2161,8 +2168,16 @@ fn test_req_028_1_multi_node_connected_mesh_simulation() {
     );
 
     // Loop suppression verification for Charlie's broadcast
-    assert_eq!(alice_feed.borrow().len(), 2, "Alice receives exactly 1 copy of Charlie's broadcast");
-    assert_eq!(bob_feed.borrow().len(), 2, "Bob receives exactly 1 copy of Charlie's broadcast");
+    assert_eq!(
+        alice_feed.borrow().len(),
+        2,
+        "Alice receives exactly 1 copy of Charlie's broadcast"
+    );
+    assert_eq!(
+        bob_feed.borrow().len(),
+        2,
+        "Bob receives exactly 1 copy of Charlie's broadcast"
+    );
     assert!(alice_mesh.has_seen_message(&charlie_uuid));
     assert!(bob_mesh.has_seen_message(&charlie_uuid));
 
@@ -2271,8 +2286,12 @@ fn test_req_028_2_partial_peer_departure_and_feed_survivability() {
     let alice_ui = Rc::new(ChatUi::mount("alice-app").expect("mount Alice UI"));
     let charlie_ui = Rc::new(ChatUi::mount("charlie-app").expect("mount Charlie UI"));
 
-    alice_ui.set_status(ConnectionStatus::Connected).expect("set connected");
-    charlie_ui.set_status(ConnectionStatus::Connected).expect("set connected");
+    alice_ui
+        .set_status(ConnectionStatus::Connected)
+        .expect("set connected");
+    charlie_ui
+        .set_status(ConnectionStatus::Connected)
+        .expect("set connected");
 
     alice_ui.add_peer("bob").expect("Alice UI adds Bob");
     alice_ui.add_peer("charlie").expect("Alice UI adds Charlie");
@@ -2349,20 +2368,32 @@ fn test_req_028_2_partial_peer_departure_and_feed_survivability() {
     // Assert feeds before departure:
     // Alice has messages from Alice, Bob, Charlie:
     let alice_msgs_before = alice_ui.messages();
-    assert_eq!(alice_msgs_before.len(), 3, "Alice has 3 messages before Bob departs");
+    assert_eq!(
+        alice_msgs_before.len(),
+        3,
+        "Alice has 3 messages before Bob departs"
+    );
     assert!(alice_msgs_before.iter().any(|(s, _, _, _)| s == "alice"));
     assert!(alice_msgs_before.iter().any(|(s, _, _, _)| s == "bob"));
     assert!(alice_msgs_before.iter().any(|(s, _, _, _)| s == "charlie"));
 
     // Charlie has messages from Alice, Bob, Charlie:
     let charlie_msgs_before = charlie_ui.messages();
-    assert_eq!(charlie_msgs_before.len(), 3, "Charlie has 3 messages before Bob departs");
+    assert_eq!(
+        charlie_msgs_before.len(),
+        3,
+        "Charlie has 3 messages before Bob departs"
+    );
     assert!(charlie_msgs_before.iter().any(|(s, _, _, _)| s == "alice"));
     assert!(charlie_msgs_before.iter().any(|(s, _, _, _)| s == "bob"));
-    assert!(charlie_msgs_before.iter().any(|(s, _, _, _)| s == "charlie"));
+    assert!(charlie_msgs_before
+        .iter()
+        .any(|(s, _, _, _)| s == "charlie"));
 
     // Bob departs via broadcast_leave_and_burn
-    bob_mesh.broadcast_leave_and_burn().expect("Bob departs and burns");
+    bob_mesh
+        .broadcast_leave_and_burn()
+        .expect("Bob departs and burns");
 
     // Departure event processed:
     assert_eq!(*alice_burn_log.borrow(), vec!["bob".to_string()]);
@@ -2374,81 +2405,146 @@ fn test_req_028_2_partial_peer_departure_and_feed_survivability() {
     // 1. Peer lists updated: "bob" removed, peer count decrements from 2 to 1
     assert!(!alice_mesh.has_peer("bob"), "Alice mesh removed Bob");
     assert!(!charlie_mesh.has_peer("bob"), "Charlie mesh removed Bob");
-    assert_eq!(alice_mesh.peer_count(), 1, "Alice mesh peer count decrements to 1");
-    assert_eq!(charlie_mesh.peer_count(), 1, "Charlie mesh peer count decrements to 1");
-    assert_eq!(alice_ui.peers(), vec!["charlie".to_string()], "Alice UI peers list removed Bob");
-    assert_eq!(alice_ui.peer_count(), 1, "Alice UI peer count decrements to 1");
-    assert_eq!(charlie_ui.peers(), vec!["alice".to_string()], "Charlie UI peers list removed Bob");
-    assert_eq!(charlie_ui.peer_count(), 1, "Charlie UI peer count decrements to 1");
+    assert_eq!(
+        alice_mesh.peer_count(),
+        1,
+        "Alice mesh peer count decrements to 1"
+    );
+    assert_eq!(
+        charlie_mesh.peer_count(),
+        1,
+        "Charlie mesh peer count decrements to 1"
+    );
+    assert_eq!(
+        alice_ui.peers(),
+        vec!["charlie".to_string()],
+        "Alice UI peers list removed Bob"
+    );
+    assert_eq!(
+        alice_ui.peer_count(),
+        1,
+        "Alice UI peer count decrements to 1"
+    );
+    assert_eq!(
+        charlie_ui.peers(),
+        vec!["alice".to_string()],
+        "Charlie UI peers list removed Bob"
+    );
+    assert_eq!(
+        charlie_ui.peer_count(),
+        1,
+        "Charlie UI peer count decrements to 1"
+    );
 
     // 2. Selective message purge: Bob's messages removed from both feeds
     let alice_msgs_after = alice_ui.messages();
-    assert_eq!(alice_msgs_after.len(), 2, "Alice UI has 2 messages after purge");
-    assert!(!alice_msgs_after.iter().any(|(s, _, _, _)| s == "bob"), "Bob messages purged from Alice UI");
+    assert_eq!(
+        alice_msgs_after.len(),
+        2,
+        "Alice UI has 2 messages after purge"
+    );
+    assert!(
+        !alice_msgs_after.iter().any(|(s, _, _, _)| s == "bob"),
+        "Bob messages purged from Alice UI"
+    );
 
     let charlie_msgs_after = charlie_ui.messages();
-    assert_eq!(charlie_msgs_after.len(), 2, "Charlie UI has 2 messages after purge");
-    assert!(!charlie_msgs_after.iter().any(|(s, _, _, _)| s == "bob"), "Bob messages purged from Charlie UI");
+    assert_eq!(
+        charlie_msgs_after.len(),
+        2,
+        "Charlie UI has 2 messages after purge"
+    );
+    assert!(
+        !charlie_msgs_after.iter().any(|(s, _, _, _)| s == "bob"),
+        "Bob messages purged from Charlie UI"
+    );
 
     // 3. Alice's own messages and Charlie's messages are retained
     assert!(
         alice_msgs_after
             .iter()
-            .any(|(s, t, is_self, _)| s == "alice" && t == "Initial message from Alice" && *is_self),
+            .any(|(s, t, is_self, _)| s == "alice"
+                && t == "Initial message from Alice"
+                && *is_self),
         "Alice's own message retained in Alice UI"
     );
     assert!(
         alice_msgs_after
             .iter()
-            .any(|(s, t, is_self, _)| s == "charlie" && t == "Initial message from Charlie" && !*is_self),
+            .any(|(s, t, is_self, _)| s == "charlie"
+                && t == "Initial message from Charlie"
+                && !*is_self),
         "Charlie's message retained in Alice UI"
     );
 
     assert!(
         charlie_msgs_after
             .iter()
-            .any(|(s, t, is_self, _)| s == "alice" && t == "Initial message from Alice" && !*is_self),
+            .any(|(s, t, is_self, _)| s == "alice"
+                && t == "Initial message from Alice"
+                && !*is_self),
         "Alice's message retained in Charlie UI"
     );
     assert!(
         charlie_msgs_after
             .iter()
-            .any(|(s, t, is_self, _)| s == "charlie" && t == "Initial message from Charlie" && *is_self),
+            .any(|(s, t, is_self, _)| s == "charlie"
+                && t == "Initial message from Charlie"
+                && *is_self),
         "Charlie's own message retained in Charlie UI"
     );
 
     // 4. Connection status remains connected; session is NOT destroyed
-    assert_eq!(alice_ui.status(), ConnectionStatus::Connected, "Alice UI status remains Connected");
-    assert_eq!(charlie_ui.status(), ConnectionStatus::Connected, "Charlie UI status remains Connected");
+    assert_eq!(
+        alice_ui.status(),
+        ConnectionStatus::Connected,
+        "Alice UI status remains Connected"
+    );
+    assert_eq!(
+        charlie_ui.status(),
+        ConnectionStatus::Connected,
+        "Charlie UI status remains Connected"
+    );
 
     // 5. Continued communication verification:
     // Alice broadcasts a new message ("Post-departure message from Alice")
     let alice_post_msg = "Post-departure message from Alice";
-    alice_mesh.broadcast_chat(alice_post_msg).expect("Alice broadcast post-departure");
-    alice_ui.append_message("alice", alice_post_msg, true, true).expect("Alice append post-departure");
+    alice_mesh
+        .broadcast_chat(alice_post_msg)
+        .expect("Alice broadcast post-departure");
+    alice_ui
+        .append_message("alice", alice_post_msg, true, true)
+        .expect("Alice append post-departure");
 
     // Charlie receives and appends the message
     let charlie_msgs_post_alice = charlie_ui.messages();
-    assert_eq!(charlie_msgs_post_alice.len(), 3, "Charlie UI appends Alice's post-departure message");
+    assert_eq!(
+        charlie_msgs_post_alice.len(),
+        3,
+        "Charlie UI appends Alice's post-departure message"
+    );
     assert_eq!(
         charlie_msgs_post_alice.last(),
-        Some(&(
-            "alice".to_string(),
-            alice_post_msg.to_string(),
-            false,
-            true
-        )),
+        Some(&("alice".to_string(), alice_post_msg.to_string(), false, true)),
         "Last message in Charlie UI is Alice's post-departure message"
     );
 
     // Charlie broadcasts a reply ("Post-departure reply from Charlie")
     let charlie_post_reply = "Post-departure reply from Charlie";
-    charlie_mesh.broadcast_chat(charlie_post_reply).expect("Charlie broadcast post-departure");
-    charlie_ui.append_message("charlie", charlie_post_reply, true, true).expect("Charlie append post-departure");
+    charlie_mesh
+        .broadcast_chat(charlie_post_reply)
+        .expect("Charlie broadcast post-departure");
+    charlie_ui
+        .append_message("charlie", charlie_post_reply, true, true)
+        .expect("Charlie append post-departure");
 
     // Alice receives and appends the reply
     let alice_msgs_final = alice_ui.messages();
-    assert_eq!(alice_msgs_final.len(), 4, "Alice UI appends Charlie's post-departure reply");
+    assert_eq!(
+        alice_msgs_final.len(),
+        4,
+        "Alice UI appends Charlie's post-departure reply"
+    );
     assert_eq!(
         alice_msgs_final.last(),
         Some(&(
@@ -2461,8 +2557,16 @@ fn test_req_028_2_partial_peer_departure_and_feed_survivability() {
     );
 
     // Surviving mesh channel Channel_AC functions without interruption
-    assert_eq!(alice_to_charlie.state(), PeerLifecycleState::Open, "Channel_AC Alice side remains Open");
-    assert_eq!(charlie_to_alice.state(), PeerLifecycleState::Open, "Channel_AC Charlie side remains Open");
+    assert_eq!(
+        alice_to_charlie.state(),
+        PeerLifecycleState::Open,
+        "Channel_AC Alice side remains Open"
+    );
+    assert_eq!(
+        charlie_to_alice.state(),
+        PeerLifecycleState::Open,
+        "Channel_AC Charlie side remains Open"
+    );
 }
 
 /// REQ-029.5: Host Departure Survivability Simulation Test.
@@ -2538,18 +2642,12 @@ fn test_req_029_5_host_departure_survivability() {
         charlie_mesh.has_peer("bob"),
         "Charlie must register direct peer 'bob' in routing table"
     );
-    assert!(
-        alice_mesh.has_peer("bob"),
-        "Alice has direct peer 'bob'"
-    );
+    assert!(alice_mesh.has_peer("bob"), "Alice has direct peer 'bob'");
     assert!(
         alice_mesh.has_peer("charlie"),
         "Alice has direct peer 'charlie'"
     );
-    assert!(
-        bob_mesh.has_peer("alice"),
-        "Bob has direct peer 'alice'"
-    );
+    assert!(bob_mesh.has_peer("alice"), "Bob has direct peer 'alice'");
     assert!(
         charlie_mesh.has_peer("alice"),
         "Charlie has direct peer 'alice'"
@@ -2577,9 +2675,15 @@ fn test_req_029_5_host_departure_survivability() {
     let bob_ui = Rc::new(ChatUi::mount("bob-app").expect("mount Bob UI"));
     let charlie_ui = Rc::new(ChatUi::mount("charlie-app").expect("mount Charlie UI"));
 
-    alice_ui.set_status(ConnectionStatus::Connected).expect("set connected");
-    bob_ui.set_status(ConnectionStatus::Connected).expect("set connected");
-    charlie_ui.set_status(ConnectionStatus::Connected).expect("set connected");
+    alice_ui
+        .set_status(ConnectionStatus::Connected)
+        .expect("set connected");
+    bob_ui
+        .set_status(ConnectionStatus::Connected)
+        .expect("set connected");
+    charlie_ui
+        .set_status(ConnectionStatus::Connected)
+        .expect("set connected");
 
     alice_ui.add_peer("bob").expect("Alice UI adds Bob");
     alice_ui.add_peer("charlie").expect("Alice UI adds Charlie");
@@ -2631,29 +2735,59 @@ fn test_req_029_5_host_departure_survivability() {
 
     // Populate feeds with messages from Alice, Bob, and Charlie on all nodes
     let msg_alice = "Hello from Alice the host";
-    alice_mesh.broadcast_chat(msg_alice).expect("Alice broadcast");
-    alice_ui.append_message("alice", msg_alice, true, true).expect("Alice self append");
+    alice_mesh
+        .broadcast_chat(msg_alice)
+        .expect("Alice broadcast");
+    alice_ui
+        .append_message("alice", msg_alice, true, true)
+        .expect("Alice self append");
 
     let msg_bob = "Hello from Bob";
     bob_mesh.broadcast_chat(msg_bob).expect("Bob broadcast");
-    bob_ui.append_message("bob", msg_bob, true, true).expect("Bob self append");
+    bob_ui
+        .append_message("bob", msg_bob, true, true)
+        .expect("Bob self append");
 
     let msg_charlie = "Hello from Charlie";
-    charlie_mesh.broadcast_chat(msg_charlie).expect("Charlie broadcast");
-    charlie_ui.append_message("charlie", msg_charlie, true, true).expect("Charlie self append");
+    charlie_mesh
+        .broadcast_chat(msg_charlie)
+        .expect("Charlie broadcast");
+    charlie_ui
+        .append_message("charlie", msg_charlie, true, true)
+        .expect("Charlie self append");
 
     // Verify feeds before departure on Bob and Charlie
     let bob_msgs_before = bob_ui.messages();
-    assert_eq!(bob_msgs_before.len(), 3, "Bob has 3 messages before Alice departs");
-    assert!(bob_msgs_before.iter().any(|(s, _, is_self, _)| s == "alice" && !*is_self));
-    assert!(bob_msgs_before.iter().any(|(s, _, is_self, _)| s == "bob" && *is_self));
-    assert!(bob_msgs_before.iter().any(|(s, _, is_self, _)| s == "charlie" && !*is_self));
+    assert_eq!(
+        bob_msgs_before.len(),
+        3,
+        "Bob has 3 messages before Alice departs"
+    );
+    assert!(bob_msgs_before
+        .iter()
+        .any(|(s, _, is_self, _)| s == "alice" && !*is_self));
+    assert!(bob_msgs_before
+        .iter()
+        .any(|(s, _, is_self, _)| s == "bob" && *is_self));
+    assert!(bob_msgs_before
+        .iter()
+        .any(|(s, _, is_self, _)| s == "charlie" && !*is_self));
 
     let charlie_msgs_before = charlie_ui.messages();
-    assert_eq!(charlie_msgs_before.len(), 3, "Charlie has 3 messages before Alice departs");
-    assert!(charlie_msgs_before.iter().any(|(s, _, is_self, _)| s == "alice" && !*is_self));
-    assert!(charlie_msgs_before.iter().any(|(s, _, is_self, _)| s == "bob" && !*is_self));
-    assert!(charlie_msgs_before.iter().any(|(s, _, is_self, _)| s == "charlie" && *is_self));
+    assert_eq!(
+        charlie_msgs_before.len(),
+        3,
+        "Charlie has 3 messages before Alice departs"
+    );
+    assert!(charlie_msgs_before
+        .iter()
+        .any(|(s, _, is_self, _)| s == "alice" && !*is_self));
+    assert!(charlie_msgs_before
+        .iter()
+        .any(|(s, _, is_self, _)| s == "bob" && !*is_self));
+    assert!(charlie_msgs_before
+        .iter()
+        .any(|(s, _, is_self, _)| s == "charlie" && *is_self));
 
     // Alice (the host) departs via broadcast_leave_and_burn()
     alice_mesh
@@ -2662,53 +2796,109 @@ fn test_req_029_5_host_departure_survivability() {
 
     // Assertions on surviving nodes (Bob and Charlie):
     // 1. Peer count decrements from 2 to 1 on both Bob and Charlie
-    assert_eq!(bob_mesh.peer_count(), 1, "Bob mesh peer count decrements from 2 to 1");
-    assert_eq!(charlie_mesh.peer_count(), 1, "Charlie mesh peer count decrements from 2 to 1");
-    assert!(!bob_mesh.has_peer("alice"), "Bob mesh no longer has peer Alice");
-    assert!(!charlie_mesh.has_peer("alice"), "Charlie mesh no longer has peer Alice");
-    assert!(bob_mesh.has_peer("charlie"), "Bob mesh retains direct peer Charlie");
-    assert!(charlie_mesh.has_peer("bob"), "Charlie mesh retains direct peer Bob");
+    assert_eq!(
+        bob_mesh.peer_count(),
+        1,
+        "Bob mesh peer count decrements from 2 to 1"
+    );
+    assert_eq!(
+        charlie_mesh.peer_count(),
+        1,
+        "Charlie mesh peer count decrements from 2 to 1"
+    );
+    assert!(
+        !bob_mesh.has_peer("alice"),
+        "Bob mesh no longer has peer Alice"
+    );
+    assert!(
+        !charlie_mesh.has_peer("alice"),
+        "Charlie mesh no longer has peer Alice"
+    );
+    assert!(
+        bob_mesh.has_peer("charlie"),
+        "Bob mesh retains direct peer Charlie"
+    );
+    assert!(
+        charlie_mesh.has_peer("bob"),
+        "Charlie mesh retains direct peer Bob"
+    );
 
     assert_eq!(bob_ui.peer_count(), 1, "Bob UI peer count decrements to 1");
-    assert_eq!(charlie_ui.peer_count(), 1, "Charlie UI peer count decrements to 1");
-    assert_eq!(bob_ui.peers(), vec!["charlie".to_string()], "Bob UI peers list contains only Charlie");
-    assert_eq!(charlie_ui.peers(), vec!["bob".to_string()], "Charlie UI peers list contains only Bob");
+    assert_eq!(
+        charlie_ui.peer_count(),
+        1,
+        "Charlie UI peer count decrements to 1"
+    );
+    assert_eq!(
+        bob_ui.peers(),
+        vec!["charlie".to_string()],
+        "Bob UI peers list contains only Charlie"
+    );
+    assert_eq!(
+        charlie_ui.peers(),
+        vec!["bob".to_string()],
+        "Charlie UI peers list contains only Bob"
+    );
 
     // 2. Bob's UI purges Alice's messages, but preserves Bob's own messages and Charlie's messages
     let bob_msgs_after = bob_ui.messages();
-    assert_eq!(bob_msgs_after.len(), 2, "Bob UI has 2 messages after Alice's messages are purged");
+    assert_eq!(
+        bob_msgs_after.len(),
+        2,
+        "Bob UI has 2 messages after Alice's messages are purged"
+    );
     assert!(
         !bob_msgs_after.iter().any(|(s, _, _, _)| s == "alice"),
         "Alice's messages are purged from Bob's UI"
     );
     assert!(
-        bob_msgs_after.iter().any(|(s, t, is_self, _)| s == "bob" && t == msg_bob && *is_self),
+        bob_msgs_after
+            .iter()
+            .any(|(s, t, is_self, _)| s == "bob" && t == msg_bob && *is_self),
         "Bob's own message is preserved in Bob's UI"
     );
     assert!(
-        bob_msgs_after.iter().any(|(s, t, is_self, _)| s == "charlie" && t == msg_charlie && !*is_self),
+        bob_msgs_after
+            .iter()
+            .any(|(s, t, is_self, _)| s == "charlie" && t == msg_charlie && !*is_self),
         "Charlie's message is preserved in Bob's UI"
     );
 
     // 3. Charlie's UI purges Alice's messages, but preserves Charlie's own messages and Bob's messages
     let charlie_msgs_after = charlie_ui.messages();
-    assert_eq!(charlie_msgs_after.len(), 2, "Charlie UI has 2 messages after Alice's messages are purged");
+    assert_eq!(
+        charlie_msgs_after.len(),
+        2,
+        "Charlie UI has 2 messages after Alice's messages are purged"
+    );
     assert!(
         !charlie_msgs_after.iter().any(|(s, _, _, _)| s == "alice"),
         "Alice's messages are purged from Charlie's UI"
     );
     assert!(
-        charlie_msgs_after.iter().any(|(s, t, is_self, _)| s == "charlie" && t == msg_charlie && *is_self),
+        charlie_msgs_after
+            .iter()
+            .any(|(s, t, is_self, _)| s == "charlie" && t == msg_charlie && *is_self),
         "Charlie's own message is preserved in Charlie's UI"
     );
     assert!(
-        charlie_msgs_after.iter().any(|(s, t, is_self, _)| s == "bob" && t == msg_bob && !*is_self),
+        charlie_msgs_after
+            .iter()
+            .any(|(s, t, is_self, _)| s == "bob" && t == msg_bob && !*is_self),
         "Bob's message is preserved in Charlie's UI"
     );
 
     // 4. Connection status remains Connected on both Bob and Charlie (session is NOT destroyed)
-    assert_eq!(bob_ui.status(), ConnectionStatus::Connected, "Bob UI remains Connected");
-    assert_eq!(charlie_ui.status(), ConnectionStatus::Connected, "Charlie UI remains Connected");
+    assert_eq!(
+        bob_ui.status(),
+        ConnectionStatus::Connected,
+        "Bob UI remains Connected"
+    );
+    assert_eq!(
+        charlie_ui.status(),
+        ConnectionStatus::Connected,
+        "Charlie UI remains Connected"
+    );
 
     // 5. Bob broadcasts a new message; Charlie receives and appends it over surviving Channel_BC
     let bob_new_msg = "Post-host-departure message from Bob to Charlie";
@@ -2720,15 +2910,14 @@ fn test_req_029_5_host_departure_survivability() {
         .expect("Bob appends self post-departure message");
 
     let charlie_msgs_post_bob = charlie_ui.messages();
-    assert_eq!(charlie_msgs_post_bob.len(), 3, "Charlie UI receives Bob's post-host-departure message");
+    assert_eq!(
+        charlie_msgs_post_bob.len(),
+        3,
+        "Charlie UI receives Bob's post-host-departure message"
+    );
     assert_eq!(
         charlie_msgs_post_bob.last(),
-        Some(&(
-            "bob".to_string(),
-            bob_new_msg.to_string(),
-            false,
-            true
-        )),
+        Some(&("bob".to_string(), bob_new_msg.to_string(), false, true)),
         "Last message in Charlie UI matches Bob's post-host-departure message"
     );
 
@@ -2742,7 +2931,11 @@ fn test_req_029_5_host_departure_survivability() {
         .expect("Charlie appends self reply");
 
     let bob_msgs_post_charlie = bob_ui.messages();
-    assert_eq!(bob_msgs_post_charlie.len(), 4, "Bob UI receives Charlie's reply");
+    assert_eq!(
+        bob_msgs_post_charlie.len(),
+        4,
+        "Bob UI receives Charlie's reply"
+    );
     assert_eq!(
         bob_msgs_post_charlie.last(),
         Some(&(
@@ -2755,8 +2948,16 @@ fn test_req_029_5_host_departure_survivability() {
     );
 
     // Assert direct Channel_BC lifecycle state remains Open
-    assert_eq!(charlie_to_bob.state(), PeerLifecycleState::Open, "Channel_BC Charlie side remains Open");
-    assert_eq!(bob_to_charlie.state(), PeerLifecycleState::Open, "Channel_BC Bob side remains Open");
+    assert_eq!(
+        charlie_to_bob.state(),
+        PeerLifecycleState::Open,
+        "Channel_BC Charlie side remains Open"
+    );
+    assert_eq!(
+        bob_to_charlie.state(),
+        PeerLifecycleState::Open,
+        "Channel_BC Bob side remains Open"
+    );
 }
 
 /// REQ-029.4: 3rd Peer Departure Selective Purge Test.
@@ -2832,8 +3033,12 @@ fn test_req_029_4_third_peer_departure_selective_purge() {
     let alice_ui = Rc::new(ChatUi::mount("alice-app").expect("mount Alice UI"));
     let bob_ui = Rc::new(ChatUi::mount("bob-app").expect("mount Bob UI"));
 
-    alice_ui.set_status(ConnectionStatus::Connected).expect("set connected");
-    bob_ui.set_status(ConnectionStatus::Connected).expect("set connected");
+    alice_ui
+        .set_status(ConnectionStatus::Connected)
+        .expect("set connected");
+    bob_ui
+        .set_status(ConnectionStatus::Connected)
+        .expect("set connected");
 
     alice_ui.add_peer("bob").expect("Alice UI adds Bob");
     alice_ui.add_peer("charlie").expect("Alice UI adds Charlie");
@@ -2875,34 +3080,68 @@ fn test_req_029_4_third_peer_departure_selective_purge() {
 
     // Alice broadcasts message:
     let msg_alice = "Message from Alice";
-    alice_mesh.broadcast_chat(msg_alice).expect("Alice broadcast");
-    alice_ui.append_message("alice", msg_alice, true, true).expect("Alice self append");
+    alice_mesh
+        .broadcast_chat(msg_alice)
+        .expect("Alice broadcast");
+    alice_ui
+        .append_message("alice", msg_alice, true, true)
+        .expect("Alice self append");
 
     // Bob broadcasts message:
     let msg_bob = "Message from Bob";
     bob_mesh.broadcast_chat(msg_bob).expect("Bob broadcast");
-    bob_ui.append_message("bob", msg_bob, true, true).expect("Bob self append");
+    bob_ui
+        .append_message("bob", msg_bob, true, true)
+        .expect("Bob self append");
 
     // Charlie sends multiple messages to Alice and Bob:
     let msg_charlie_1 = "First message from 3rd peer Charlie";
     let msg_charlie_2 = "Second message from 3rd peer Charlie";
-    charlie_mesh.broadcast_chat(msg_charlie_1).expect("Charlie broadcast 1");
-    charlie_mesh.broadcast_chat(msg_charlie_2).expect("Charlie broadcast 2");
+    charlie_mesh
+        .broadcast_chat(msg_charlie_1)
+        .expect("Charlie broadcast 1");
+    charlie_mesh
+        .broadcast_chat(msg_charlie_2)
+        .expect("Charlie broadcast 2");
 
     // Verify feeds before departure on Alice and Bob:
     let alice_msgs_before = alice_ui.messages();
-    assert_eq!(alice_msgs_before.len(), 4, "Alice has 4 messages before Charlie departs");
-    assert!(alice_msgs_before.iter().any(|(s, t, is_self, _)| s == "alice" && t == msg_alice && *is_self));
-    assert!(alice_msgs_before.iter().any(|(s, t, is_self, _)| s == "bob" && t == msg_bob && !*is_self));
-    assert!(alice_msgs_before.iter().any(|(s, t, is_self, _)| s == "charlie" && t == msg_charlie_1 && !*is_self));
-    assert!(alice_msgs_before.iter().any(|(s, t, is_self, _)| s == "charlie" && t == msg_charlie_2 && !*is_self));
+    assert_eq!(
+        alice_msgs_before.len(),
+        4,
+        "Alice has 4 messages before Charlie departs"
+    );
+    assert!(alice_msgs_before
+        .iter()
+        .any(|(s, t, is_self, _)| s == "alice" && t == msg_alice && *is_self));
+    assert!(alice_msgs_before
+        .iter()
+        .any(|(s, t, is_self, _)| s == "bob" && t == msg_bob && !*is_self));
+    assert!(alice_msgs_before
+        .iter()
+        .any(|(s, t, is_self, _)| s == "charlie" && t == msg_charlie_1 && !*is_self));
+    assert!(alice_msgs_before
+        .iter()
+        .any(|(s, t, is_self, _)| s == "charlie" && t == msg_charlie_2 && !*is_self));
 
     let bob_msgs_before = bob_ui.messages();
-    assert_eq!(bob_msgs_before.len(), 4, "Bob has 4 messages before Charlie departs");
-    assert!(bob_msgs_before.iter().any(|(s, t, is_self, _)| s == "alice" && t == msg_alice && !*is_self));
-    assert!(bob_msgs_before.iter().any(|(s, t, is_self, _)| s == "bob" && t == msg_bob && *is_self));
-    assert!(bob_msgs_before.iter().any(|(s, t, is_self, _)| s == "charlie" && t == msg_charlie_1 && !*is_self));
-    assert!(bob_msgs_before.iter().any(|(s, t, is_self, _)| s == "charlie" && t == msg_charlie_2 && !*is_self));
+    assert_eq!(
+        bob_msgs_before.len(),
+        4,
+        "Bob has 4 messages before Charlie departs"
+    );
+    assert!(bob_msgs_before
+        .iter()
+        .any(|(s, t, is_self, _)| s == "alice" && t == msg_alice && !*is_self));
+    assert!(bob_msgs_before
+        .iter()
+        .any(|(s, t, is_self, _)| s == "bob" && t == msg_bob && *is_self));
+    assert!(bob_msgs_before
+        .iter()
+        .any(|(s, t, is_self, _)| s == "charlie" && t == msg_charlie_1 && !*is_self));
+    assert!(bob_msgs_before
+        .iter()
+        .any(|(s, t, is_self, _)| s == "charlie" && t == msg_charlie_2 && !*is_self));
 
     // Charlie (the 3rd peer) departs via broadcast_leave_and_burn()
     charlie_mesh
@@ -2912,14 +3151,22 @@ fn test_req_029_4_third_peer_departure_selective_purge() {
     // Alice and Bob process the departure:
     // 1. Only Charlie's messages are purged from Alice's and Bob's feeds
     let alice_msgs_after = alice_ui.messages();
-    assert_eq!(alice_msgs_after.len(), 2, "Alice UI has 2 messages after Charlie's messages are purged");
+    assert_eq!(
+        alice_msgs_after.len(),
+        2,
+        "Alice UI has 2 messages after Charlie's messages are purged"
+    );
     assert!(
         !alice_msgs_after.iter().any(|(s, _, _, _)| s == "charlie"),
         "Charlie's messages purged from Alice's UI"
     );
 
     let bob_msgs_after = bob_ui.messages();
-    assert_eq!(bob_msgs_after.len(), 2, "Bob UI has 2 messages after Charlie's messages are purged");
+    assert_eq!(
+        bob_msgs_after.len(),
+        2,
+        "Bob UI has 2 messages after Charlie's messages are purged"
+    );
     assert!(
         !bob_msgs_after.iter().any(|(s, _, _, _)| s == "charlie"),
         "Charlie's messages purged from Bob's UI"
@@ -2927,30 +3174,62 @@ fn test_req_029_4_third_peer_departure_selective_purge() {
 
     // 2. Alice's and Bob's own and each other's messages remain intact
     assert!(
-        alice_msgs_after.iter().any(|(s, t, is_self, _)| s == "alice" && t == msg_alice && *is_self),
+        alice_msgs_after
+            .iter()
+            .any(|(s, t, is_self, _)| s == "alice" && t == msg_alice && *is_self),
         "Alice's own message remains intact in Alice's UI"
     );
     assert!(
-        alice_msgs_after.iter().any(|(s, t, is_self, _)| s == "bob" && t == msg_bob && !*is_self),
+        alice_msgs_after
+            .iter()
+            .any(|(s, t, is_self, _)| s == "bob" && t == msg_bob && !*is_self),
         "Bob's message remains intact in Alice's UI"
     );
 
     assert!(
-        bob_msgs_after.iter().any(|(s, t, is_self, _)| s == "alice" && t == msg_alice && !*is_self),
+        bob_msgs_after
+            .iter()
+            .any(|(s, t, is_self, _)| s == "alice" && t == msg_alice && !*is_self),
         "Alice's message remains intact in Bob's UI"
     );
     assert!(
-        bob_msgs_after.iter().any(|(s, t, is_self, _)| s == "bob" && t == msg_bob && *is_self),
+        bob_msgs_after
+            .iter()
+            .any(|(s, t, is_self, _)| s == "bob" && t == msg_bob && *is_self),
         "Bob's own message remains intact in Bob's UI"
     );
 
     // 3. Peer count decrements from 2 to 1 on both Alice and Bob
-    assert_eq!(alice_mesh.peer_count(), 1, "Alice mesh peer count decrements from 2 to 1");
-    assert_eq!(bob_mesh.peer_count(), 1, "Bob mesh peer count decrements from 2 to 1");
-    assert_eq!(alice_ui.peer_count(), 1, "Alice UI peer count decrements from 2 to 1");
-    assert_eq!(bob_ui.peer_count(), 1, "Bob UI peer count decrements from 2 to 1");
-    assert_eq!(alice_ui.peers(), vec!["bob".to_string()], "Alice UI peers list contains only Bob");
-    assert_eq!(bob_ui.peers(), vec!["alice".to_string()], "Bob UI peers list contains only Alice");
+    assert_eq!(
+        alice_mesh.peer_count(),
+        1,
+        "Alice mesh peer count decrements from 2 to 1"
+    );
+    assert_eq!(
+        bob_mesh.peer_count(),
+        1,
+        "Bob mesh peer count decrements from 2 to 1"
+    );
+    assert_eq!(
+        alice_ui.peer_count(),
+        1,
+        "Alice UI peer count decrements from 2 to 1"
+    );
+    assert_eq!(
+        bob_ui.peer_count(),
+        1,
+        "Bob UI peer count decrements from 2 to 1"
+    );
+    assert_eq!(
+        alice_ui.peers(),
+        vec!["bob".to_string()],
+        "Alice UI peers list contains only Bob"
+    );
+    assert_eq!(
+        bob_ui.peers(),
+        vec!["alice".to_string()],
+        "Bob UI peers list contains only Alice"
+    );
     assert!(!alice_mesh.has_peer("charlie"));
     assert!(!bob_mesh.has_peer("charlie"));
 
@@ -2968,15 +3247,14 @@ fn test_req_029_4_third_peer_departure_selective_purge() {
         .expect("Alice append self post-departure");
 
     let bob_msgs_post_alice = bob_ui.messages();
-    assert_eq!(bob_msgs_post_alice.len(), 3, "Bob receives Alice's post-departure message");
+    assert_eq!(
+        bob_msgs_post_alice.len(),
+        3,
+        "Bob receives Alice's post-departure message"
+    );
     assert_eq!(
         bob_msgs_post_alice.last(),
-        Some(&(
-            "alice".to_string(),
-            alice_post_msg.to_string(),
-            false,
-            true
-        ))
+        Some(&("alice".to_string(), alice_post_msg.to_string(), false, true))
     );
 
     let bob_post_reply = "Post-departure reply from Bob to Alice";
@@ -2988,19 +3266,26 @@ fn test_req_029_4_third_peer_departure_selective_purge() {
         .expect("Bob append self reply");
 
     let alice_msgs_post_bob = alice_ui.messages();
-    assert_eq!(alice_msgs_post_bob.len(), 4, "Alice receives Bob's post-departure reply");
+    assert_eq!(
+        alice_msgs_post_bob.len(),
+        4,
+        "Alice receives Bob's post-departure reply"
+    );
     assert_eq!(
         alice_msgs_post_bob.last(),
-        Some(&(
-            "bob".to_string(),
-            bob_post_reply.to_string(),
-            false,
-            true
-        ))
+        Some(&("bob".to_string(), bob_post_reply.to_string(), false, true))
     );
 
-    assert_eq!(alice_to_bob.state(), PeerLifecycleState::Open, "Channel_AB Alice side remains Open");
-    assert_eq!(bob_to_alice.state(), PeerLifecycleState::Open, "Channel_AB Bob side remains Open");
+    assert_eq!(
+        alice_to_bob.state(),
+        PeerLifecycleState::Open,
+        "Channel_AB Alice side remains Open"
+    );
+    assert_eq!(
+        bob_to_alice.state(),
+        PeerLifecycleState::Open,
+        "Channel_AB Bob side remains Open"
+    );
 }
 
 /// REQ-030.1 & REQ-030.2: Multi-Peer Join with 2nd User as Inviter, Mesh Snapping & Counter Synchronization.
@@ -3076,11 +3361,19 @@ fn test_req_030_secondary_inviter_mesh_snapping_and_counters() {
         .add_peer("alice", alice_pk, bob_to_alice)
         .expect("Bob adds Alice");
 
-    assert_eq!(alice_mesh.peer_count(), 1, "Alice mesh reports peer count = 1");
+    assert_eq!(
+        alice_mesh.peer_count(),
+        1,
+        "Alice mesh reports peer count = 1"
+    );
     assert_eq!(bob_mesh.peer_count(), 1, "Bob mesh reports peer count = 1");
     assert_eq!(alice_ui.peer_count(), 1, "Alice UI reports peer count = 1");
     assert_eq!(bob_ui.peer_count(), 1, "Bob UI reports peer count = 1");
-    assert_eq!(charlie_mesh.peer_count(), 0, "Charlie mesh is not yet connected");
+    assert_eq!(
+        charlie_mesh.peer_count(),
+        0,
+        "Charlie mesh is not yet connected"
+    );
 
     // Step 2: Bob invites Charlie (Channel_BC)
     let bob_to_charlie = WebRtcPeer::new();
@@ -3093,7 +3386,11 @@ fn test_req_030_secondary_inviter_mesh_snapping_and_counters() {
         .add_peer("bob", bob_pk, charlie_to_bob)
         .expect("Charlie adds Bob");
 
-    assert_eq!(bob_mesh.peer_count(), 2, "Bob connected to both Alice and Charlie");
+    assert_eq!(
+        bob_mesh.peer_count(),
+        2,
+        "Bob connected to both Alice and Charlie"
+    );
     assert_eq!(charlie_mesh.peer_count(), 1, "Charlie connected to Bob");
 
     // Step 3: Bob introduces Alice and Charlie via in-band relay signaling
@@ -3107,8 +3404,14 @@ fn test_req_030_secondary_inviter_mesh_snapping_and_counters() {
         cloud_edge_hits, 0,
         "0 cloud edge hits during direct snap over Bob's bridge"
     );
-    assert!(alice_mesh.has_peer("charlie"), "Alice registers direct peer Charlie");
-    assert!(charlie_mesh.has_peer("alice"), "Charlie registers direct peer Alice");
+    assert!(
+        alice_mesh.has_peer("charlie"),
+        "Alice registers direct peer Charlie"
+    );
+    assert!(
+        charlie_mesh.has_peer("alice"),
+        "Charlie registers direct peer Alice"
+    );
 
     let alice_to_charlie = alice_mesh
         .get_peer("charlie")
@@ -3133,24 +3436,32 @@ fn test_req_030_secondary_inviter_mesh_snapping_and_counters() {
     let alice_feed = Rc::new(RefCell::new(Vec::new()));
     let a_feed = alice_feed.clone();
     alice_mesh.on_message(move |sender, msg| {
-        a_feed.borrow_mut().push((sender.to_string(), msg.to_string()));
+        a_feed
+            .borrow_mut()
+            .push((sender.to_string(), msg.to_string()));
     });
 
     let bob_feed = Rc::new(RefCell::new(Vec::new()));
     let b_feed = bob_feed.clone();
     bob_mesh.on_message(move |sender, msg| {
-        b_feed.borrow_mut().push((sender.to_string(), msg.to_string()));
+        b_feed
+            .borrow_mut()
+            .push((sender.to_string(), msg.to_string()));
     });
 
     let charlie_feed = Rc::new(RefCell::new(Vec::new()));
     let c_feed = charlie_feed.clone();
     charlie_mesh.on_message(move |sender, msg| {
-        c_feed.borrow_mut().push((sender.to_string(), msg.to_string()));
+        c_feed
+            .borrow_mut()
+            .push((sender.to_string(), msg.to_string()));
     });
 
     // 6a. Alice broadcasts: Bob and Charlie receive exactly once
     let msg_alice = "Hello from Alice (host)";
-    let alice_uuid = alice_mesh.broadcast_chat(msg_alice).expect("Alice broadcast");
+    let alice_uuid = alice_mesh
+        .broadcast_chat(msg_alice)
+        .expect("Alice broadcast");
 
     assert_eq!(
         *bob_feed.borrow(),
@@ -3185,7 +3496,9 @@ fn test_req_030_secondary_inviter_mesh_snapping_and_counters() {
 
     // 6c. Charlie broadcasts: Alice and Bob receive exactly once
     let msg_charlie = "Hello from Charlie (joiner)";
-    let charlie_uuid = charlie_mesh.broadcast_chat(msg_charlie).expect("Charlie broadcast");
+    let charlie_uuid = charlie_mesh
+        .broadcast_chat(msg_charlie)
+        .expect("Charlie broadcast");
 
     assert_eq!(
         *alice_feed.borrow(),
@@ -3201,7 +3514,11 @@ fn test_req_030_secondary_inviter_mesh_snapping_and_counters() {
             ("charlie".to_string(), msg_charlie.to_string()),
         ]
     );
-    assert_eq!(charlie_feed.borrow().len(), 2, "Charlie suppresses self-echo");
+    assert_eq!(
+        charlie_feed.borrow().len(),
+        2,
+        "Charlie suppresses self-echo"
+    );
     assert!(alice_mesh.has_seen_message(&charlie_uuid));
     assert!(bob_mesh.has_seen_message(&charlie_uuid));
 
@@ -3400,7 +3717,9 @@ fn test_req_030_departure_counter_symmetry() {
         let msg_bob = "Message from Bob";
         let msg_charlie = "Message from Charlie";
 
-        ctx.alice_mesh.broadcast_chat(msg_alice).expect("Alice broadcast");
+        ctx.alice_mesh
+            .broadcast_chat(msg_alice)
+            .expect("Alice broadcast");
         ctx.alice_ui
             .append_message("alice", msg_alice, true, true)
             .expect("Alice append self");
@@ -3437,8 +3756,14 @@ fn test_req_030_departure_counter_symmetry() {
             PeerLifecycleState::Open,
             "Channel_AB Bob side remains Open"
         );
-        assert!(ctx.alice_mesh.has_peer("bob"), "Alice mesh retains peer Bob");
-        assert!(ctx.bob_mesh.has_peer("alice"), "Bob mesh retains peer Alice");
+        assert!(
+            ctx.alice_mesh.has_peer("bob"),
+            "Alice mesh retains peer Bob"
+        );
+        assert!(
+            ctx.bob_mesh.has_peer("alice"),
+            "Bob mesh retains peer Alice"
+        );
 
         // 2. Assert peer count drops from 2 to 1 on BOTH Alice and Bob
         assert_eq!(
@@ -3456,11 +3781,7 @@ fn test_req_030_departure_counter_symmetry() {
             1,
             "Alice UI peer count drops 2 -> 1"
         );
-        assert_eq!(
-            ctx.bob_ui.peer_count(),
-            1,
-            "Bob UI peer count drops 2 -> 1"
-        );
+        assert_eq!(ctx.bob_ui.peer_count(), 1, "Bob UI peer count drops 2 -> 1");
         assert_eq!(ctx.alice_ui.peers(), vec!["bob".to_string()]);
         assert_eq!(ctx.bob_ui.peers(), vec!["alice".to_string()]);
         assert!(!ctx.alice_mesh.has_peer("charlie"));
@@ -3533,7 +3854,9 @@ fn test_req_030_departure_counter_symmetry() {
         let msg_bob = "Message from Bob";
         let msg_charlie = "Message from Charlie";
 
-        ctx.alice_mesh.broadcast_chat(msg_alice).expect("Alice broadcast");
+        ctx.alice_mesh
+            .broadcast_chat(msg_alice)
+            .expect("Alice broadcast");
         ctx.alice_ui
             .append_message("alice", msg_alice, true, true)
             .expect("Alice append self");
@@ -3679,7 +4002,9 @@ fn test_req_030_departure_counter_symmetry() {
         let msg_bob = "Message from Bob";
         let msg_charlie = "Message from Charlie";
 
-        ctx.alice_mesh.broadcast_chat(msg_alice).expect("Alice broadcast");
+        ctx.alice_mesh
+            .broadcast_chat(msg_alice)
+            .expect("Alice broadcast");
         ctx.alice_ui
             .append_message("alice", msg_alice, true, true)
             .expect("Alice append self");
@@ -3736,11 +4061,7 @@ fn test_req_030_departure_counter_symmetry() {
             1,
             "Charlie mesh peer count drops 2 -> 1"
         );
-        assert_eq!(
-            ctx.bob_ui.peer_count(),
-            1,
-            "Bob UI peer count drops 2 -> 1"
-        );
+        assert_eq!(ctx.bob_ui.peer_count(), 1, "Bob UI peer count drops 2 -> 1");
         assert_eq!(
             ctx.charlie_ui.peer_count(),
             1,
@@ -3814,4 +4135,3 @@ fn test_req_030_departure_counter_symmetry() {
         );
     }
 }
-

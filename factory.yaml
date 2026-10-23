@@ -7,8 +7,10 @@ tech_stack: "Rust (WASM wasm32-unknown-unknown & Cloudflare Workers workers-rs) 
 commands:
   build: "cargo check --workspace"
   test: "cargo test --workspace"
-  lint: "cargo clippy --workspace -- -D warnings"
-  format_check: "cargo fmt --check"
+  lint: "cargo clippy --workspace --all-targets -- -D warnings"
+  format_check: "cargo fmt --all -- --check"
+  wasm_client: "cargo build -p zero_client --target wasm32-unknown-unknown"
+  wasm_network: "cargo check -p zero_network --target wasm32-unknown-unknown"
 
 # Paths to relevant host project documentation for Architect and Reviewer:
 documentation:

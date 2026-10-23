@@ -1167,10 +1167,7 @@ mod tests {
 
         // Assert ui.peer_count() is 2 and ui.peers() contains "alice" and "charlie"
         assert_eq!(ui.peer_count(), 2);
-        assert_eq!(
-            ui.peers(),
-            vec!["alice".to_string(), "charlie".to_string()]
-        );
+        assert_eq!(ui.peers(), vec!["alice".to_string(), "charlie".to_string()]);
 
         // Assert Bob's messages are gone, but Charlie's, Alice's, and Self's messages are retained
         let msgs_after_bob = ui.messages();
@@ -1178,14 +1175,17 @@ mod tests {
         assert!(!msgs_after_bob.iter().any(|(s, _, _, _)| s == "bob"));
         assert!(msgs_after_bob.iter().any(|(s, _, _, _)| s == "charlie"));
         assert!(msgs_after_bob.iter().any(|(s, _, _, _)| s == "alice"));
-        assert!(msgs_after_bob.iter().any(|(s, _, is_self, _)| *is_self && s == "self"));
+        assert!(msgs_after_bob
+            .iter()
+            .any(|(s, _, is_self, _)| *is_self && s == "self"));
 
         // Assert connection status remains Connected
         assert_eq!(ui.status(), ConnectionStatus::Connected);
 
         // Simulate Charlie departing: remove "charlie", burn "charlie" messages
         ui.remove_peer("charlie").expect("remove charlie failed");
-        ui.burn_peer_messages("charlie").expect("burn charlie failed");
+        ui.burn_peer_messages("charlie")
+            .expect("burn charlie failed");
 
         // Assert ui.peer_count() is 1 and surviving peer is Alice
         assert_eq!(ui.peer_count(), 1);
@@ -1194,7 +1194,9 @@ mod tests {
         assert_eq!(msgs_after_charlie.len(), 2);
         assert!(!msgs_after_charlie.iter().any(|(s, _, _, _)| s == "charlie"));
         assert!(msgs_after_charlie.iter().any(|(s, _, _, _)| s == "alice"));
-        assert!(msgs_after_charlie.iter().any(|(s, _, is_self, _)| *is_self && s == "self"));
+        assert!(msgs_after_charlie
+            .iter()
+            .any(|(s, _, is_self, _)| *is_self && s == "self"));
 
         // Simulate Alice departing: remove "alice", burn "alice" messages
         ui.remove_peer("alice").expect("remove alice failed");
@@ -1384,10 +1386,7 @@ mod tests {
 
         // Assert peer count drops to 2, Charlie is removed, Alice and Bob remain
         assert_eq!(ui.peer_count(), 2);
-        assert_eq!(
-            ui.peers(),
-            vec!["alice".to_string(), "bob".to_string()]
-        );
+        assert_eq!(ui.peers(), vec!["alice".to_string(), "bob".to_string()]);
 
         // Assert Charlie's messages are selectively purged, while Alice, Bob, and Self messages remain intact
         let msgs_after_charlie = ui.messages();
@@ -1538,5 +1537,3 @@ mod tests {
         assert!(ui.peers().is_empty());
     }
 }
-
-
