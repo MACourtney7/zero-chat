@@ -297,9 +297,11 @@
             },
             click: function() {
                 if (listeners.has("click")) {
+                    let last;
                     for (const cb of listeners.get("click")) {
-                        cb({ target: this, preventDefault: () => {}, stopPropagation: () => {} });
+                        last = cb({ target: this, preventDefault: () => {}, stopPropagation: () => {} });
                     }
+                    return last;
                 }
             }
         };
