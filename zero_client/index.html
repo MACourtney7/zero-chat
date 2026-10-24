@@ -1092,7 +1092,6 @@
                 }
                 burnMessageAcrossMesh(msgId);
             });
-            bubble.appendChild(burnBtn);
 
             const header = document.createElement("div");
             header.className = "message-header";
@@ -1110,6 +1109,8 @@
                 selfDot.className = "peer-dot self-dot";
                 header.appendChild(selfDot);
             }
+
+            header.appendChild(burnBtn);
 
             const body = document.createElement("div");
             body.className = "message-text";

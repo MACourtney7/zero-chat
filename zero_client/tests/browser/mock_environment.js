@@ -316,9 +316,29 @@
                     }
                     return false;
                 }
+                function matchesChain(node, parts, root) {
+                    if (!matchesSingle(node, parts[parts.length - 1])) {
+                        return false;
+                    }
+                    if (parts.length === 1) return true;
+                    let curr = node.parentNode;
+                    let partIdx = parts.length - 2;
+                    while (curr && curr !== root) {
+                        if (matchesSingle(curr, parts[partIdx])) {
+                            partIdx--;
+                            if (partIdx < 0) return true;
+                        }
+                        curr = curr.parentNode;
+                    }
+                    return false;
+                }
+                const self = this;
                 function traverse(el) {
                     for (const ch of el.children) {
-                        if (subSelectors.some(sel => matchesSingle(ch, sel))) {
+                        if (subSelectors.some(sel => {
+                            const parts = sel.split(/\s+/).filter(Boolean);
+                            return matchesChain(ch, parts, self);
+                        })) {
                             results.push(ch);
                         }
                         traverse(ch);
@@ -459,11 +479,17 @@
                 res.minHeight = res["min-height"] || "44px";
             }
             if (el.classList && el.classList.contains("btn-message-burn")) {
-                res.position = "absolute";
-                res.top = "6px";
-                res.right = "8px";
+                res.position = "relative";
+                res.marginLeft = "auto";
+                res["margin-left"] = "auto";
                 res.width = "22px";
                 res.height = "22px";
+            }
+            if (el.classList && el.classList.contains("message-header")) {
+                res.display = "flex";
+                res.alignItems = "center";
+                res.justifyContent = "space-between";
+                res.minHeight = "22px";
             }
             if (el.classList && (el.classList.contains("system-temporary") || el.classList.contains("transient-status") || (el.querySelector && el.querySelector(".ticking-dots")))) {
                 res.gap = "0px";
