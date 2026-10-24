@@ -104,10 +104,15 @@ pub struct KnownMember {
     pub relay_peer_id: Option<String>,
     pub handshake_retries: usize,
     pub last_attempt_failed: bool,
+    pub reconcile_ticks_since_discovered: usize,
 }
 
 /// Maximum retry limit for in-band mesh reconciliation handshakes (REQ-031.3).
 pub const MAX_HANDSHAKE_RETRIES: usize = 5;
+
+/// Number of reconcile ticks a higher peer ID waits before initiating a fallback handshake (REQ-031.8).
+/// Mirrors the browser client grace period (e.g. 4 seconds grace with 2-second periodic tick interval).
+pub const NON_INITIATOR_GRACE_TICKS: usize = 2;
 
 pub type MessageCallback = Rc<dyn Fn(&str, &str)>; // (sender_id, plaintext)
 pub type PeerEventCallback = Rc<dyn Fn(&str)>; // (peer_id)
@@ -223,6 +228,7 @@ impl MeshTopology {
                     m.public_key = public_key;
                     m.handshake_retries = 0;
                     m.last_attempt_failed = false;
+                    m.reconcile_ticks_since_discovered = 0;
                 })
                 .or_insert_with(|| KnownMember {
                     peer_id: peer_id.to_string(),
@@ -230,6 +236,7 @@ impl MeshTopology {
                     relay_peer_id: None,
                     handshake_retries: 0,
                     last_attempt_failed: false,
+                    reconcile_ticks_since_discovered: 0,
                 });
             let existing: Vec<(String, WebRtcPeer, [u8; 32])> = inner
                 .peers
@@ -455,6 +462,22 @@ impl MeshTopology {
                 if let Some(m) = inner.known_members.get_mut(&member.peer_id) {
                     m.handshake_retries = 0;
                     m.last_attempt_failed = false;
+                    m.reconcile_ticks_since_discovered = 0;
+                }
+                continue;
+            }
+
+            // REQ-031.8 (c): Tie-breaker for reconciliation initiation.
+            // If local_id < member.peer_id, initiate immediately as deterministic primary.
+            // If local_id > member.peer_id, wait for NON_INITIATOR_GRACE_TICKS reconcile ticks
+            // before falling back to initiate, mirroring the browser client grace window.
+            let is_primary_initiator = local_id < member.peer_id;
+            if !is_primary_initiator
+                && member.reconcile_ticks_since_discovered < NON_INITIATOR_GRACE_TICKS
+            {
+                let mut inner = self.inner.borrow_mut();
+                if let Some(m) = inner.known_members.get_mut(&member.peer_id) {
+                    m.reconcile_ticks_since_discovered += 1;
                 }
                 continue;
             }
@@ -525,6 +548,7 @@ impl MeshTopology {
                 relay_peer_id: None,
                 handshake_retries: 0,
                 last_attempt_failed: false,
+                reconcile_ticks_since_discovered: 0,
             });
     }
 
@@ -678,6 +702,7 @@ impl MeshTopology {
                                 relay_peer_id: Some(from_peer_id.to_string()),
                                 handshake_retries: 0,
                                 last_attempt_failed: false,
+                                reconcile_ticks_since_discovered: 0,
                             });
 
                         let already_connected = inner
