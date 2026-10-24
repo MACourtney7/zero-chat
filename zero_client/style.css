@@ -94,16 +94,15 @@ html, body {
 }
 
 .brand-icon {
-  width: 32px;
+  width: 28px;
   height: 32px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, rgba(56, 189, 248, 0.2), rgba(99, 102, 241, 0.3));
-  border: 1px solid rgba(56, 189, 248, 0.3);
+  background: transparent;
+  border: none;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
-  font-size: 1rem;
+  font-size: 1.15rem;
   color: var(--accent-cyan);
   font-family: var(--font-mono);
   user-select: none;
@@ -162,14 +161,14 @@ html, body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 26px;
+  min-width: 20px;
   height: 26px;
-  padding: 0 8px;
+  padding: 0 4px;
   border-radius: 9999px;
-  font-size: 0.72rem;
+  font-size: 0.85rem;
   font-weight: 600;
-  background: rgba(56, 189, 248, 0.1);
-  border: 1px solid rgba(56, 189, 248, 0.25);
+  background: transparent;
+  border: none;
   color: var(--accent-cyan);
   font-family: var(--font-mono);
   user-select: none;
@@ -184,10 +183,10 @@ html, body {
   align-items: center;
   justify-content: center;
   height: 26px;
-  padding: 0 8px;
+  padding: 0 4px;
   border-radius: 9999px;
-  background: rgba(56, 189, 248, 0.1);
-  border: 1px solid rgba(56, 189, 248, 0.25);
+  background: transparent;
+  border: none;
   color: var(--accent-cyan);
   font-family: var(--font-mono);
   user-select: none;
@@ -335,11 +334,13 @@ html, body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 58px;
+  width: auto;
+  min-width: 16px;
   height: 26px;
+  padding: 0 4px;
   border-radius: 9999px;
-  background: rgba(56, 189, 248, 0.1);
-  border: 1px solid rgba(56, 189, 248, 0.25);
+  background: transparent;
+  border: none;
   flex-shrink: 0;
   box-sizing: border-box;
   user-select: none;
@@ -714,6 +715,7 @@ html, body {
 }
 
 .system-timestamp {
+  display: none !important;
   font-family: var(--font-mono);
   font-size: 0.68rem;
   color: var(--text-muted);
@@ -751,7 +753,7 @@ html, body {
   justify-content: center;
   border-radius: 9999px;
   border: none;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.01) 100%);
+  background: transparent;
   color: rgba(255, 255, 255, 0.45);
   cursor: pointer;
   transition: all 0.2s ease;
@@ -761,9 +763,16 @@ html, body {
 
 .btn-message-burn:hover {
   color: #fca5a5;
-  background: rgba(239, 68, 68, 0.25);
-  box-shadow: 0 0 10px rgba(239, 68, 68, 0.35);
+  background: transparent;
+  box-shadow: none;
   transform: scale(1.1);
+}
+
+.btn-message-burn:active {
+  color: #f87171;
+  background: transparent;
+  box-shadow: none;
+  transform: scale(0.95);
 }
 
 .message-aging {
@@ -874,6 +883,7 @@ html, body {
 }
 
 .message-timestamp {
+  display: none !important;
   color: var(--text-muted);
   font-size: 0.68rem;
   font-family: var(--font-mono);
@@ -1096,10 +1106,18 @@ html, body {
 }
 
 .feature-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-blue);
   font-size: 1.25rem;
   line-height: 1;
   padding-top: 2px;
   flex-shrink: 0;
+}
+.feature-icon svg {
+  display: block;
+  stroke: var(--accent-blue);
 }
 
 .feature-content {

@@ -135,26 +135,38 @@
             <main id="messages-container" class="messages-container">
                 <div id="welcome-splash" class="welcome-splash">
                     <div class="welcome-header">
-                        <h2 class="welcome-title">Zero accounts. Zero servers. Zero history.</h2>
-                        <p class="welcome-subtitle">Create Chat -&gt; Share Link -&gt; Talk P2P</p>
+                        <p class="welcome-subtitle">Create -&gt; Share -&gt; Chat</p>
                     </div>
                     <div class="welcome-features">
                         <div class="feature-card">
-                            <div class="feature-icon">⚡</div>
+                            <div class="feature-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+                                </svg>
+                            </div>
                             <div class="feature-content">
                                 <span class="feature-title">Direct P2P Connection</span>
                                 <p class="feature-desc">Private channels with no intermediate relays or storage servers.</p>
                             </div>
                         </div>
                         <div class="feature-card">
-                            <div class="feature-icon">🔒</div>
+                            <div class="feature-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                                </svg>
+                            </div>
                             <div class="feature-content">
                                 <span class="feature-title">Secure Communications</span>
                                 <p class="feature-desc">All messages are end-to-end encrypted.</p>
                             </div>
                         </div>
                         <div class="feature-card">
-                            <div class="feature-icon">🛡️</div>
+                            <div class="feature-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                                </svg>
+                            </div>
                             <div class="feature-content">
                                 <span class="feature-title">Ephemeral Sessions</span>
                                 <p class="feature-desc">Chats are permanently destroyed the moment they are closed.</p>
@@ -255,10 +267,36 @@
             const inRoom = isInRoomSession || (engine !== null && !isBurned);
             if (!inRoom) {
                 peerCountEl.innerHTML = SLASHED_PERSON_ICON_SVG;
+                if (headerLeaveBtn) headerLeaveBtn.classList.add("hidden");
+                if (headerAddBtn) headerAddBtn.classList.add("hidden");
+                if (messageForm) messageForm.classList.add("hidden");
             } else {
                 // Truthful peer count: strictly open DataChannels only (REQ-031.5)
                 const count = engine ? engine.openPeerCount : 0;
                 peerCountEl.textContent = String(count);
+
+                // Rule 1: Whenever peer counter is visible in room, Leave button must be visible
+                if (headerLeaveBtn) headerLeaveBtn.classList.remove("hidden");
+
+                if (count === 0) {
+                    // Rule 2: 0 Peers
+                    if (headerAddBtn) headerAddBtn.classList.add("hidden");
+                    if (messageForm) messageForm.classList.add("hidden");
+                    if (createRoomBar) createRoomBar.classList.remove("hidden");
+                    if (btnCreateRoom && !btnCreateRoom.classList.contains("btn-waiting") && !btnCreateRoom.disabled) {
+                        setCreateRoomStage1Plus();
+                    }
+                } else {
+                    // Rule 3: >0 Peers
+                    if (headerAddBtn) headerAddBtn.classList.remove("hidden");
+                    if (messageForm) messageForm.classList.remove("hidden");
+                    if (msgInput) {
+                        msgInput.disabled = false;
+                        msgInput.placeholder = "";
+                    }
+                    if (sendBtn) sendBtn.disabled = false;
+                    if (createRoomBar) createRoomBar.classList.add("hidden");
+                }
             }
         }
 
@@ -895,26 +933,38 @@
         const WELCOME_SPLASH_HTML = `
             <div id="welcome-splash" class="welcome-splash">
                 <div class="welcome-header">
-                    <h2 class="welcome-title">Zero accounts. Zero servers. Zero history.</h2>
-                    <p class="welcome-subtitle">Create Chat -&gt; Share Link -&gt; Talk P2P</p>
+                    <p class="welcome-subtitle">Create -&gt; Share -&gt; Chat</p>
                 </div>
                 <div class="welcome-features">
                     <div class="feature-card">
-                        <div class="feature-icon">⚡</div>
+                        <div class="feature-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+                            </svg>
+                        </div>
                         <div class="feature-content">
                             <span class="feature-title">Direct P2P Connection</span>
                             <p class="feature-desc">Private channels with no intermediate relays or storage servers.</p>
                         </div>
                     </div>
                     <div class="feature-card">
-                        <div class="feature-icon">🔒</div>
+                        <div class="feature-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                            </svg>
+                        </div>
                         <div class="feature-content">
                             <span class="feature-title">Secure Communications</span>
                             <p class="feature-desc">All messages are end-to-end encrypted.</p>
                         </div>
                     </div>
                     <div class="feature-card">
-                        <div class="feature-icon">🛡️</div>
+                        <div class="feature-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                            </svg>
+                        </div>
                         <div class="feature-content">
                             <span class="feature-title">Ephemeral Sessions</span>
                             <p class="feature-desc">Chats are permanently destroyed the moment they are closed.</p>
@@ -1047,12 +1097,6 @@
             const header = document.createElement("div");
             header.className = "message-header";
 
-            const now = new Date();
-            const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-            const time = document.createElement("span");
-            time.className = "message-timestamp";
-            time.textContent = timeStr;
-
             if (!isSelf) {
                 const peerColor = getPeerColor(peerId || senderName || "peer-01");
                 bubble.style.setProperty("--peer-color", peerColor);
@@ -1066,8 +1110,6 @@
                 selfDot.className = "peer-dot self-dot";
                 header.appendChild(selfDot);
             }
-
-            header.appendChild(time);
 
             const body = document.createElement("div");
             body.className = "message-text";
@@ -1186,14 +1228,6 @@
             hideWelcomeSplash();
             const el = document.createElement("div");
             el.className = "system-message";
-
-            const now = new Date();
-            const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-
-            const timeSpan = document.createElement("span");
-            timeSpan.className = "system-timestamp";
-            timeSpan.textContent = timeStr;
-            el.appendChild(timeSpan);
 
             const textSpan = document.createElement("span");
             textSpan.className = "system-text";
@@ -1609,12 +1643,20 @@
                         hostWs = null;
                     }
 
+                    if (joinWatchdogTimer) {
+                        clearTimeout(joinWatchdogTimer);
+                        joinWatchdogTimer = null;
+                    }
+
                     if (isJoining) {
                         appendSystemMessage("Joined chat");
                         if (peerId) announcedJoinPeers.add(peerId);
+                        isJoining = false;
                     } else {
-                        appendSystemMessage("Peer joined chat");
-                        if (peerId) announcedJoinPeers.add(peerId);
+                        if (!peerId || !announcedJoinPeers.has(peerId)) {
+                            appendSystemMessage("Peer joined chat");
+                            if (peerId) announcedJoinPeers.add(peerId);
+                        }
                     }
                 } else if (st === "closed") {
                     updateStatus("closed", "Disconnected");
@@ -1622,6 +1664,24 @@
                     if (hasActiveSession && !isBurned) {
                         if (!peerDepartureHandled) {
                             handlePeerDeparture(peerId);
+                        }
+                    } else if (isInRoomSession) {
+                        if (isJoining) {
+                            handleJoinFailure(new Error("Connection closed before opening"));
+                        } else {
+                            updatePeerCountDisplay();
+                            if (headerLeaveBtn) headerLeaveBtn.classList.remove("hidden");
+                            if (headerAddBtn) headerAddBtn.classList.add("hidden");
+                            if (messageForm) messageForm.classList.add("hidden");
+                            if (createRoomBar) {
+                                createRoomBar.classList.remove("hidden");
+                                setCreateRoomStage1Plus();
+                            }
+                            if (msgInput) {
+                                msgInput.disabled = true;
+                                msgInput.placeholder = "";
+                            }
+                            if (sendBtn) sendBtn.disabled = true;
                         }
                     } else {
                         if (idleStatusCapsule) {
@@ -1683,11 +1743,9 @@
                     if (sendBtn) {
                         sendBtn.disabled = false;
                     }
-                    if (!announcedJoinPeers.has(peerId)) {
+                    if (!announcedJoinPeers.has(peerId) && hasActiveSession) {
+                        appendSystemMessage("Peer joined chat");
                         announcedJoinPeers.add(peerId);
-                        if (hasActiveSession) {
-                            appendSystemMessage("Peer joined chat");
-                        }
                     }
 
                     // Universal Peer Introduction (REQ-029.3 / REQ-031.2)
@@ -2204,6 +2262,10 @@
             updatePeerCountDisplay();
             isBurned = false;
             isJoining = false;
+            if (joinWatchdogTimer) {
+                clearTimeout(joinWatchdogTimer);
+                joinWatchdogTimer = null;
+            }
             peerDepartureHandled = false;
             opportunisticLeaveSent = false;
             hideWelcomeSplash();
@@ -2289,7 +2351,7 @@
                 activeHostInviteUrl = null;
                 if (createRoomBar) {
                     createRoomBar.classList.remove("hidden");
-                    setCreateRoomStage1();
+                    setCreateRoomStage1Plus();
                 }
                 updateStatus("disconnected", "Error creating chat");
             }
@@ -2298,6 +2360,40 @@
         // =========================================================================
         // JOINER WORKFLOW: Detect #payload=..., generate answer, drop answer via POST
         // =========================================================================
+        let joinWatchdogTimer = null;
+
+        function handleJoinFailure(err) {
+            if (joinWatchdogTimer) {
+                clearTimeout(joinWatchdogTimer);
+                joinWatchdogTimer = null;
+            }
+            if (engine) {
+                try {
+                    if (typeof engine.close === "function") engine.close();
+                    else if (engine.peers) {
+                        for (const p of engine.peers.values()) {
+                            if (p.pc) try { p.pc.close(); } catch(_) {}
+                            if (p.dc) try { p.dc.close(); } catch(_) {}
+                        }
+                    }
+                } catch (_) {}
+            }
+            clearTransientStatus();
+            appendSystemMessage("Failed to establish connection");
+            updateStatus("disconnected", "Join failed");
+            isInRoomSession = true;
+            updatePeerCountDisplay();
+            if (headerLeaveBtn) headerLeaveBtn.classList.remove("hidden");
+            if (headerAddBtn) headerAddBtn.classList.add("hidden");
+            if (messageForm) messageForm.classList.add("hidden");
+            if (createRoomBar) {
+                createRoomBar.classList.remove("hidden");
+                setCreateRoomStage1Plus();
+            }
+            isJoining = false;
+            if (err) console.error("Joiner failed:", err);
+        }
+
         async function joinRoomFromHash(hashOrUrl) {
             if (isJoining) return;
             if (!hashOrUrl) return;
@@ -2360,11 +2456,15 @@
 
                 // Strip hash from URL for privacy and zero forensic trace
                 history.replaceState(null, "", window.location.pathname);
+
+                if (joinWatchdogTimer) clearTimeout(joinWatchdogTimer);
+                joinWatchdogTimer = setTimeout(() => {
+                    if (isJoining && (!engine || engine.openPeerCount === 0)) {
+                        handleJoinFailure(new Error("Connection timed out"));
+                    }
+                }, 15000);
             } catch (err) {
-                isJoining = false;
-                console.error("Joiner failed:", err);
-                appendSystemMessage("Failed to establish connection");
-                updateStatus("disconnected", "Join failed");
+                handleJoinFailure(err);
             }
         }
 
@@ -2426,6 +2526,10 @@
             peerDepartureHandled = false;
             opportunisticLeaveSent = false;
             isJoining = false;
+            if (joinWatchdogTimer) {
+                clearTimeout(joinWatchdogTimer);
+                joinWatchdogTimer = null;
+            }
             activeHostInviteUrl = null;
             if (staggerNoticeTimer) {
                 clearTimeout(staggerNoticeTimer);

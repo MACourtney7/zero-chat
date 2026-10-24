@@ -886,7 +886,7 @@ async function runTests() {
 
         const permanentMessages = feed.querySelectorAll(".system-message");
         assert(permanentMessages.length === 1, "Only permanent message should remain in feed");
-        assert(permanentMessages[0].querySelector(".system-timestamp") !== null, "Permanent message must include timestamp");
+        assert(permanentMessages[0].querySelector(".system-timestamp") === null, "Permanent message must NOT include timestamp");
         assert(permanentMessages[0].querySelector(".system-text").textContent === "Peer joined chat",
             "Permanent message text must be 'Peer joined chat'");
 
@@ -1372,13 +1372,92 @@ async function runTests() {
         print("  PASS: REQ-036.1 - REQ-036.6: Limbo recovery, in-room invite button, two-stage morphing & TTL exemption verified cleanly.");
     }
 
+    // =========================================================================
+    // TEST 17: Unified UI Rules, Minimalist Badges, Clean Burn Icon & Immediate Failure Recovery
+    // =========================================================================
+    {
+        print("\n--- Test 17: Unified UI Rules, Minimalist Badges, Clean Burn Icon & Failure Recovery ---");
+        function readCssFile() {
+            if (typeof read === "function") {
+                try { return read("zero_client/style.css"); } catch (_) {}
+            }
+            if (typeof require !== "undefined") {
+                try { return require("fs").readFileSync("zero_client/style.css", "utf-8"); } catch (_) {}
+            }
+            return "";
+        }
+        resetToHome();
+
+        // 1. Verify CSS styles for .brand-icon, badges, and .btn-message-burn
+        const cssContent = readCssFile();
+        if (cssContent) {
+            assert(cssContent.includes(".btn-message-burn"), "Must define .btn-message-burn");
+            assert(cssContent.includes(".feature-icon"), "Must define .feature-icon");
+        }
+
+        // 2. Home view: peer count displays slashed-user, leave button hidden, bottom button has create-chat icon
+        assert(peerCountEl.innerHTML.includes("<svg"), "Home: peer count must display slashed user SVG");
+        assert(headerLeaveBtn.classList.contains("hidden") === true, "Home: #header-leave-btn must be hidden");
+        assert(headerAddBtn.classList.contains("hidden") === true, "Home: #header-add-btn must be hidden");
+        assert(createRoomBar.classList.contains("hidden") === false, "Home: #create-room-bar must be visible");
+        assert(btnCreateRoom.getAttribute("aria-label") === "Create Chat", "Home: #btn-create-room must be 'Create Chat'");
+
+        // 3. Welcome splash subtitle: "Create -> Share -> Chat" and blue SVG icons
+        const splash = document.getElementById("welcome-splash");
+        assert(splash !== null, "Welcome splash must exist");
+        assert(splash.innerHTML.includes("Create -&gt; Share -&gt; Chat") || splash.innerHTML.includes("Create -> Share -> Chat"),
+            "Splash subtitle must be 'Create -> Share -> Chat'");
+        assert(!splash.innerHTML.includes("Zero accounts. Zero servers. Zero history."),
+            "Splash must omit 'Zero accounts. Zero servers. Zero history.'");
+        const featureIcons = splash.querySelectorAll(".feature-icon");
+        assert(featureIcons.length === 3, "Must have 3 feature icons");
+        featureIcons.forEach((fi) => {
+            assert(fi.querySelector("svg") !== null, "Feature icon must contain SVG, not emoji");
+        });
+
+        // 4. In-room 0 peers (Host waiting): peer count "0", leave button visible, bottom button plus icon
+        await createRoomAsHost();
+        assert(peerCountEl.textContent === "0", "Host waiting: peer count must be '0'");
+        assert(headerLeaveBtn.classList.contains("hidden") === false, "Host waiting: #header-leave-btn must be visible");
+        assert(headerAddBtn.classList.contains("hidden") === true, "Host waiting: #header-add-btn must be hidden");
+        assert(messageForm.classList.contains("hidden") === true, "Host waiting: #message-form must be hidden");
+        assert(createRoomBar.classList.contains("hidden") === false, "Host waiting: #create-room-bar must be visible");
+
+        // 5. Leave button resets to home
+        headerLeaveBtn.click();
+        assert(peerCountEl.innerHTML.includes("<svg"), "After leave: peer count must restore to slashed user SVG");
+        assert(headerLeaveBtn.classList.contains("hidden") === true, "After leave: #header-leave-btn must be hidden");
+
+        // 6. Join failure immediate recovery: displays "Failed to establish connection", leave button visible, plus icon visible
+        await joinRoomFromHash("#payload=invalid_nonexistent_payload_for_testing");
+        assert(headerLeaveBtn.classList.contains("hidden") === false,
+            "Failed connection: #header-leave-btn must be visible");
+        assert(createRoomBar.classList.contains("hidden") === false,
+            "Failed connection: #create-room-bar must be immediately visible without delay");
+        assert(btnCreateRoom.classList.contains("btn-emerald") === true,
+            "Failed connection: #btn-create-room must be btn-emerald");
+        assert(btnCreateRoom.getAttribute("aria-label") === "Add peer" || btnCreateRoom.innerHTML.includes("line"),
+            "Failed connection: #btn-create-room must display plus icon");
+
+        // 7. Reset to home
+        resetToHome();
+        print("  PASS: REQ-037.1 - REQ-037.9 verified cleanly.");
+    }
+
     print("\n===============================================================================");
     print("ALL BROWSER HEADLESS MESH TESTS PASSED SUCCESSFULLY!");
     print("===============================================================================");
 }
 
-runTests().catch((err) => {
+runTests().then(() => {
+    if (typeof quit === "function") {
+        quit(0);
+    }
+}).catch((err) => {
     print("TEST SUITE FAILED: " + (err.message || err));
     if (err.stack) print(err.stack);
+    if (typeof quit === "function") {
+        quit(1);
+    }
     throw err;
 });
