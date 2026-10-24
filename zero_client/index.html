@@ -167,7 +167,6 @@
                             <line x1="12" y1="8" x2="12" y2="14"></line>
                             <line x1="9" y1="11" x2="15" y2="11"></line>
                         </svg>
-                        <span>Create Chat</span>
                     </button>
                 </div>
 
@@ -189,14 +188,19 @@
         const WORKER_ORIGIN = "https://network.zero-chat.workers.dev";
         const WORKER_WS_ORIGIN = "wss://network.zero-chat.workers.dev";
 
-        const CREATE_ROOM_DEFAULT_HTML = `
+        const CREATE_CHAT_ICON_SVG = `
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
                 <line x1="12" y1="8" x2="12" y2="14"></line>
                 <line x1="9" y1="11" x2="15" y2="11"></line>
-            </svg>
-            <span class="btn-text">Create Chat</span>`;
-        const CREATE_ROOM_ICON_HTML = CREATE_ROOM_DEFAULT_HTML;
+            </svg>`.trim();
+        const COPY_ICON_SVG = `
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>`.trim();
+        const CREATE_ROOM_DEFAULT_HTML = CREATE_CHAT_ICON_SVG;
+        const CREATE_ROOM_ICON_HTML = CREATE_CHAT_ICON_SVG;
 
         // DOM elements
         const headerAddBtn = document.getElementById("header-add-btn");
@@ -215,6 +219,8 @@
 
         let activeHostInviteUrl = null;
         let createRoomFeedbackTimer = null;
+        let headerAddFeedbackTimer = null;
+        let headerAddFeedbackEl = null;
         const announcedJoinPeers = new Set();
         const departedPeers = new Set();
         const activeSessionPeers = new Set();
@@ -233,29 +239,34 @@
             }
         }
 
-        function setCreateRoomCopiedFeedback() {
+        function setCreateRoomStage1() {
             if (createRoomFeedbackTimer) {
                 clearTimeout(createRoomFeedbackTimer);
                 createRoomFeedbackTimer = null;
             }
-            btnCreateRoom.classList.add("btn-copied");
-            btnCreateRoom.classList.remove("btn-waiting");
-            btnCreateRoom.innerHTML = `
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
-                <span class="btn-text">Link copied to clipboard!</span>`;
+            if (btnCreateRoom) {
+                btnCreateRoom.disabled = false;
+                btnCreateRoom.className = "btn-action btn-action-full btn-emerald";
+                btnCreateRoom.setAttribute("aria-label", "Create Chat");
+                btnCreateRoom.innerHTML = CREATE_CHAT_ICON_SVG;
+            }
+        }
 
-            createRoomFeedbackTimer = setTimeout(() => {
-                btnCreateRoom.classList.remove("btn-copied");
-                btnCreateRoom.classList.add("btn-waiting");
-                btnCreateRoom.innerHTML = `
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                    </svg>
-                    <span class="btn-text">Share link copied · Waiting for peer...</span>`;
-            }, 2500);
+        function setCreateRoomStage2() {
+            if (createRoomFeedbackTimer) {
+                clearTimeout(createRoomFeedbackTimer);
+                createRoomFeedbackTimer = null;
+            }
+            if (btnCreateRoom) {
+                btnCreateRoom.disabled = false;
+                btnCreateRoom.className = "btn-action btn-action-full btn-waiting";
+                btnCreateRoom.setAttribute("aria-label", "Copy invite link");
+                btnCreateRoom.innerHTML = COPY_ICON_SVG;
+            }
+        }
+
+        function setCreateRoomCopiedFeedback() {
+            setCreateRoomStage2();
         }
 
         // Deduplication & Glare Avoidance State
@@ -955,7 +966,74 @@
             feed.scrollTop = feed.scrollHeight;
         }
 
+        function clearTemporarySystemMessages() {
+            if (headerAddFeedbackTimer) {
+                clearTimeout(headerAddFeedbackTimer);
+                headerAddFeedbackTimer = null;
+            }
+            headerAddFeedbackEl = null;
+            const temps = feed.querySelectorAll(".system-temporary");
+            temps.forEach((el) => el.remove());
+        }
+
+        function appendTemporarySystemMessage(text, isWaitingDots = false) {
+            clearTransientStatus();
+            hideWelcomeSplash();
+            const el = document.createElement("div");
+            el.className = "system-message system-temporary";
+
+            const textSpan = document.createElement("span");
+            textSpan.className = "system-text";
+            textSpan.textContent = text;
+            el.appendChild(textSpan);
+
+            if (isWaitingDots) {
+                const dotsSpan = document.createElement("span");
+                dotsSpan.className = "ticking-dots";
+                el.appendChild(dotsSpan);
+            }
+
+            feed.appendChild(el);
+            feed.scrollTop = feed.scrollHeight;
+            return el;
+        }
+
+        function triggerHeaderAddFeedback() {
+            if (headerAddFeedbackTimer) {
+                clearTimeout(headerAddFeedbackTimer);
+                headerAddFeedbackTimer = null;
+            }
+
+            if (headerAddFeedbackEl && headerAddFeedbackEl.parentNode === feed) {
+                headerAddFeedbackEl.classList.remove("notice-pulse");
+                void headerAddFeedbackEl.offsetWidth;
+                headerAddFeedbackEl.classList.add("notice-pulse");
+            } else {
+                clearTransientStatus();
+                hideWelcomeSplash();
+                headerAddFeedbackEl = document.createElement("div");
+                headerAddFeedbackEl.className = "system-message system-temporary header-add-notice notice-pulse";
+
+                const textSpan = document.createElement("span");
+                textSpan.className = "system-text";
+                textSpan.textContent = "Invite link copied to clipboard";
+                headerAddFeedbackEl.appendChild(textSpan);
+
+                feed.appendChild(headerAddFeedbackEl);
+                feed.scrollTop = feed.scrollHeight;
+            }
+
+            headerAddFeedbackTimer = setTimeout(() => {
+                if (headerAddFeedbackEl && headerAddFeedbackEl.parentNode) {
+                    headerAddFeedbackEl.remove();
+                }
+                headerAddFeedbackEl = null;
+                headerAddFeedbackTimer = null;
+            }, 5000);
+        }
+
         function appendSystemMessage(text) {
+            clearTemporarySystemMessages();
             clearTransientStatus();
             hideWelcomeSplash();
             const el = document.createElement("div");
@@ -1009,7 +1087,7 @@
             if (!hasActiveSession || !engine) return;
 
             if (pendingInviteUrl) {
-                // Re-copy existing invite link silently without spawning duplicate cloud session or offer
+                // Re-copy existing invite link and trigger 5-second pulse notice (REQ-033.3)
                 if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
                     try {
                         await navigator.clipboard.writeText(pendingInviteUrl);
@@ -1017,6 +1095,7 @@
                         console.warn("Clipboard copy failed:", e);
                     }
                 }
+                triggerHeaderAddFeedback();
                 return;
             }
 
@@ -1076,7 +1155,7 @@
 
                 ws.onerror = (e) => console.warn("Pending invite signaling socket error:", e);
 
-                // Silently copy to clipboard
+                // Copy to clipboard and trigger 5-second self-clearing notice (REQ-033.3)
                 if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
                     try {
                         await navigator.clipboard.writeText(inviteUrl);
@@ -1084,6 +1163,7 @@
                         console.warn("Clipboard copy failed:", e);
                     }
                 }
+                triggerHeaderAddFeedback();
             } catch (err) {
                 console.error("Failed to create pending invite:", err);
                 clearPendingInvite();
@@ -1392,9 +1472,7 @@
                         if (messageForm) messageForm.classList.add("hidden");
                         if (createRoomBar) {
                             createRoomBar.classList.remove("hidden");
-                            btnCreateRoom.disabled = false;
-                            btnCreateRoom.className = "btn-action btn-action-full btn-emerald";
-                            btnCreateRoom.innerHTML = CREATE_ROOM_DEFAULT_HTML;
+                            setCreateRoomStage1();
                         }
                         if (msgInput) {
                             msgInput.disabled = true;
@@ -1814,7 +1892,7 @@
         // =========================================================================
         async function createRoomAsHost() {
             if (activeHostInviteUrl) {
-                // Subsequent click while waiting for a peer: re-copy link and re-trigger feedback
+                // Subsequent click while waiting for a peer: re-copy link and re-trigger temporary notices (REQ-033.2)
                 if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
                     try {
                         await navigator.clipboard.writeText(activeHostInviteUrl);
@@ -1822,7 +1900,10 @@
                         console.warn("Clipboard copy failed:", e);
                     }
                 }
-                setCreateRoomCopiedFeedback();
+                setCreateRoomStage2();
+                clearTemporarySystemMessages();
+                appendTemporarySystemMessage("Invite link copied to clipboard");
+                appendTemporarySystemMessage("Waiting for peer...", true);
                 return;
             }
 
@@ -1902,21 +1983,20 @@
                     }
                 }
 
-                // Enable button and provide visual copied feedback
-                btnCreateRoom.disabled = false;
-                setCreateRoomCopiedFeedback();
+                // Enable button and transition to Stage 2 (REQ-033.1)
+                setCreateRoomStage2();
 
-                appendSystemMessage("Secure chat created");
-                appendSystemMessage("Invite link copied to clipboard");
+                // Bottom button click flow: clear temp messages, emit invite copied + waiting for peer (REQ-033.2)
+                clearTemporarySystemMessages();
+                appendTemporarySystemMessage("Invite link copied to clipboard");
+                appendTemporarySystemMessage("Waiting for peer...", true);
             } catch (err) {
                 console.error("Chat creation failed:", err);
                 appendSystemMessage("Failed to create chat");
                 activeHostInviteUrl = null;
                 if (createRoomBar) {
                     createRoomBar.classList.remove("hidden");
-                    btnCreateRoom.disabled = false;
-                    btnCreateRoom.className = "btn-action btn-action-full btn-emerald";
-                    btnCreateRoom.innerHTML = CREATE_ROOM_DEFAULT_HTML;
+                    setCreateRoomStage1();
                 }
                 updateStatus("disconnected", "Error creating chat");
             }
@@ -2055,6 +2135,11 @@
                 clearTimeout(createRoomFeedbackTimer);
                 createRoomFeedbackTimer = null;
             }
+            if (headerAddFeedbackTimer) {
+                clearTimeout(headerAddFeedbackTimer);
+                headerAddFeedbackTimer = null;
+            }
+            headerAddFeedbackEl = null;
             clearPendingInvite();
             peerColorMap.clear();
             seenMessageIds.clear();
@@ -2094,9 +2179,7 @@
             if (messageForm) messageForm.classList.add("hidden");
             if (createRoomBar) {
                 createRoomBar.classList.remove("hidden");
-                btnCreateRoom.disabled = false;
-                btnCreateRoom.className = "btn-action btn-action-full btn-emerald";
-                btnCreateRoom.innerHTML = CREATE_ROOM_DEFAULT_HTML;
+                setCreateRoomStage1();
             }
             if (msgInput) {
                 msgInput.disabled = true;
@@ -2171,6 +2254,9 @@
             }
         });
 
+        // Initialize bottom button in Stage 1
+        setCreateRoomStage1();
+
         // Expose constructors and relay helpers on window for external runners & tests
         window.ZeroWebRtcEngine = ZeroWebRtcEngine;
         window.initiateRelayHandshake = initiateRelayHandshake;
@@ -2186,11 +2272,22 @@
         window.createRoomAsHost = createRoomAsHost;
         window.joinRoomFromHash = joinRoomFromHash;
         window.headerAddBtn = headerAddBtn;
+        window.btnCreateRoom = btnCreateRoom;
+        window.feed = feed;
         window.activeSessionPeers = activeSessionPeers;
         window.knownSessionMembers = knownSessionMembers;
         window.reconcileMesh = reconcileMesh;
         window.memberHandshakeState = memberHandshakeState;
         window.updatePeerCountDisplay = updatePeerCountDisplay;
+        window.setCreateRoomStage1 = setCreateRoomStage1;
+        window.setCreateRoomStage2 = setCreateRoomStage2;
+        window.appendTemporarySystemMessage = appendTemporarySystemMessage;
+        window.clearTemporarySystemMessages = clearTemporarySystemMessages;
+        window.appendSystemMessage = appendSystemMessage;
+        window.resetToHome = resetToHome;
+        window.getHeaderAddFeedbackTimer = () => headerAddFeedbackTimer;
+        window.getHeaderAddFeedbackEl = () => headerAddFeedbackEl;
+        window.setHasActiveSession = (v) => { hasActiveSession = v; };
     </script>
 </body>
 </html>
