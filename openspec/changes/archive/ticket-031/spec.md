@@ -4,7 +4,8 @@
 ---
 ticket_id: "ticket-031"
 title: "Multi-User Chat Resilient Full-Mesh Joining/Leaving"
-state: "IN_PROGRESS"
+state: "COMPLETED"
+completed_at: "2026-10-24T10:15:00Z"
 created_at: "2026-10-23T21:20:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-031/main"
@@ -44,30 +45,30 @@ All in the browser mesh logic in `zero_client/index.html`; ticket-029/030 attemp
 
 ## 3. Requirements & Acceptance Criteria
 
-- [ ] **REQ-031.1 (Reproduce & Diagnose First)**:
+- [x] **REQ-031.1 (Reproduce & Diagnose First)**:
   - A failing automated test (Rust mesh simulation and/or headless browser scenario) reproduces: A-B joined, A-C joined, A leaves, C sends, B receives nothing.
   - The implementer documents the confirmed root cause(s) (H1-H5 or new) in its report before fixing.
-- [ ] **REQ-031.2 (Full-Mesh Guarantee)**:
+- [x] **REQ-031.2 (Full-Mesh Guarantee)**:
   - When C joins via any member, within a bounded time (<= 10s) C holds a direct open DataChannel to **every** other member, verified on both ends.
   - Joins through a different inviter (e.g. B invites D) likewise yield links to all members.
   - Introduction/handshake is idempotent, glare-safe, and never closes/replaces an already-open channel (H2).
-- [ ] **REQ-031.3 (Mesh Reconciliation / Retry)**:
+- [x] **REQ-031.3 (Mesh Reconciliation / Retry)**:
   - Each client tracks known session members (from `PeerJoined` introductions) and periodically reconciles them against open channels; a missing link triggers a re-handshake with bounded retries/backoff via any still-connected peer as relay.
   - Handshake failure after retries is logged and surfaced, not silent.
   - Either side may initiate after the deterministic tie-breaker window expires (H4).
-- [ ] **REQ-031.4 (Survives Any Departure While >= 2 Remain)**:
+- [x] **REQ-031.4 (Survives Any Departure While >= 2 Remain)**:
   - After the original host (or any single member) leaves, remaining clients keep direct channels, can send/receive to each other, and the chat stays active.
   - Only the departed peer's bubbles are purged; others' messages preserved.
   - The session returns to home only when no other peer remains.
-- [ ] **REQ-031.5 (Truthful Peer Count & State)**:
+- [x] **REQ-031.5 (Truthful Peer Count & State)**:
   - `#peer-count` and `survivingCount` derive from actually **open** DataChannels only (H3).
   - Re-handshaking a link never triggers "Peer left chat" or purges; `departedPeers` entries are cleared when that peer legitimately reconnects.
-- [ ] **REQ-031.6 (Send Reliability Feedback)**:
+- [x] **REQ-031.6 (Send Reliability Feedback)**:
   - Messages go to all open channels; if none are open the UI shows a clear error instead of showing the message as delivered (H5).
   - Gossip forwarding stays as fallback for not-yet-direct links, with dedup preserved.
-- [ ] **REQ-031.7 (Workspace Integrity)**:
+- [x] **REQ-031.7 (Workspace Integrity)**:
   - `cargo test --workspace` passes, `cargo clippy --workspace --all-targets -- -D warnings` clean, `wasm32-unknown-unknown` build clean; ticket-029/030 behaviours (single-click copy invite, system messages, selective purge) not regressed.
-- [ ] **REQ-031.8 (Review Cycle 1 Hardening)**:
+- [x] **REQ-031.8 (Review Cycle 1 Hardening)**:
   - (a) Browser glare handling: when an incoming `RelaySdpOffer` arrives while a local outgoing offer to the same peer is `connecting`, the lower peer ID (`myPeerId < remotePeerId`) keeps its offer and ignores the incoming one; the higher ID rolls back its offer and answers. Crossed offers must converge without waiting for the 8s watchdog.
   - (b) Browser stalled-`connecting` watchdog runs even when zero open peers remain; orphaned connecting peers are cleaned and the UI transitions to disconnected.
   - (c) Rust `reconcile_mesh` applies the same tie-breaker (`local_peer_id < member.peer_id` initiates immediately; otherwise only after a grace/attempt threshold) for parity with the browser.

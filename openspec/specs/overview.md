@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.4.0"
+version: "1.5.0"
 milestone: "multi-user-mesh-chat"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-20T20:53:00Z"
+updated_at: "2026-10-24T10:15:00Z"
 ---
 ```
 
@@ -18,7 +18,7 @@ updated_at: "2026-10-20T20:53:00Z"
 2. **Stateless HMAC-Sealed Handshake (Pattern B)**: Signaling dead-drop HTTP `POST` requests and hibernating WebSockets ($0 idle duration billing). Offline invites are sealed with `HMAC_SHA256(host_secret, Invite_UUID)` embedded in URL `#fragment`s, which never touch any cloud edge.
 3. **Pure Rust Cryptographic Engine**: Synchronous, memory-safe cryptographic primitives (`x25519-dalek`, `chacha20poly1305`, `hmac-sha256` with `getrandom/js`) shared across WASM and Cloudflare Worker, bypassing asynchronous JS WebCrypto bridging overhead.
 4. **Direct P2P DataChannels**: Once the initial WebRTC SDP offer/answer exchange completes, the cloud edge drops out permanently (`is_edge_severed() == true`). All communication flows directly over browser-to-browser UDP DataChannels.
-5. **In-Band Gossip Mesh, Secondary Inviter Snapping & Glare Avoidance**: Multi-peer scaling without cloud edge requests. Any connected participant (host or invitee) can invite additional peers. The inviter serves as an opaque in-band relay bridge for secondary SDP exchange (`RelaySdpOffer`, `RelaySdpAnswer`), ensuring full triangle ($K_3$) or complete mesh snapping. Glare collisions are avoided via deterministic lexicographical tie-breaking (`myPeerId < remotePeerId`), with complete candidate gathering guarantees (`_waitForIceGatheringComplete`).
+5. **Resilient In-Band Mesh, Secondary Snapping & Glare Avoidance**: Multi-peer scaling without cloud edge requests. Any connected participant (host or invitee) can invite additional peers. The inviter serves as an opaque in-band relay bridge for secondary SDP exchange (`RelaySdpOffer`, `RelaySdpAnswer`), ensuring full triangle ($K_3$) or complete mesh snapping ($K_N$). Glare collisions during crossed offers are resolved deterministically via polite/impolite roles (`myPeerId < remotePeerId` impolite winner ignores incoming offer, polite loser yields and answers). A periodic reconciliation loop (2s interval, max 5 retries with backoff) ensures any missing links between discovered members are autonomously retried and established.
 6. **Mesh-Coordinated Leave vs. Burn Lifecycle**:
    - **Leave Chat (`leave_and_burn`)**: Clean departures broadcast `PeerLeftAndBurn` across the mesh before severance, causing remaining peers to selectively purge all messages authored by the leaving peer (`data-peer-id`) while preserving active mesh connections; the departing user's local session is reset to home. Surviving peers maintain pairwise DataChannels and feed continuity even if the original host leaves.
    - **Burn Chat (`global_burn`)**: Triggers complete room annihilation (`GlobalBurnSession`) flooded across all peers, immediately closing DataChannels, zeroizing keys/memory, and returning all participants simultaneously to the home view.
@@ -28,7 +28,7 @@ updated_at: "2026-10-20T20:53:00Z"
    - Frictionless room creation: clicking `#btn-create-room` in home view immediately copies the invite link to `navigator.clipboard` with clear visual feedback (`.btn-copied` state and system notice), completely eliminating `#invite-bar`.
    - In-room peer invites are generated via an Add-Peer button (`#header-add-btn`) placed in the header directly to the left of `#peer-count`.
    - Enforces a strictly non-wasteful single-invite lifecycle: only one invite can be active at a time; subsequent clicks while pending re-copy the existing valid link without spawning redundant cloud signaling sessions; cleared upon peer connection; copies silently without tooltip bubbles.
-   - **Presence-Aware Dynamic Peer Counter Synchronization**: `#peer-count` evaluates `Math.max(engine ? engine.openPeerCount : 0, activeSessionPeers.size)`. Immediate presence tracking on `PeerJoined` and relay messages ensures all participants' counters update in lockstep to `2` upon 3rd-peer arrival without waiting on asynchronous ICE negotiation. Upon peer departure, counters decrement symmetrically (`2 -> 1`) across all surviving clients.
+   - **Truthful Dynamic Peer Counter & Send Reliability**: `#peer-count` evaluates strictly `engine.openPeerCount` (actual active WebRTC DataChannels in open state). Attempting to send messages when 0 peers are open is halted, preserving input text and rendering `"Message not sent: no connected peers"`. Upon peer departure, surviving channels are preserved and counters decrement symmetrically across all surviving peers.
    - Standardized system messages: clean, user-friendly notices for room creation (`"Secure chat created"`), self joins (`"Joined chat"`), peer arrivals (`"Peer joined chat"` without debug string leakage), and peer departures (`"Peer left chat"`).
 8. **Hermetic CI/CD Pipelines**: Automated dual-target test validation, strict clippy auditing, and automated Cloudflare Worker + Cloudflare Pages deployment via GitHub Actions.
 
@@ -176,7 +176,7 @@ Host (Alice)                     Joiner (Bob)                 Cloudflare DO
 
 ---
 
-## 5. Test & Validation Coverage (113 Tests)
+## 5. Test & Validation Coverage (114 Rust Tests + 9 Browser Headless Tests)
 
 ```text
 Unit Tests:
