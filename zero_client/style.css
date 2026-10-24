@@ -742,9 +742,8 @@ html, body {
 }
 
 .btn-message-burn {
-  position: absolute;
-  top: 6px;
-  right: 8px;
+  position: relative;
+  margin-left: auto;
   width: 22px;
   height: 22px;
   padding: 0;
@@ -758,7 +757,7 @@ html, body {
   cursor: pointer;
   transition: all 0.2s ease;
   box-sizing: border-box;
-  z-index: 2;
+  flex-shrink: 0;
 }
 
 .btn-message-burn:hover {
@@ -814,7 +813,7 @@ html, body {
 }
 
 .message-outgoing .message-header {
-  justify-content: flex-start;
+  justify-content: space-between;
   gap: 6px;
 }
 
@@ -834,7 +833,8 @@ html, body {
 }
 
 .message-incoming .message-header {
-  justify-content: flex-start;
+  justify-content: space-between;
+  gap: 6px;
 }
 
 .message-incoming .message-sender {
@@ -844,6 +844,9 @@ html, body {
 .message-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 22px;
   gap: 6px;
   font-size: 0.72rem;
   margin-bottom: 2px;
