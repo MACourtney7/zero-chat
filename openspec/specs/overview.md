@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.7.0"
+version: "1.8.0"
 milestone: "ephemeral-ui-modernization"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-24T15:30:00Z"
+updated_at: "2026-10-24T17:05:00Z"
 ---
 ```
 
@@ -32,11 +32,15 @@ updated_at: "2026-10-24T15:30:00Z"
    - Calling `handlePeerDeparture(leavingPeerId)` first records the peer in `departedPeers` before `_teardownPeerQuietly` disconnects the peer, completely preventing duplicate `"Peer left chat"` system messages.
    - When the host departs, surviving participants retain direct pairwise DataChannels with `#peer-count = 1`.
    - `openPeerCount` filter excludes any peer in `departedPeers`.
-9. **Simplified Icon-Only Room Creation & Temporary System Messages**:
+9. **Zero-Text Minimalist UI, Slashed Person Icon & Staggered Temporary Notices**:
    - The bottom `#btn-create-room` operates with zero text labels, featuring an icon-only 2-stage visual flow: Stage 1 (unclicked, `.btn-emerald` with create chat icon) and Stage 2 (clicked, `.btn-waiting` with copy icon). Re-clicking in Stage 2 stays in Stage 2 and re-copies the link.
-   - Temporary system messages omit timestamps. Clicking create room displays temporary notices `"Invite link copied to clipboard"` followed by `"Waiting for peer..."` with ticking ellipsis, automatically cleared by any subsequent permanent system message.
+   - `#message-input` maintains an empty placeholder (`placeholder=""`) permanently across all lifecycle states, eliminating residual text artifacts upon peer departure.
+   - Clicking create room dispatches staggered temporary notices: notice 1 (`"Invite link copied to clipboard"`) renders immediately, followed by notice 2 (`"Waiting for peer"`) after ~450ms. Re-clicking restarts the stagger cleanly and cancels in-flight timers.
+   - Notice 2 contains strictly `"Waiting for peer"` without literal dots, animated dynamically by `.ticking-dots` (`::after`) without punctuation duplication.
+   - Temporary system messages omit timestamps and are automatically purged upon permanent system message arrival.
+   - In Home View, `#peer-count` renders an SVG slashed person icon (`var(--accent-cyan)`), transitions to numeric `"0"` upon room entry (and mirrors open DataChannels), and cleanly restores the slashed person icon on `resetToHome()`.
    - The header `[+]` button displays a temporary `"Invite link copied to clipboard"` message with a pulse micro-animation (`.notice-pulse`) that auto-clears after 5 seconds, re-triggering the pulse and restarting the 5s timer on repeated clicks without mutating the `[+]` button itself.
-10. **Truthful Dynamic Peer Counter & Send Reliability**: `#peer-count` evaluates strictly `engine.openPeerCount` (actual active WebRTC DataChannels in open state). Attempting to send messages when 0 peers are open is halted, preserving input text and rendering `"Message not sent: no connected peers"`.
+10. **Truthful Dynamic Peer Counter & Send Reliability**: `#peer-count` inside rooms evaluates strictly `engine.openPeerCount` (actual active WebRTC DataChannels in open state). Attempting to send messages when 0 peers are open is halted, preserving input text and rendering `"Message not sent: no connected peers"`.
 11. **Hermetic CI/CD Pipelines**: Automated dual-target test validation, strict clippy auditing, and automated Cloudflare Worker + Cloudflare Pages deployment via GitHub Actions.
 
 ---
@@ -231,7 +235,7 @@ Integration Test Suites:
     * REQ-001.1 through REQ-001.5 + Serde backward compatibility & round-trip assertions
 
 Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
-  - 13 comprehensive multi-participant mesh, departure & UI scenarios passed:
+  - 14 comprehensive multi-participant mesh, departure & UI scenarios passed:
     * Test 1: Full mesh establishment with 3 peers (A, B, C) (K_3)
     * Test 2: Host A departs; C broadcasts; B receives directly
     * Test 3: C departs; B reflects 0 open peers
@@ -245,7 +249,8 @@ Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
     * Test 11: Pre-assigned peer IDs and clean host departure in 3-peer mesh (single notice deduplication)
     * Test 12: E2E createRoomAsHost and joinRoomFromHash via signaling exchange (zero peer renaming)
     * Test 13: Simplified icon-only button, temporary system messages & pulse animation (REQ-033.1 - REQ-033.4)
+    * Test 14: Zero input placeholder, staggered temporary notices, single ellipsis & slashed person icon (REQ-034.1 - REQ-034.4)
 
-Total: 123 Rust tests + 13 Browser tests passed, 0 failed.
+Total: 123 Rust tests + 14 Browser tests passed, 0 failed.
 ```
 

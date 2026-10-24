@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-034"
 title: "UI Refinements: Zero Placeholder, Staggered Notice Timing, Ellipsis Fix and Disconnected Indicator"
-state: "IN_PROGRESS"
+state: "COMPLETED"
 created_at: "2026-10-24T15:25:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-034/main"
