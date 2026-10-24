@@ -136,6 +136,12 @@ In `zero_client/index.html`, establish consistent reactive UI synchronization:
   6. Verify Joiner sees `"Joined chat"` exactly once and does not see `"Peer joined chat"` for that same initial host connection.
   7. Verify clicking Leave button returns client to home view across all states.
 
+### REQ-037.9: Splash Screen Default Blue Vector Icons
+- In `zero_client/index.html` (initial `#welcome-splash` DOM and `WELCOME_SPLASH_HTML` template):
+  - Replace platform emojis (⚡, 🔒, 🛡️) with crisp, uniform inline SVG vector icons (lightning bolt polygon, padlock rect/path, shield path).
+- In `zero_client/style.css`:
+  - Style `.feature-icon` and `.feature-icon svg` in default blue (`color: var(--accent-blue); stroke: var(--accent-blue);`), replacing disparate multi-color emojis (yellow lightning, gold lock, red shield) with a uniform default blue appearance.
+
 ---
 
 ## 3. Target Architecture & Affected Modules

@@ -1109,7 +1109,7 @@ html, body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--accent-cyan);
+  color: var(--accent-blue);
   font-size: 1.25rem;
   line-height: 1;
   padding-top: 2px;
@@ -1117,7 +1117,7 @@ html, body {
 }
 .feature-icon svg {
   display: block;
-  stroke: var(--accent-cyan);
+  stroke: var(--accent-blue);
 }
 
 .feature-content {
