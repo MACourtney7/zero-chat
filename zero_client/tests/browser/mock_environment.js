@@ -372,6 +372,15 @@
                 res.width = "22px";
                 res.height = "22px";
             }
+            if (el.classList && (el.classList.contains("system-temporary") || el.classList.contains("transient-status") || (el.querySelector && el.querySelector(".ticking-dots")))) {
+                res.gap = "0px";
+            } else if (el.classList && el.classList.contains("system-message")) {
+                res.gap = "8px";
+            }
+            if (el.classList && el.classList.contains("ticking-dots")) {
+                res.marginLeft = "0px";
+                res["margin-left"] = "0px";
+            }
             return res;
         };
         global.window.getComputedStyle = global.getComputedStyle;
