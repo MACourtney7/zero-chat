@@ -67,6 +67,11 @@ All in the browser mesh logic in `zero_client/index.html`; ticket-029/030 attemp
   - Gossip forwarding stays as fallback for not-yet-direct links, with dedup preserved.
 - [ ] **REQ-031.7 (Workspace Integrity)**:
   - `cargo test --workspace` passes, `cargo clippy --workspace --all-targets -- -D warnings` clean, `wasm32-unknown-unknown` build clean; ticket-029/030 behaviours (single-click copy invite, system messages, selective purge) not regressed.
+- [ ] **REQ-031.8 (Review Cycle 1 Hardening)**:
+  - (a) Browser glare handling: when an incoming `RelaySdpOffer` arrives while a local outgoing offer to the same peer is `connecting`, the lower peer ID (`myPeerId < remotePeerId`) keeps its offer and ignores the incoming one; the higher ID rolls back its offer and answers. Crossed offers must converge without waiting for the 8s watchdog.
+  - (b) Browser stalled-`connecting` watchdog runs even when zero open peers remain; orphaned connecting peers are cleaned and the UI transitions to disconnected.
+  - (c) Rust `reconcile_mesh` applies the same tie-breaker (`local_peer_id < member.peer_id` initiates immediately; otherwise only after a grace/attempt threshold) for parity with the browser.
+  - Regression tests for each (browser harness for a and b; Rust simulation for c).
 
 ---
 
