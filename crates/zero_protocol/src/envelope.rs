@@ -55,7 +55,12 @@ pub struct InvitePayload {
     pub token: String,
     pub sdp_offer: SdpOffer,
     pub host_public_key: [u8; 32],
+    #[serde(default)]
     pub guest_private_key: Option<[u8; 32]>,
+    #[serde(default)]
+    pub host_peer_id: Option<String>,
+    #[serde(default)]
+    pub assigned_peer_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +69,8 @@ pub struct DropPayload {
     pub token: String,
     pub sdp_answer: SdpAnswer,
     pub joiner_public_key: [u8; 32],
+    #[serde(default)]
+    pub joiner_peer_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,6 +178,8 @@ mod tests {
             },
             host_public_key: [7u8; 32],
             guest_private_key: Some([9u8; 32]),
+            host_peer_id: Some("host-peer-001".to_string()),
+            assigned_peer_id: Some("guest-peer-002".to_string()),
         };
 
         let json = to_json_string(&payload).expect("serialize to string");
@@ -191,6 +200,7 @@ mod tests {
                 sdp: "v=0\r\na=answer".to_string(),
             },
             joiner_public_key: [11u8; 32],
+            joiner_peer_id: Some("joiner-peer-003".to_string()),
         };
 
         let json = to_json_string(&payload).expect("serialize to string");
