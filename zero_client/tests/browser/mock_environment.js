@@ -1,5 +1,39 @@
 // Mock DOM & WebRTC environment for testing zero_client index.html mesh logic
 (function(global) {
+    if (typeof global.print === "function") {
+        global.console = {
+            log: global.print,
+            warn: global.print,
+            error: global.print,
+            debug: global.print
+        };
+    }
+
+    if (!global.setInterval) {
+        let intervalCounter = 0;
+        const activeIntervals = new Map();
+        global.setInterval = function(fn, ms) {
+            const id = ++intervalCounter;
+            let active = true;
+            function run() {
+                if (!active) return;
+                try { fn(); } catch (_) {}
+                if (active) {
+                    setTimeout(run, ms);
+                }
+            }
+            setTimeout(run, ms);
+            activeIntervals.set(id, () => { active = false; });
+            return id;
+        };
+        global.clearInterval = function(id) {
+            const stop = activeIntervals.get(id);
+            if (stop) {
+                stop();
+                activeIntervals.delete(id);
+            }
+        };
+    }
     // 1. Mock crypto
     if (!global.crypto) {
         global.crypto = {
@@ -183,6 +217,7 @@
             this.connectionState = "new";
             this.iceConnectionState = "new";
             this.iceGatheringState = "new";
+            this.signalingState = "stable";
             this.localDescription = null;
             this.remoteDescription = null;
             this.dataChannels = [];
@@ -222,12 +257,28 @@
         }
 
         async setLocalDescription(desc) {
+            if (desc.type === "offer") {
+                this.signalingState = "have-local-offer";
+            } else if (desc.type === "answer") {
+                this.signalingState = "stable";
+            }
             this.localDescription = desc;
             this.iceGatheringState = "complete";
             if (this._onIceGather) this._onIceGather();
         }
 
         async setRemoteDescription(desc) {
+            if (desc.type === "offer") {
+                if (this.signalingState !== "stable") {
+                    throw new Error("InvalidStateError: Failed to execute 'setRemoteDescription' on 'RTCPeerConnection': Cannot set remote offer in state " + this.signalingState);
+                }
+                this.signalingState = "have-remote-offer";
+            } else if (desc.type === "answer") {
+                if (this.signalingState !== "have-local-offer") {
+                    throw new Error("InvalidStateError: Failed to execute 'setRemoteDescription' on 'RTCPeerConnection': Cannot set remote answer in state " + this.signalingState);
+                }
+                this.signalingState = "stable";
+            }
             this.remoteDescription = desc;
             // Parse remote PC ID from mock SDP
             const match = desc.sdp && desc.sdp.match(/a=mock-pc-id:([^\r\n]+)/);
@@ -263,6 +314,7 @@
         close() {
             this.connectionState = "closed";
             this.iceConnectionState = "closed";
+            this.signalingState = "closed";
             connectionRegistry.delete(this.id);
             for (const dc of this.dataChannels) {
                 dc.close();
