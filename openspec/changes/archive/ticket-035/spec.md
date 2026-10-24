@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-035"
 title: "Enhanced Burn Behavior: 90s Ephemeral TTL with Aging Fade, Per-Message Distributed Burn, and Minimal Dissolve"
-state: "IN_PROGRESS"
+state: "COMPLETED"
 created_at: "2026-10-24T16:15:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-035/main"

@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.8.0"
+version: "1.9.0"
 milestone: "ephemeral-ui-modernization"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-24T17:05:00Z"
+updated_at: "2026-10-24T18:00:00Z"
 ---
 ```
 
@@ -42,6 +42,11 @@ updated_at: "2026-10-24T17:05:00Z"
    - The header `[+]` button displays a temporary `"Invite link copied to clipboard"` message with a pulse micro-animation (`.notice-pulse`) that auto-clears after 5 seconds, re-triggering the pulse and restarting the 5s timer on repeated clicks without mutating the `[+]` button itself.
 10. **Truthful Dynamic Peer Counter & Send Reliability**: `#peer-count` inside rooms evaluates strictly `engine.openPeerCount` (actual active WebRTC DataChannels in open state). Attempting to send messages when 0 peers are open is halted, preserving input text and rendering `"Message not sent: no connected peers"`.
 11. **Hermetic CI/CD Pipelines**: Automated dual-target test validation, strict clippy auditing, and automated Cloudflare Worker + Cloudflare Pages deployment via GitHub Actions.
+12. **90-Second Ephemeral Lifecycle, Aging Fade, Per-Message Distributed Burn & Quiet Room Invariant**:
+    - Every message (chat bubbles and system notices) registers a client-side 90-second self-destruct lifecycle: full contrast for 70s, gentle transition to 0.80 opacity between 70s and 90s (`.message-aging`, preserving >9:1 contrast), and a 200ms minimal soft fade (`.message-dissolve`: opacity 0, scale 0.98, height/margin collapse) before DOM removal.
+    - Quiet Room Invariant: when all messages dissolve in an active room session (`isInRoomSession`), the chat remains an open, serene, quiet space without re-popping the welcome splash screen.
+    - Each chat bubble features a dedicated top-right flame burn button (`.btn-message-burn`, min-size `135px × 44px`, flame-red hover accent, default text cursor preserved).
+    - Clicking the flame button dissolves the message locally and broadcasts an in-band `{ type: "signal", signal: { BurnMessage: { message_id, ttl: 3 } } }` frame across the mesh; receiving peers deduplicate via `seenMessageIds`, dissolve matching bubble with the 200ms animation, and gossip forward.
 
 ---
 
@@ -235,7 +240,7 @@ Integration Test Suites:
     * REQ-001.1 through REQ-001.5 + Serde backward compatibility & round-trip assertions
 
 Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
-  - 14 comprehensive multi-participant mesh, departure & UI scenarios passed:
+  - 15 comprehensive multi-participant mesh, departure & UI scenarios passed:
     * Test 1: Full mesh establishment with 3 peers (A, B, C) (K_3)
     * Test 2: Host A departs; C broadcasts; B receives directly
     * Test 3: C departs; B reflects 0 open peers
@@ -250,7 +255,8 @@ Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
     * Test 12: E2E createRoomAsHost and joinRoomFromHash via signaling exchange (zero peer renaming)
     * Test 13: Simplified icon-only button, temporary system messages & pulse animation (REQ-033.1 - REQ-033.4)
     * Test 14: Zero input placeholder, staggered temporary notices, single ellipsis & slashed person icon (REQ-034.1 - REQ-034.4)
+    * Test 15: Enhanced Burn Behavior - 90s TTL, 70s aging fade, per-message flame button, distributed BurnMessage signaling, quiet room invariant, and reset restoration (REQ-035.1 - REQ-035.5)
 
-Total: 123 Rust tests + 14 Browser tests passed, 0 failed.
+Total: 123 Rust tests + 15 Browser tests passed, 0 failed.
 ```
 
