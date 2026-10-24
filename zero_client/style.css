@@ -715,6 +715,9 @@ html, body {
 
 /* Message Bubbles */
 .message-bubble {
+  position: relative;
+  min-width: 135px;
+  min-height: 44px;
   max-width: 78%;
   display: flex;
   flex-direction: column;
@@ -725,6 +728,50 @@ html, body {
   animation: fadeIn 0.2s ease-out;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
+}
+
+.btn-message-burn {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  border: none;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.01) 100%);
+  color: rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+  z-index: 2;
+}
+
+.btn-message-burn:hover {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.25);
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.35);
+  transform: scale(1.1);
+}
+
+.message-aging {
+  opacity: 0.8 !important;
+  transition: opacity 20s linear !important;
+}
+
+.message-dissolve {
+  opacity: 0 !important;
+  transform: scale(0.98) !important;
+  max-height: 0 !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  overflow: hidden !important;
+  transition: opacity 0.2s ease-out, transform 0.2s ease-out, max-height 0.2s ease-out, margin 0.2s ease-out, padding 0.2s ease-out !important;
 }
 
 @keyframes fadeIn {
