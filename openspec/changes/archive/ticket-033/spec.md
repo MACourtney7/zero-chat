@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-033"
 title: "Simplified Icon-Only Room Creation and Temporary System Messages"
-state: "IN_PROGRESS"
+state: "COMPLETED"
 created_at: "2026-10-24T14:02:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-033/main"
