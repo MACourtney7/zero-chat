@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-038"
 title: "Align Chat Bubble Coloured Dot with Burn Button Icon"
-state: "PLANNING"
+state: "IN_PROGRESS"
 created_at: "2026-10-24T23:30:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-038/main"
