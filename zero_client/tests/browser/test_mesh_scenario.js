@@ -13,7 +13,7 @@ function delay(ms) {
 
 async function runTests() {
     print("===============================================================================");
-    print("Running Browser Full-Mesh Headless Regression Suite (V-031-1 .. V-031-7)");
+    print("Running Browser Full-Mesh Headless Regression Suite (V-031-1 .. V-031-7, REQ-031.8a, REQ-031.8b)");
     print("===============================================================================");
 
     // Test 1: V-031-1: 3-Client Mesh Formation (A-B joined, A invites C, B-C direct link forms)
@@ -343,6 +343,154 @@ async function runTests() {
         assert(countEl.textContent === "0", "activeSessionPeers must NOT inflate #peer-count when openPeerCount is 0, got: " + countEl.textContent);
 
         print("  PASS: REQ-031.5: Counter strictly mirrors active open channels.");
+    }
+
+    // Test 8: REQ-031.8a: Crossed-offer glare resolution between simultaneous initiators
+    print("\n[Test 8] REQ-031.8a: Crossed-offer glare resolution between simultaneous initiators...");
+    {
+        const engineA = new ZeroWebRtcEngine("peer-A");
+        const engineB = new ZeroWebRtcEngine("peer-B");
+        const engineC = new ZeroWebRtcEngine("peer-C");
+
+        // Helper to forward signals across engines via their respective handleEngineMessage
+        function wireEngines(engMap) {
+            for (const [id, eng] of engMap.entries()) {
+                eng.onMessageCb = async (text, incomingPeerId) => {
+                    await handleEngineMessage(text, incomingPeerId, eng);
+                };
+            }
+        }
+
+        const engineMap = new Map([
+            ["peer-A", engineA],
+            ["peer-B", engineB],
+            ["peer-C", engineC]
+        ]);
+        wireEngines(engineMap);
+
+        // Connect A <-> B
+        const offerAB = await engineA.create_peer_offer("peer-B");
+        const answerAB = await engineB.create_peer_answer("peer-A", offerAB);
+        await engineA.accept_peer_answer("peer-B", answerAB);
+
+        // Connect A <-> C
+        const offerAC = await engineA.create_peer_offer("peer-C");
+        const answerAC = await engineC.create_peer_answer("peer-A", offerAC);
+        await engineA.accept_peer_answer("peer-C", answerAC);
+
+        await delay(50);
+        assert(engineA.openPeerCount === 2, "A is connected to B and C");
+        assert(engineB.openPeerCount === 1, "B has 1 open peer (A)");
+        assert(engineC.openPeerCount === 1, "C has 1 open peer (A)");
+
+        // Now both B and C simultaneously initiate relay handshake to each other via A!
+        // Crossed RelaySdpOffer messages:
+        const bHandshake = engineB.initiate_relay_handshake("peer-A", "peer-C");
+        const cHandshake = engineC.initiate_relay_handshake("peer-A", "peer-B");
+        await Promise.all([bHandshake, cHandshake]);
+
+        // Simulated time budget (must resolve without waiting for 8s watchdog)
+        await delay(150);
+
+        // Assert direct B <-> C channel exists and is open
+        assert(engineB.openPeerCount === 2, "Engine B must hold 2 open peers (A and C) after glare resolution");
+        assert(engineC.openPeerCount === 2, "Engine C must hold 2 open peers (A and B) after glare resolution");
+
+        const bToC = engineB.peers.get("peer-C");
+        assert(bToC && bToC.state === "open" && bToC.dc && bToC.dc.readyState === "open", "B must have direct open DataChannel to C");
+        const cToB = engineC.peers.get("peer-B");
+        assert(cToB && cToB.state === "open" && cToB.dc && cToB.dc.readyState === "open", "C must have direct open DataChannel to B");
+
+        // Assert that the lower-ID side's offer won:
+        // peer-B < peer-C: B's outgoing offer was preserved (B's data channel created locally)
+        assert(bToC.dc.remotePeerConnection === bToC.pc, "B (lower peer ID) must be the offering initiator");
+
+        print("  PASS: REQ-031.8a: Crossed offers resolved deterministically; direct link established without 8s watchdog.");
+    }
+
+    // Test 9: REQ-031.8b: Watchdog cleans stalled connecting peer when zero open peers remain
+    print("\n[Test 9] REQ-031.8b: Watchdog cleans stalled connecting peer when zero open peers remain...");
+    {
+        const engineWatchdog = new ZeroWebRtcEngine("peer-B");
+        engine = engineWatchdog;
+        window.engine = engineWatchdog;
+        hasActiveSession = true;
+        isBurned = false;
+        peerDepartureHandled = false;
+        feed.children = [];
+        departedPeers.clear();
+        knownSessionMembers.clear();
+        activeSessionPeers.clear();
+        memberHandshakeState.clear();
+        pendingOffers.clear();
+
+        // 1. Establish initial open peer A (relay)
+        const pcA = new RTCPeerConnection();
+        const dcA = pcA.createDataChannel("zero-chat");
+        dcA.readyState = "open";
+        engineWatchdog.peers.set("peer-A", { pc: pcA, dc: dcA, state: "open", peerId: "peer-A", createdAt: Date.now() });
+        activeSessionPeers.add("peer-A");
+        knownSessionMembers.add("peer-A");
+        assert(engineWatchdog.openPeerCount === 1, "B has 1 open peer (A)");
+
+        // 2. Add an in-flight connecting peer C
+        const startTime = Date.now();
+        const pcC = new RTCPeerConnection();
+        const dcC = pcC.createDataChannel("zero-chat");
+        dcC.readyState = "connecting";
+        engineWatchdog.peers.set("peer-C", { pc: pcC, dc: dcC, state: "connecting", peerId: "peer-C", createdAt: startTime });
+        pendingOffers.add("peer-C");
+        knownSessionMembers.add("peer-C");
+        memberHandshakeState.set("peer-C", {
+            firstSeen: startTime,
+            attempts: 1,
+            lastAttempt: startTime,
+            failedSurfaced: false
+        });
+        startReconciliationTimer();
+
+        // 3. Relay peer A departs while B-C is still connecting with zero other open peers
+        engineWatchdog.close_peer("peer-A");
+        handlePeerDeparture("peer-A");
+
+        assert(engineWatchdog.openPeerCount === 0, "B must have 0 open peers after A departs");
+        assert(peerDepartureHandled === false, "UI must NOT transition to disconnected yet while peer-C is connecting");
+        assert(msgInput.disabled === false, "Input must remain enabled while connection is pending");
+
+        // Verify exactly 1 'Peer left chat' notice was appended for peer A
+        let leftNotices = feed.children.filter(c => {
+            const textChild = c.children && c.children.find(ch => ch.className === "system-text");
+            const txt = textChild ? textChild.textContent : (c.textContent || "");
+            return txt === "Peer left chat";
+        });
+        assert(leftNotices.length === 1, "Must have exactly 1 'Peer left chat' notice for peer A");
+
+        // 4. Advance fake time past 8 seconds and invoke reconcileMesh()
+        const origDateNow = Date.now;
+        try {
+            Date.now = () => startTime + 9000;
+            await reconcileMesh();
+        } finally {
+            Date.now = origDateNow;
+        }
+
+        // 5. Assertions: connecting peer C cleaned, UI transitions to disconnected once
+        assert(!engineWatchdog.peers.has("peer-C"), "Stalled connecting peer C must be cleaned from engine.peers");
+        assert(!pendingOffers.has("peer-C"), "peer-C must be removed from pendingOffers");
+        assert(peerDepartureHandled === true, "peerDepartureHandled must be true");
+        assert(msgInput.disabled === true, "msgInput must be disabled in disconnected state");
+        assert(msgInput.placeholder === "Peer left chat", "msgInput placeholder must be 'Peer left chat'");
+        assert(reconciliationTimer === null, "Reconciliation timer must be stopped");
+
+        // Verify NO duplicate 'Peer left chat' notice was appended
+        leftNotices = feed.children.filter(c => {
+            const textChild = c.children && c.children.find(ch => ch.className === "system-text");
+            const txt = textChild ? textChild.textContent : (c.textContent || "");
+            return txt === "Peer left chat";
+        });
+        assert(leftNotices.length === 1, `Must still have exactly 1 'Peer left chat' notice (no duplicates), found ${leftNotices.length}`);
+
+        print("  PASS: REQ-031.8b: Stalled connecting peer cleaned; UI transitions to disconnected cleanly without duplicate notices.");
     }
 
     print("\n===============================================================================");
