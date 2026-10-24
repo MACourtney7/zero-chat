@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.5.0"
-milestone: "multi-user-mesh-chat"
+version: "1.6.0"
+milestone: "canonical-mesh-architecture"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-24T10:15:00Z"
+updated_at: "2026-10-24T14:20:00Z"
 ---
 ```
 
@@ -19,18 +19,21 @@ updated_at: "2026-10-24T10:15:00Z"
 3. **Pure Rust Cryptographic Engine**: Synchronous, memory-safe cryptographic primitives (`x25519-dalek`, `chacha20poly1305`, `hmac-sha256` with `getrandom/js`) shared across WASM and Cloudflare Worker, bypassing asynchronous JS WebCrypto bridging overhead.
 4. **Direct P2P DataChannels**: Once the initial WebRTC SDP offer/answer exchange completes, the cloud edge drops out permanently (`is_edge_severed() == true`). All communication flows directly over browser-to-browser UDP DataChannels.
 5. **Resilient In-Band Mesh, Secondary Snapping & Glare Avoidance**: Multi-peer scaling without cloud edge requests. Any connected participant (host or invitee) can invite additional peers. The inviter serves as an opaque in-band relay bridge for secondary SDP exchange (`RelaySdpOffer`, `RelaySdpAnswer`), ensuring full triangle ($K_3$) or complete mesh snapping ($K_N$). Glare collisions during crossed offers are resolved deterministically via polite/impolite roles (`myPeerId < remotePeerId` impolite winner ignores incoming offer, polite loser yields and answers). A periodic reconciliation loop (2s interval, max 5 retries with backoff) ensures any missing links between discovered members are autonomously retried and established.
-6. **Mesh-Coordinated Leave vs. Burn Lifecycle**:
-   - **Leave Chat (`leave_and_burn`)**: Clean departures broadcast `PeerLeftAndBurn` across the mesh before severance, causing remaining peers to selectively purge all messages authored by the leaving peer (`data-peer-id`) while preserving active mesh connections; the departing user's local session is reset to home. Surviving peers maintain pairwise DataChannels and feed continuity even if the original host leaves.
-   - **Burn Chat (`global_burn`)**: Triggers complete room annihilation (`GlobalBurnSession`) flooded across all peers, immediately closing DataChannels, zeroizing keys/memory, and returning all participants simultaneously to the home view.
-   - **Dirty Disconnect Purge**: Abrupt disconnections (tab close, network severance) are intercepted via WebRTC channel state monitors and unload events to automatically purge the departed peer's messages on surviving clients.
-7. **Simplified Home View, Single-Invite Lifecycle & Peer Counter Synchronization**:
-   - Decentralized multi-participant mesh rooms supported in pure browser client with connection pooling (`this.peers = new Map()`).
-   - Frictionless room creation: clicking `#btn-create-room` in home view immediately copies the invite link to `navigator.clipboard` with clear visual feedback (`.btn-copied` state and system notice), completely eliminating `#invite-bar`.
-   - In-room peer invites are generated via an Add-Peer button (`#header-add-btn`) placed in the header directly to the left of `#peer-count`.
-   - Enforces a strictly non-wasteful single-invite lifecycle: only one invite can be active at a time; subsequent clicks while pending re-copy the existing valid link without spawning redundant cloud signaling sessions; cleared upon peer connection; copies silently without tooltip bubbles.
-   - **Truthful Dynamic Peer Counter & Send Reliability**: `#peer-count` evaluates strictly `engine.openPeerCount` (actual active WebRTC DataChannels in open state). Attempting to send messages when 0 peers are open is halted, preserving input text and rendering `"Message not sent: no connected peers"`. Upon peer departure, surviving channels are preserved and counters decrement symmetrically across all surviving peers.
-   - Standardized system messages: clean, user-friendly notices for room creation (`"Secure chat created"`), self joins (`"Joined chat"`), peer arrivals (`"Peer joined chat"` without debug string leakage), and peer departures (`"Peer left chat"`).
-8. **Hermetic CI/CD Pipelines**: Automated dual-target test validation, strict clippy auditing, and automated Cloudflare Worker + Cloudflare Pages deployment via GitHub Actions.
+6. **Canonical Pre-Assigned Peer IDs in URL Hash Fragments**:
+   - When creating a room or generating an in-room invite, the inviter generates a unique canonical `assigned_peer_id` (`peer-[a-z0-9]{6}`), creates the WebRTC offer directly under that assigned ID, and embeds both `host_peer_id` and `assigned_peer_id` into the `#payload=` URL fragment.
+   - Because hash fragments never travel over HTTP headers to cloud edge proxies, they are immune to edge serialization stripping.
+   - Joiners adopt `assigned_peer_id` as their canonical `localPeerId` before generating SDP answers. This guarantees 100% ID consensus across all participants before WebRTC handshakes begin, permanently eliminating `rename_peer` drift, identity races, and unroutable relay traffic.
+   - `InvitePayload` and `DropPayload` declare `host_peer_id`, `assigned_peer_id`, and `joiner_peer_id` as optional default-deserialized fields, preventing edge deserialization stripping.
+7. **Scoped Invite Lifecycle & Cancellation**:
+   - Enforces a strictly non-wasteful single-invite lifecycle: only one invite can be active at a time; subsequent clicks while pending re-copy the existing valid link without spawning redundant cloud signaling sessions.
+   - `clearPendingInvite(peerId)` only closes the in-flight invite socket when `peerId === pendingInvitePeerId`, preventing secondary peer channel openings from killing active invite sockets.
+8. **Clean Departure Deduplication & Host Departure Survivability**:
+   - Clean departures broadcast `PeerLeftAndBurn` across the mesh before severance.
+   - Calling `handlePeerDeparture(leavingPeerId)` first records the peer in `departedPeers` before `_teardownPeerQuietly` disconnects the peer, completely preventing duplicate `"Peer left chat"` system messages.
+   - When the host departs, surviving participants retain direct pairwise DataChannels with `#peer-count = 1`.
+   - `openPeerCount` filter excludes any peer in `departedPeers`.
+9. **Truthful Dynamic Peer Counter & Send Reliability**: `#peer-count` evaluates strictly `engine.openPeerCount` (actual active WebRTC DataChannels in open state). Attempting to send messages when 0 peers are open is halted, preserving input text and rendering `"Message not sent: no connected peers"`.
+10. **Hermetic CI/CD Pipelines**: Automated dual-target test validation, strict clippy auditing, and automated Cloudflare Worker + Cloudflare Pages deployment via GitHub Actions.
 
 ---
 
@@ -176,7 +179,7 @@ Host (Alice)                     Joiner (Bob)                 Cloudflare DO
 
 ---
 
-## 5. Test & Validation Coverage (114 Rust Tests + 9 Browser Headless Tests)
+## 5. Test & Validation Coverage (123 Rust Tests + 12 Browser Headless Tests)
 
 ```text
 Unit Tests:
@@ -190,7 +193,7 @@ Unit Tests:
     * ephemeral room capacity & burn: 2 passed
     * mock host socket attachment: 1 passed
   - zero_protocol lib (8 tests):
-    * envelope schemas & TTL decrementation: 8 passed (including PeerLeftAndBurn, GlobalBurnSession)
+    * envelope schemas & TTL decrementation: 8 passed (including PeerLeftAndBurn, GlobalBurnSession, pre-assigned peer IDs)
 
 Integration Test Suites:
   - tests/e2e_handshake.rs (5 tests):
@@ -199,7 +202,7 @@ Integration Test Suites:
     * REQ-005.3: Tamper detection & security alert handling
     * REQ-005.4: Zero persistence lifecycle audit
     * REQ-005.5: Complete E2E handshake & encrypted chat roundtrip
-  - tests/mesh_simulation_test.rs (14 tests):
+  - tests/mesh_simulation_test.rs (23 tests):
     * REQ-006.1: Opaque bridge signaling relay
     * REQ-006.2: Direct mesh snap zero cloud edge
     * REQ-006.3: Mesh broadcast flooding delivery
@@ -214,15 +217,30 @@ Integration Test Suites:
     * REQ-029.5: Host departure pairwise channel survivability and feed continuity
     * REQ-030.1 / REQ-030.2: Secondary inviter mesh snapping and counter synchronization across all nodes
     * REQ-030.3 / REQ-030.4: Symmetric departure counter decrement across surviving peers and host departure survivability
-  - tests/invite_tests.rs (4 tests):
+  - tests/invite_tests.rs (2 tests):
     * REQ-004.1 through REQ-004.5
   - tests/webrtc_tests.rs (6 tests):
     * REQ-002.1 through REQ-002.5
-  - tests/network_tests.rs (5 tests):
-    * REQ-003.1 through REQ-003.5
-  - tests/protocol_tests.rs (10 tests):
-    * REQ-001.1 through REQ-001.5
+  - tests/network_tests.rs (6 tests):
+    * REQ-003.1 through REQ-003.5 + Dead-drop joiner_peer_id preservation
+  - tests/protocol_tests.rs (12 tests):
+    * REQ-001.1 through REQ-001.5 + Serde backward compatibility & round-trip assertions
 
-Total: 113 passed, 0 failed, 0 ignored.
+Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
+  - 12 comprehensive multi-participant mesh & departure scenarios passed:
+    * Test 1: Full mesh establishment with 3 peers (A, B, C) (K_3)
+    * Test 2: Host A departs; C broadcasts; B receives directly
+    * Test 3: C departs; B reflects 0 open peers
+    * Test 4: Idempotency check - duplicate offer/answer does not kill open link
+    * Test 5: Mesh reconciliation timer recovers dropped handshake
+    * Test 6: Send feedback - 0 peers displays clear error feedback and halts send
+    * Test 7: Truthful peer counter deriving strictly from open DataChannels
+    * Test 8: Crossed-offer glare resolution between simultaneous initiators
+    * Test 9: Watchdog cleans stalled connecting peer when zero open peers remain
+    * Test 10: Scoped clearPendingInvite protects in-flight invite from secondary peer connection
+    * Test 11: Pre-assigned peer IDs and clean host departure in 3-peer mesh (single notice deduplication)
+    * Test 12: E2E createRoomAsHost and joinRoomFromHash via signaling exchange (zero peer renaming)
+
+Total: 123 Rust tests + 12 Browser tests passed, 0 failed.
 ```
 

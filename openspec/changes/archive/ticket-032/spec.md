@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-032"
 title: "Canonical Pre-Assigned Peer IDs and Resilient Full-Mesh Snapping"
-state: "IN_PROGRESS"
+state: "COMPLETED"
 created_at: "2026-10-24T12:50:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-032/main"
