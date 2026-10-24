@@ -4741,3 +4741,124 @@ fn test_req_031_last_two_one_leaves() {
     assert_eq!(bob_mesh.peer_count(), 0);
     assert!(!bob_mesh.has_peer("alice"));
 }
+
+/// REQ-031.8 (c): When both B and C call reconcile_mesh on a missing link,
+/// only the lower peer ID initiates on the first call; the higher peer ID returns 0.
+#[test]
+fn test_req_031_8_reconcile_only_lower_id_initiates_first() {
+    let (alice_sk, alice_pk) = generate_kp();
+    let (bob_sk, bob_pk) = generate_kp();
+    let (charlie_sk, charlie_pk) = generate_kp();
+
+    let alice_mesh = MeshTopology::new("alice", alice_sk);
+    let bob_mesh = MeshTopology::new("bob", bob_sk);
+    let charlie_mesh = MeshTopology::new("charlie", charlie_sk);
+
+    // Connect Alice <-> Bob
+    let a_to_b = WebRtcPeer::new();
+    let b_to_a = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&a_to_b, &b_to_a).expect("pair AB");
+    alice_mesh.add_peer("bob", bob_pk, a_to_b).unwrap();
+    bob_mesh.add_peer("alice", alice_pk, b_to_a).unwrap();
+
+    // Connect Alice <-> Charlie
+    let a_to_c = WebRtcPeer::new();
+    let c_to_a = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&a_to_c, &c_to_a).expect("pair AC");
+    charlie_mesh.add_peer("alice", alice_pk, c_to_a).unwrap();
+    alice_mesh.add_peer("charlie", charlie_pk, a_to_c).unwrap();
+
+    // Remove direct link B <-> C so it is missing
+    bob_mesh.remove_peer("charlie").unwrap();
+    charlie_mesh.remove_peer("bob").unwrap();
+
+    assert!(!bob_mesh.has_peer("charlie"));
+    assert!(!charlie_mesh.has_peer("bob"));
+
+    // "charlie" > "bob".
+    // Charlie calls reconcile_mesh: charlie is higher ID, grace ticks not reached -> returns 0.
+    let charlie_initiated = block_on(charlie_mesh.reconcile_mesh()).expect("charlie reconcile");
+    assert_eq!(
+        charlie_initiated, 0,
+        "Higher peer ID (charlie) must NOT initiate on first reconcile call"
+    );
+    assert!(
+        !charlie_mesh.has_peer("bob"),
+        "Charlie should not have created direct peer yet"
+    );
+
+    // "bob" < "charlie".
+    // Bob calls reconcile_mesh: bob is lower ID -> initiates immediately -> returns 1.
+    let bob_initiated = block_on(bob_mesh.reconcile_mesh()).expect("bob reconcile");
+    assert_eq!(
+        bob_initiated, 1,
+        "Lower peer ID (bob) MUST initiate on first reconcile call"
+    );
+    assert!(
+        bob_mesh.has_peer("charlie"),
+        "Bob initiated handshake creating peer entry for charlie"
+    );
+}
+
+/// REQ-031.8 (c): When the lower peer ID's offer is dropped, the higher peer ID
+/// falls back to initiate after NON_INITIATOR_GRACE_TICKS reconcile calls and the link forms.
+#[test]
+fn test_req_031_8_reconcile_higher_id_falls_back_after_grace() {
+    let (alice_sk, alice_pk) = generate_kp();
+    let (bob_sk, bob_pk) = generate_kp();
+    let (charlie_sk, charlie_pk) = generate_kp();
+
+    let alice_mesh = MeshTopology::new("alice", alice_sk);
+    let bob_mesh = MeshTopology::new("bob", bob_sk);
+    let charlie_mesh = MeshTopology::new("charlie", charlie_sk);
+
+    // Connect Alice <-> Bob
+    let a_to_b = WebRtcPeer::new();
+    let b_to_a = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&a_to_b, &b_to_a).expect("pair AB");
+    alice_mesh.add_peer("bob", bob_pk, a_to_b).unwrap();
+    bob_mesh.add_peer("alice", alice_pk, b_to_a).unwrap();
+
+    // Connect Alice <-> Charlie
+    let a_to_c = WebRtcPeer::new();
+    let c_to_a = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&a_to_c, &c_to_a).expect("pair AC");
+    charlie_mesh.add_peer("alice", alice_pk, c_to_a).unwrap();
+    alice_mesh.add_peer("charlie", charlie_pk, a_to_c).unwrap();
+
+    // Break initial direct snap
+    bob_mesh.remove_peer("charlie").unwrap();
+    charlie_mesh.remove_peer("bob").unwrap();
+
+    // Bob (lower ID) fails to connect or its offers are dropped; Bob does not reconcile.
+    // Charlie (higher ID) reconciles:
+    // Tick 1 (grace tick 1 / NON_INITIATOR_GRACE_TICKS):
+    let tick1 = block_on(charlie_mesh.reconcile_mesh()).expect("tick 1");
+    assert_eq!(tick1, 0, "Grace tick 1 must not initiate");
+
+    // Tick 2 (grace tick 2 / NON_INITIATOR_GRACE_TICKS):
+    let tick2 = block_on(charlie_mesh.reconcile_mesh()).expect("tick 2");
+    assert_eq!(tick2, 0, "Grace tick 2 must not initiate");
+
+    // Tick 3 (grace expired, ticks >= NON_INITIATOR_GRACE_TICKS = 2):
+    // Charlie initiates fallback handshake via Alice relay to Bob!
+    let tick3 = block_on(charlie_mesh.reconcile_mesh()).expect("tick 3");
+    assert_eq!(tick3, 1, "Fallback initiate must trigger after grace ticks");
+
+    assert!(
+        charlie_mesh.has_peer("bob"),
+        "Charlie has peer entry for Bob"
+    );
+    assert!(
+        bob_mesh.has_peer("charlie"),
+        "Bob received offer and has peer entry for Charlie"
+    );
+
+    // Connect the pair channels
+    let c_to_b = charlie_mesh.get_peer("bob").unwrap().rtc_peer;
+    let b_to_c = bob_mesh.get_peer("charlie").unwrap().rtc_peer;
+    WebRtcPeer::pair_for_testing(&c_to_b, &b_to_c).expect("pair BC");
+
+    assert_eq!(charlie_mesh.open_peers(), 2);
+    assert_eq!(bob_mesh.open_peers(), 2);
+}
