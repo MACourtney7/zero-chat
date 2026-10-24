@@ -205,6 +205,11 @@
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
             </svg>`.trim();
+        const ADD_PEER_ICON_SVG = `
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>`.trim();
         const CREATE_ROOM_DEFAULT_HTML = CREATE_CHAT_ICON_SVG;
         const CREATE_ROOM_ICON_HTML = CREATE_CHAT_ICON_SVG;
         const SLASHED_PERSON_ICON_SVG = `
@@ -267,6 +272,19 @@
                 btnCreateRoom.className = "btn-action btn-action-full btn-emerald";
                 btnCreateRoom.setAttribute("aria-label", "Create Chat");
                 btnCreateRoom.innerHTML = CREATE_CHAT_ICON_SVG;
+            }
+        }
+
+        function setCreateRoomStage1Plus() {
+            if (createRoomFeedbackTimer) {
+                clearTimeout(createRoomFeedbackTimer);
+                createRoomFeedbackTimer = null;
+            }
+            if (btnCreateRoom) {
+                btnCreateRoom.disabled = false;
+                btnCreateRoom.className = "btn-action btn-action-full btn-emerald";
+                btnCreateRoom.setAttribute("aria-label", "Add peer");
+                btnCreateRoom.innerHTML = ADD_PEER_ICON_SVG;
             }
         }
 
@@ -1125,7 +1143,6 @@
 
             feed.appendChild(el);
             feed.scrollTop = feed.scrollHeight;
-            registerEphemeralLifecycle(el);
             return el;
         }
 
@@ -1484,6 +1501,7 @@
                 // Surviving peers remain in active chat
                 peerDepartureHandled = false;
                 if (headerAddBtn) headerAddBtn.classList.remove("hidden");
+                if (createRoomBar) createRoomBar.classList.add("hidden");
                 if (messageForm) messageForm.classList.remove("hidden");
                 if (msgInput) {
                     msgInput.disabled = false;
@@ -1510,6 +1528,8 @@
                     const remoteBubbles = feed.querySelectorAll(".message-bubble:not(.message-outgoing)");
                     remoteBubbles.forEach((el) => el.remove());
 
+                    clearPendingInvite();
+
                     if (headerAddBtn) {
                         headerAddBtn.classList.add("hidden");
                     }
@@ -1523,7 +1543,7 @@
                         burnRoomBar.classList.remove("hidden");
                     }
                     if (messageForm) {
-                        messageForm.classList.remove("hidden");
+                        messageForm.classList.add("hidden");
                     }
                     if (msgInput) {
                         msgInput.disabled = true;
@@ -1533,8 +1553,9 @@
                         sendBtn.disabled = true;
                     }
                     if (createRoomBar) {
-                        createRoomBar.classList.add("hidden");
+                        createRoomBar.classList.remove("hidden");
                     }
+                    setCreateRoomStage1Plus();
                     if (peerListEl) {
                         peerListEl.classList.remove("hidden");
                         if (!peerListEl.querySelector(".peer-pill")) {
@@ -1553,7 +1574,9 @@
                     isBurned = false;
                     peerDepartureHandled = false;
                     opportunisticLeaveSent = false;
+                    activeHostInviteUrl = null;
                     clearPendingInvite(peerId);
+                    clearTemporarySystemMessages();
                     hideWelcomeSplash();
                     updateStatus("open", "P2P Established");
                     if (idleStatusCapsule) idleStatusCapsule.classList.add("hidden");
@@ -1638,11 +1661,27 @@
                     activeSessionPeers.add(peerId);
                     knownSessionMembers.add(peerId);
                     memberHandshakeState.delete(peerId);
+                    peerDepartureHandled = false;
+                    activeHostInviteUrl = null;
                     startReconciliationTimer();
                     updatePeerCountDisplay();
                     clearPendingInvite(peerId);
+                    clearTemporarySystemMessages();
                     if (headerAddBtn) {
                         headerAddBtn.classList.remove("hidden");
+                    }
+                    if (createRoomBar) {
+                        createRoomBar.classList.add("hidden");
+                    }
+                    if (messageForm) {
+                        messageForm.classList.remove("hidden");
+                    }
+                    if (msgInput) {
+                        msgInput.disabled = false;
+                        msgInput.placeholder = "";
+                    }
+                    if (sendBtn) {
+                        sendBtn.disabled = false;
                     }
                     if (!announcedJoinPeers.has(peerId)) {
                         announcedJoinPeers.add(peerId);
@@ -2062,7 +2101,91 @@
         // =========================================================================
         // HOST WORKFLOW: Create room, offer, signaling websocket, and invite link
         // =========================================================================
+        async function handleCreateRoomClick() {
+            if (isInRoomSession && engine && (hasActiveSession || peerDepartureHandled || !activeHostInviteUrl)) {
+                if (pendingInviteUrl) {
+                    if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+                        try {
+                            await navigator.clipboard.writeText(pendingInviteUrl);
+                        } catch (e) {
+                            console.warn("Clipboard copy failed:", e);
+                        }
+                    }
+                    setCreateRoomStage2();
+                    triggerCreateRoomNotices();
+                    return;
+                }
+
+                try {
+                    const assignedPeerId = "peer-" + Math.random().toString(36).slice(2, 8);
+                    pendingInvitePeerId = assignedPeerId;
+                    const offerSdp = await engine.create_peer_offer(assignedPeerId);
+                    const doId = "room-" + Math.random().toString(36).slice(2, 10);
+                    const hostSecretBytes = crypto.getRandomValues(new Uint8Array(32));
+                    const hostSecretHex = Array.from(hostSecretBytes).map(b => b.toString(16).padStart(2, "0")).join("");
+                    const inviteUuid = generateUuid();
+                    const tokenHex = await computeHmacSha256Hex(hostSecretBytes, inviteUuid);
+                    const hostPubkey = Array.from(crypto.getRandomValues(new Uint8Array(32)));
+
+                    const invitePayload = {
+                        do_id: doId,
+                        invite_uuid: inviteUuid,
+                        token: tokenHex,
+                        sdp_offer: { sdp: offerSdp },
+                        host_public_key: hostPubkey,
+                        host_peer_id: (engine && engine.localPeerId) || localPeerId,
+                        assigned_peer_id: assignedPeerId,
+                        guest_private_key: null
+                    };
+
+                    const packedHash = "#payload=" + utf8ToBase64Url(JSON.stringify(invitePayload));
+                    const inviteUrl = window.location.origin + window.location.pathname + packedHash;
+                    pendingInviteUrl = inviteUrl;
+
+                    const wsUrl = `${WORKER_WS_ORIGIN}/host/${doId}?secret=${hostSecretHex}`;
+                    const ws = new WebSocket(wsUrl);
+                    pendingInviteWs = ws;
+
+                    ws.onmessage = async (ev) => {
+                        try {
+                            const drop = JSON.parse(ev.data);
+                            if (drop && drop.sdp_answer && drop.sdp_answer.sdp) {
+                                const targetPeerId = drop.joiner_peer_id || drop.peer_id || assignedPeerId;
+                                if (targetPeerId !== assignedPeerId && engine.peers.has(assignedPeerId)) {
+                                    engine.rename_peer(assignedPeerId, targetPeerId);
+                                    if (pendingInvitePeerId === assignedPeerId) {
+                                        pendingInvitePeerId = targetPeerId;
+                                    }
+                                }
+                                await engine.apply_answer(drop.sdp_answer.sdp, targetPeerId);
+                                try { ws.close(); } catch (_) {}
+                                if (pendingInviteWs === ws) pendingInviteWs = null;
+                            }
+                        } catch (err) {
+                            console.error("Failed to parse dropped answer for in-room invite:", err);
+                        }
+                    };
+                    ws.onerror = (e) => console.warn("In-room invite socket error:", e);
+
+                    if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+                        try { await navigator.clipboard.writeText(inviteUrl); } catch (e) { console.warn(e); }
+                    }
+
+                    setCreateRoomStage2();
+                    triggerCreateRoomNotices();
+                } catch (err) {
+                    console.error("Failed to create in-room invite:", err);
+                    clearPendingInvite();
+                }
+            } else {
+                await createRoomAsHost();
+            }
+        }
+
         async function createRoomAsHost() {
+            if (isInRoomSession && engine && peerDepartureHandled) {
+                return handleCreateRoomClick();
+            }
             if (activeHostInviteUrl) {
                 // Subsequent click while waiting for a peer: re-copy link and re-trigger temporary notices (REQ-033.2, REQ-034.2, REQ-034.3)
                 if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
@@ -2246,7 +2369,7 @@
         }
 
         // Event bindings
-        btnCreateRoom.addEventListener("click", createRoomAsHost);
+        btnCreateRoom.addEventListener("click", handleCreateRoomClick);
 
         function doSendMessage() {
             if (!msgInput.value.trim() || !engine) return;
@@ -2468,7 +2591,10 @@
         window.memberHandshakeState = memberHandshakeState;
         window.updatePeerCountDisplay = updatePeerCountDisplay;
         window.setCreateRoomStage1 = setCreateRoomStage1;
+        window.setCreateRoomStage1Plus = setCreateRoomStage1Plus;
         window.setCreateRoomStage2 = setCreateRoomStage2;
+        window.ADD_PEER_ICON_SVG = ADD_PEER_ICON_SVG;
+        window.handleCreateRoomClick = handleCreateRoomClick;
         window.appendTemporarySystemMessage = appendTemporarySystemMessage;
         window.clearTemporarySystemMessages = clearTemporarySystemMessages;
         window.appendSystemMessage = appendSystemMessage;
@@ -2485,6 +2611,8 @@
         window.registerEphemeralLifecycle = registerEphemeralLifecycle;
         window.burnMessageAcrossMesh = burnMessageAcrossMesh;
         window.appendMessageBubble = appendMessageBubble;
+        window.showTransientStatus = showTransientStatus;
+        window.clearTransientStatus = clearTransientStatus;
         window.showWelcomeSplash = showWelcomeSplash;
         window.hideWelcomeSplash = hideWelcomeSplash;
     </script>

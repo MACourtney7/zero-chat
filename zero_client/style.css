@@ -364,6 +364,9 @@ html, body {
   display: inline-block;
 }
 
+.ticking-dots {
+  margin-left: 0;
+}
 .ticking-dots::after {
   content: "";
   display: inline-block;
@@ -679,6 +682,12 @@ html, body {
   padding: 4px 0;
   user-select: none;
   animation: fadeIn 0.2s ease-out;
+}
+
+.system-temporary,
+.transient-status,
+.system-message:has(.ticking-dots) {
+  gap: 0;
 }
 
 .system-temporary {
