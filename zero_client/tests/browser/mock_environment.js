@@ -195,20 +195,71 @@
             set innerHTML(val) {
                 this._innerHTML = String(val);
                 this._textContent = "";
-                if (val === "") {
-                    this.children = [];
-                } else if (val.includes("<")) {
-                    const tagRegex = /<([a-zA-Z0-9_-]+)([^>]*)>/g;
+                this.children = [];
+                if (val && val.includes("<")) {
+                    const tagRegex = /<(\/)?([a-zA-Z0-9_-]+)([^>]*?)(\/)?>/g;
+                    const stack = [this];
+                    const voidTags = new Set(["input", "img", "br", "hr", "meta", "link"]);
                     let m;
                     while ((m = tagRegex.exec(val)) !== null) {
-                        const tName = m[1];
-                        if (!tName.startsWith("/")) {
-                            const ch = createMockElement("", "", tName);
-                            ch.parentNode = this;
-                            this.children.push(ch);
+                        const isClosing = m[1] === "/";
+                        const tName = m[2];
+                        const attrs = m[3] || "";
+                        const isSelfClosing = m[4] === "/" || voidTags.has(tName.toLowerCase());
+
+                        if (isClosing) {
+                            for (let i = stack.length - 1; i >= 1; i--) {
+                                if (stack[i].tagName === tName.toUpperCase()) {
+                                    stack.splice(i, stack.length - i);
+                                    break;
+                                }
+                            }
+                        } else {
+                            let chId = "";
+                            let chClass = "";
+                            const idMatch = attrs.match(/\bid=["']([^"']+)["']/i);
+                            if (idMatch) chId = idMatch[1];
+                            const classMatch = attrs.match(/\bclass=["']([^"']+)["']/i);
+                            if (classMatch) chClass = classMatch[1];
+
+                            const ch = createMockElement(chId, chClass, tName);
+                            const attrRegex = /([a-zA-Z0-9_-]+)=["']([^"']*)["']/g;
+                            let am;
+                            while ((am = attrRegex.exec(attrs)) !== null) {
+                                ch.setAttribute(am[1], am[2]);
+                            }
+
+                            if (chId && typeof elementRegistry !== "undefined") {
+                                elementRegistry.set(chId, ch);
+                            }
+
+                            const parent = stack[stack.length - 1];
+                            ch.parentNode = parent;
+                            parent.children.push(ch);
+
+                            if (!isSelfClosing) {
+                                stack.push(ch);
+                            }
                         }
                     }
                 }
+            },
+            insertAdjacentHTML: function(position, html) {
+                const temp = createMockElement();
+                temp.innerHTML = html;
+                if (position === "afterbegin") {
+                    for (let i = temp.children.length - 1; i >= 0; i--) {
+                        const ch = temp.children[i];
+                        ch.parentNode = this;
+                        this.children.unshift(ch);
+                    }
+                } else {
+                    for (const ch of temp.children) {
+                        ch.parentNode = this;
+                        this.children.push(ch);
+                    }
+                }
+                this._innerHTML = (position === "afterbegin") ? (html + this._innerHTML) : (this._innerHTML + html);
             },
             disabled: false,
             placeholder: "",
@@ -317,6 +368,48 @@
                     const el = createMockElement(id);
                     if (id === "peer-count") {
                         el.innerHTML = '<svg class="peer-slashed-user-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="10" cy="7" r="4"></circle><line x1="2" y1="2" x2="22" y2="22"></line></svg>';
+                    }
+                    if (id === "welcome-splash") {
+                        el.innerHTML = `
+                            <div class="welcome-header">
+                                <p class="welcome-subtitle">Create -&gt; Share -&gt; Chat</p>
+                            </div>
+                            <div class="welcome-features">
+                                <div class="feature-card">
+                                    <div class="feature-icon">
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+                                        </svg>
+                                    </div>
+                                    <div class="feature-content">
+                                        <span class="feature-title">Direct P2P Connection</span>
+                                        <p class="feature-desc">Private channels with no intermediate relays or storage servers.</p>
+                                    </div>
+                                </div>
+                                <div class="feature-card">
+                                    <div class="feature-icon">
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                                            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                                        </svg>
+                                    </div>
+                                    <div class="feature-content">
+                                        <span class="feature-title">Secure Communications</span>
+                                        <p class="feature-desc">All messages are end-to-end encrypted.</p>
+                                    </div>
+                                </div>
+                                <div class="feature-card">
+                                    <div class="feature-icon">
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                                        </svg>
+                                    </div>
+                                    <div class="feature-content">
+                                        <span class="feature-title">Ephemeral Sessions</span>
+                                        <p class="feature-desc">Chats are permanently destroyed the moment they are closed.</p>
+                                    </div>
+                                </div>
+                            </div>`;
                     }
                     elementRegistry.set(id, el);
                 }
