@@ -102,7 +102,13 @@
                             <line x1="5" y1="12" x2="19" y2="12"></line>
                         </svg>
                     </button>
-                    <div id="peer-count" class="peer-count-badge">0</div>
+                    <div id="peer-count" class="peer-count-badge">
+                        <svg class="peer-slashed-user-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="10" cy="7" r="4"></circle>
+                            <line x1="2" y1="2" x2="22" y2="22"></line>
+                        </svg>
+                    </div>
                     <div id="idle-status-capsule" class="status-capsule-disconnected">
                         <span class="status-indicator-dot blue-dot"></span>
                     </div>
@@ -201,6 +207,12 @@
             </svg>`.trim();
         const CREATE_ROOM_DEFAULT_HTML = CREATE_CHAT_ICON_SVG;
         const CREATE_ROOM_ICON_HTML = CREATE_CHAT_ICON_SVG;
+        const SLASHED_PERSON_ICON_SVG = `
+            <svg class="peer-slashed-user-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                <circle cx="10" cy="7" r="4"></circle>
+                <line x1="2" y1="2" x2="22" y2="22"></line>
+            </svg>`.trim();
 
         // DOM elements
         const headerAddBtn = document.getElementById("header-add-btn");
@@ -217,6 +229,8 @@
         const burnRoomBar = document.getElementById("burn-room-bar");
         const burnBtn = document.getElementById("destroy-session-button");
 
+        let isInRoomSession = false;
+        let staggerNoticeTimer = null;
         let activeHostInviteUrl = null;
         let createRoomFeedbackTimer = null;
         let headerAddFeedbackTimer = null;
@@ -232,9 +246,13 @@
         const MAX_HANDSHAKE_RETRIES = 5;
 
         function updatePeerCountDisplay() {
-            // Truthful peer count: strictly open DataChannels only (REQ-031.5)
-            const count = engine ? engine.openPeerCount : 0;
-            if (peerCountEl) {
+            if (!peerCountEl) return;
+            const inRoom = isInRoomSession || (engine !== null && !isBurned);
+            if (!inRoom) {
+                peerCountEl.innerHTML = SLASHED_PERSON_ICON_SVG;
+            } else {
+                // Truthful peer count: strictly open DataChannels only (REQ-031.5)
+                const count = engine ? engine.openPeerCount : 0;
                 peerCountEl.textContent = String(count);
             }
         }
@@ -967,6 +985,10 @@
         }
 
         function clearTemporarySystemMessages() {
+            if (staggerNoticeTimer) {
+                clearTimeout(staggerNoticeTimer);
+                staggerNoticeTimer = null;
+            }
             if (headerAddFeedbackTimer) {
                 clearTimeout(headerAddFeedbackTimer);
                 headerAddFeedbackTimer = null;
@@ -974,6 +996,23 @@
             headerAddFeedbackEl = null;
             const temps = feed.querySelectorAll(".system-temporary");
             temps.forEach((el) => el.remove());
+        }
+
+        function triggerCreateRoomNotices() {
+            if (staggerNoticeTimer) {
+                clearTimeout(staggerNoticeTimer);
+                staggerNoticeTimer = null;
+            }
+            clearTemporarySystemMessages();
+
+            // Stage 1 notice immediately:
+            appendTemporarySystemMessage("Invite link copied to clipboard");
+
+            // Stage 2 notice staggered after 450ms:
+            staggerNoticeTimer = setTimeout(() => {
+                appendTemporarySystemMessage("Waiting for peer", true);
+                staggerNoticeTimer = null;
+            }, 450);
         }
 
         function appendTemporarySystemMessage(text, isWaitingDots = false) {
@@ -1384,7 +1423,7 @@
                     }
                     if (msgInput) {
                         msgInput.disabled = true;
-                        msgInput.placeholder = "Peer left chat";
+                        msgInput.placeholder = "";
                     }
                     if (sendBtn) {
                         sendBtn.disabled = true;
@@ -1406,6 +1445,7 @@
             engine.onStateChangeCb = (st, peerId) => {
                 if (st === "open") {
                     hasActiveSession = true;
+                    isInRoomSession = true;
                     isBurned = false;
                     peerDepartureHandled = false;
                     opportunisticLeaveSent = false;
@@ -1892,7 +1932,7 @@
         // =========================================================================
         async function createRoomAsHost() {
             if (activeHostInviteUrl) {
-                // Subsequent click while waiting for a peer: re-copy link and re-trigger temporary notices (REQ-033.2)
+                // Subsequent click while waiting for a peer: re-copy link and re-trigger temporary notices (REQ-033.2, REQ-034.2, REQ-034.3)
                 if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
                     try {
                         await navigator.clipboard.writeText(activeHostInviteUrl);
@@ -1901,12 +1941,12 @@
                     }
                 }
                 setCreateRoomStage2();
-                clearTemporarySystemMessages();
-                appendTemporarySystemMessage("Invite link copied to clipboard");
-                appendTemporarySystemMessage("Waiting for peer...", true);
+                triggerCreateRoomNotices();
                 return;
             }
 
+            isInRoomSession = true;
+            updatePeerCountDisplay();
             isBurned = false;
             isJoining = false;
             peerDepartureHandled = false;
@@ -1986,10 +2026,8 @@
                 // Enable button and transition to Stage 2 (REQ-033.1)
                 setCreateRoomStage2();
 
-                // Bottom button click flow: clear temp messages, emit invite copied + waiting for peer (REQ-033.2)
-                clearTemporarySystemMessages();
-                appendTemporarySystemMessage("Invite link copied to clipboard");
-                appendTemporarySystemMessage("Waiting for peer...", true);
+                // Bottom button click flow: clear temp messages, emit invite copied + waiting for peer (REQ-033.2, REQ-034.2, REQ-034.3)
+                triggerCreateRoomNotices();
             } catch (err) {
                 console.error("Chat creation failed:", err);
                 appendSystemMessage("Failed to create chat");
@@ -2021,6 +2059,8 @@
                 if (!rawPayload) return;
 
                 isJoining = true;
+                isInRoomSession = true;
+                updatePeerCountDisplay();
                 isBurned = false;
                 peerDepartureHandled = false;
                 opportunisticLeaveSent = false;
@@ -2126,11 +2166,16 @@
         function resetToHome() {
             stopReconciliationTimer();
             hasActiveSession = false;
+            isInRoomSession = false;
             isBurned = true;
             peerDepartureHandled = false;
             opportunisticLeaveSent = false;
             isJoining = false;
             activeHostInviteUrl = null;
+            if (staggerNoticeTimer) {
+                clearTimeout(staggerNoticeTimer);
+                staggerNoticeTimer = null;
+            }
             if (createRoomFeedbackTimer) {
                 clearTimeout(createRoomFeedbackTimer);
                 createRoomFeedbackTimer = null;
@@ -2254,8 +2299,9 @@
             }
         });
 
-        // Initialize bottom button in Stage 1
+        // Initialize bottom button in Stage 1 and peer count badge in Home View
         setCreateRoomStage1();
+        updatePeerCountDisplay();
 
         // Expose constructors and relay helpers on window for external runners & tests
         window.ZeroWebRtcEngine = ZeroWebRtcEngine;
@@ -2288,6 +2334,11 @@
         window.getHeaderAddFeedbackTimer = () => headerAddFeedbackTimer;
         window.getHeaderAddFeedbackEl = () => headerAddFeedbackEl;
         window.setHasActiveSession = (v) => { hasActiveSession = v; };
+        window.isInRoomSession = () => isInRoomSession;
+        window.setIsInRoomSession = (v) => { isInRoomSession = v; updatePeerCountDisplay(); };
+        window.SLASHED_PERSON_ICON_SVG = SLASHED_PERSON_ICON_SVG;
+        window.triggerCreateRoomNotices = triggerCreateRoomNotices;
+        window.getStaggerNoticeTimer = () => staggerNoticeTimer;
     </script>
 </body>
 </html>

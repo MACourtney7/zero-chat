@@ -9,6 +9,28 @@
         };
     }
 
+    if (!global.clearTimeout) {
+        let timeoutCounter = 0;
+        const activeTimeouts = new Map();
+        const nativeSetTimeout = global.setTimeout;
+        global.setTimeout = function(fn, ms) {
+            const id = ++timeoutCounter;
+            activeTimeouts.set(id, true);
+            nativeSetTimeout(function() {
+                if (activeTimeouts.has(id)) {
+                    activeTimeouts.delete(id);
+                    fn();
+                }
+            }, ms);
+            return id;
+        };
+        global.clearTimeout = function(id) {
+            if (id) {
+                activeTimeouts.delete(id);
+            }
+        };
+    }
+
     if (!global.setInterval) {
         let intervalCounter = 0;
         const activeIntervals = new Map();
@@ -123,14 +145,16 @@
                 return "";
             },
             set textContent(val) {
-                this._textContent = val;
+                this._textContent = String(val);
+                this._innerHTML = String(val);
             },
             _innerHTML: "",
             get innerHTML() {
                 return this._innerHTML;
             },
             set innerHTML(val) {
-                this._innerHTML = val;
+                this._innerHTML = String(val);
+                this._textContent = "";
                 if (val === "") {
                     this.children = [];
                 }
@@ -219,7 +243,11 @@
         global.document = {
             getElementById: function(id) {
                 if (!elementRegistry.has(id)) {
-                    elementRegistry.set(id, createMockElement(id));
+                    const el = createMockElement(id);
+                    if (id === "peer-count") {
+                        el.innerHTML = '<svg class="peer-slashed-user-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="10" cy="7" r="4"></circle><line x1="2" y1="2" x2="22" y2="22"></line></svg>';
+                    }
+                    elementRegistry.set(id, el);
                 }
                 return elementRegistry.get(id);
             },
