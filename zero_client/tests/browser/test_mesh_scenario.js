@@ -1159,6 +1159,203 @@ async function runTests() {
         print("  PASS: REQ-035.1 - REQ-035.5: Enhanced Burn Behavior verified cleanly (90s TTL, aging fade, per-message distributed burn, dissolve animation, quiet room invariant).");
     }
 
+    // Test 16: REQ-036.1 .. REQ-036.6: Limbo Recovery, In-Room Plus Invite, Staggered Notice Flow & 90s TTL Exemption
+    print("\n[Test 16] REQ-036.1 - REQ-036.6: Limbo recovery, in-room invite button, two-stage morphing & TTL exemption...");
+    {
+        // Reset state
+        resetToHome();
+        feed.children = [];
+        departedPeers.clear();
+        knownSessionMembers.clear();
+        activeSessionPeers.clear();
+        memberHandshakeState.clear();
+        pendingOffers.clear();
+        announcedJoinPeers.clear();
+        clearPendingInvite();
+
+        // 1 & 2. Client A (Host) creates room and Client B (Joiner) connects
+        setLocalPeerId("peer-limbo-host");
+        activeHostInviteUrl = null;
+        await createRoomAsHost();
+
+        const inviteUrl = getActiveHostInviteUrl();
+        assert(inviteUrl !== null, "Host must generate activeHostInviteUrl");
+        const match = inviteUrl.match(/payload=([^&]+)/);
+        assert(match !== null, "Payload match must succeed");
+        const jsonStr = atob(match[1].replace(/-/g, "+").replace(/_/g, "/"));
+        const invitePayload = JSON.parse(jsonStr);
+
+        const hostEngine = engine;
+        const joinerBEngine = new ZeroWebRtcEngine(invitePayload.assigned_peer_id);
+        const joinerBAnswer = await joinerBEngine.accept_offer_and_create_answer(invitePayload.sdp_offer.sdp, invitePayload.host_peer_id);
+
+        const dropPayloadB = {
+            invite_uuid: invitePayload.invite_uuid,
+            token: invitePayload.token,
+            sdp_answer: { sdp: joinerBAnswer },
+            joiner_public_key: Array.from(crypto.getRandomValues(new Uint8Array(32))),
+            joiner_peer_id: invitePayload.assigned_peer_id,
+            peer_id: invitePayload.assigned_peer_id
+        };
+
+        const dropUrlB = `https://network.zero-chat.workers.dev/drop/${invitePayload.do_id}/${invitePayload.invite_uuid}`;
+        await fetch(dropUrlB, {
+            method: "POST",
+            body: JSON.stringify(dropPayloadB)
+        });
+
+        await delay(100);
+        assert(hostEngine.openPeerCount === 1, "Host must have 1 connected peer after joiner B links");
+        assert(messageForm.classList.contains("hidden") === false, "messageForm must be visible when peer connects");
+        assert(msgInput.disabled === false, "msgInput must be enabled when peer connects");
+        assert(sendBtn.disabled === false, "sendBtn must be enabled when peer connects");
+        assert(createRoomBar.classList.contains("hidden") === true, "createRoomBar must be hidden when peer connects");
+        assert(headerAddBtn.classList.contains("hidden") === false, "headerAddBtn must be visible when peer connects");
+
+        // 3. Client B disconnects -> Client A detects openPeerCount === 0 (limbo state)
+        joinerBEngine.close();
+        handlePeerDeparture(invitePayload.assigned_peer_id);
+        assert(hostEngine.openPeerCount === 0, "Host must detect 0 open peers after peer departure");
+
+        // 4. Verify limbo state UI on Client A (REQ-036.1)
+        assert(messageForm.classList.contains("hidden") === true,
+            "Limbo state: #message-form must be hidden (classList.contains('hidden') === true)");
+        assert(createRoomBar.classList.contains("hidden") === false,
+            "Limbo state: #create-room-bar must be visible (classList.contains('hidden') === false)");
+        assert(btnCreateRoom.classList.contains("btn-emerald") === true,
+            "Limbo state: #btn-create-room must have btn-emerald class");
+        assert(!btnCreateRoom.classList.contains("btn-waiting"),
+            "Limbo state: #btn-create-room must not have btn-waiting class");
+        assert(btnCreateRoom.getAttribute("aria-label") === "Add peer",
+            `Limbo state: #btn-create-room aria-label must be 'Add peer', got '${btnCreateRoom.getAttribute("aria-label")}'`);
+        assert(btnCreateRoom.innerHTML.includes(ADD_PEER_ICON_SVG) || (btnCreateRoom.innerHTML.includes("<line x1=\"12\" y1=\"5\"") && btnCreateRoom.innerHTML.includes("stroke-width=\"2.5\"")),
+            "Limbo state: #btn-create-room must contain ADD_PEER_ICON_SVG (+) icon");
+        assert(headerAddBtn.classList.contains("hidden") === true,
+            "Limbo state: #header-add-btn must be hidden");
+
+        // 5. Client A clicks #btn-create-room (REQ-036.2 & REQ-036.3)
+        _lastCopiedText = null;
+        await btnCreateRoom.click();
+
+        assert(btnCreateRoom.classList.contains("btn-waiting") === true,
+            "Stage 2: #btn-create-room must transition to btn-waiting class");
+        assert(!btnCreateRoom.classList.contains("btn-emerald"),
+            "Stage 2: #btn-create-room must NOT have btn-emerald class");
+        assert(btnCreateRoom.getAttribute("aria-label") === "Copy invite link",
+            `Stage 2: #btn-create-room aria-label must be 'Copy invite link', got '${btnCreateRoom.getAttribute("aria-label")}'`);
+        assert(btnCreateRoom.innerHTML.includes("<rect"),
+            "Stage 2: #btn-create-room must display COPY_ICON_SVG");
+        assert(_lastCopiedText !== null && _lastCopiedText.includes("#payload="),
+            "Clipboard must contain the newly generated invite URL containing #payload=");
+
+        // Verify immediate Notice 1
+        let tempNotices = feed.querySelectorAll(".system-temporary");
+        assert(tempNotices.length === 1,
+            `Immediately after click, exactly 1 temporary notice expected, got ${tempNotices.length}`);
+        assert(tempNotices[0].querySelector(".system-text").textContent === "Invite link copied to clipboard",
+            `Notice 1 text must be 'Invite link copied to clipboard', got '${tempNotices[0].querySelector(".system-text").textContent}'`);
+
+        // Advance timers by 500ms: verify Notice 2 with .ticking-dots
+        advanceTimersByTime(500);
+        await delay(50);
+        tempNotices = feed.querySelectorAll(".system-temporary");
+        assert(tempNotices.length === 2,
+            `After 500ms, exactly 2 temporary notices expected, got ${tempNotices.length}`);
+        assert(tempNotices[1].querySelector(".system-text").textContent === "Waiting for peer",
+            `Notice 2 text must be 'Waiting for peer', got '${tempNotices[1].querySelector(".system-text").textContent}'`);
+        assert(tempNotices[1].querySelector(".ticking-dots") !== null,
+            "Notice 2 must contain animated .ticking-dots element");
+
+        // 6. Verify 90s TTL exemption (REQ-036.5)
+        advanceTimersByTime(95000);
+        await delay(50);
+        const tempNoticesAfter95s = feed.querySelectorAll(".system-temporary");
+        assert(tempNoticesAfter95s.length === 2,
+            `After 95s, temporary notices must NOT dissolve (TTL exempt), found ${tempNoticesAfter95s.length}`);
+        assert(!tempNoticesAfter95s[0].classList.contains("message-aging") && !tempNoticesAfter95s[0].classList.contains("message-dissolve"),
+            "Notice 1 must not age-fade or dissolve");
+        assert(!tempNoticesAfter95s[1].classList.contains("message-aging") && !tempNoticesAfter95s[1].classList.contains("message-dissolve"),
+            "Notice 2 must not age-fade or dissolve");
+
+        // 7. Re-click #btn-create-room: verify clipboard re-copy & staggered notices restarted (REQ-036.3)
+        _lastCopiedText = null;
+        await btnCreateRoom.click();
+        assert(_lastCopiedText !== null && _lastCopiedText.includes("#payload="),
+            "Re-click while waiting must re-copy invite link to clipboard");
+        assert(btnCreateRoom.classList.contains("btn-waiting"),
+            "Re-click: #btn-create-room must remain in Stage 2 waiting state");
+
+        tempNotices = feed.querySelectorAll(".system-temporary");
+        assert(tempNotices.length === 1,
+            `Immediately after re-click, only notice 1 should exist in feed, got ${tempNotices.length}`);
+        assert(tempNotices[0].querySelector(".system-text").textContent === "Invite link copied to clipboard",
+            "Notice 1 must restart immediately on re-click");
+
+        advanceTimersByTime(500);
+        await delay(50);
+        tempNotices = feed.querySelectorAll(".system-temporary");
+        assert(tempNotices.length === 2,
+            `After 500ms following re-click, notice 2 must be appended, got ${tempNotices.length}`);
+        assert(tempNotices[1].querySelector(".system-text").textContent === "Waiting for peer",
+            "Notice 2 must reappear after 450ms stagger on re-click");
+
+        // 8. Client C joins via the generated in-room invite (REQ-036.4)
+        const matchC = _lastCopiedText.match(/payload=([^&]+)/);
+        assert(matchC !== null, "In-room invite URL must contain payload");
+        const jsonStrC = atob(matchC[1].replace(/-/g, "+").replace(/_/g, "/"));
+        const invitePayloadC = JSON.parse(jsonStrC);
+
+        const joinerCEngine = new ZeroWebRtcEngine(invitePayloadC.assigned_peer_id);
+        const joinerCAnswer = await joinerCEngine.accept_offer_and_create_answer(invitePayloadC.sdp_offer.sdp, invitePayloadC.host_peer_id);
+
+        const dropPayloadC = {
+            invite_uuid: invitePayloadC.invite_uuid,
+            token: invitePayloadC.token,
+            sdp_answer: { sdp: joinerCAnswer },
+            joiner_public_key: Array.from(crypto.getRandomValues(new Uint8Array(32))),
+            joiner_peer_id: invitePayloadC.assigned_peer_id,
+            peer_id: invitePayloadC.assigned_peer_id
+        };
+
+        const dropUrlC = `https://network.zero-chat.workers.dev/drop/${invitePayloadC.do_id}/${invitePayloadC.invite_uuid}`;
+        await fetch(dropUrlC, {
+            method: "POST",
+            body: JSON.stringify(dropPayloadC)
+        });
+
+        await delay(100);
+        assert(hostEngine.openPeerCount === 1, "Host must have 1 open peer after Client C connects");
+
+        assert(createRoomBar.classList.contains("hidden") === true,
+            "After Client C connects: #create-room-bar must be hidden");
+        assert(messageForm.classList.contains("hidden") === false,
+            "After Client C connects: #message-form must be restored and unhidden");
+        assert(msgInput.disabled === false,
+            "After Client C connects: #message-input must be enabled");
+        assert(sendBtn.disabled === false,
+            "After Client C connects: #send-button must be enabled");
+        assert(feed.querySelectorAll(".system-temporary").length === 0,
+            "After Client C connects: temporary system notices must be cleared");
+        assert(headerAddBtn.classList.contains("hidden") === false,
+            "After Client C connects: #header-add-btn must be visible");
+
+        // 9. Reset / leave chat restores default Stage 1 (REQ-036.4)
+        joinerCEngine.close();
+        hostEngine.close();
+        resetToHome();
+
+        assert(btnCreateRoom.classList.contains("btn-emerald") === true,
+            "Home View: #btn-create-room must restore to btn-emerald");
+        assert(!btnCreateRoom.classList.contains("btn-waiting"),
+            "Home View: #btn-create-room must NOT have btn-waiting class");
+        assert(btnCreateRoom.getAttribute("aria-label") === "Create Chat",
+            `Home View: #btn-create-room aria-label must restore to 'Create Chat', got '${btnCreateRoom.getAttribute("aria-label")}'`);
+        assert(btnCreateRoom.innerHTML.includes("<svg") && btnCreateRoom.innerHTML.includes("<path"),
+            "Home View: #btn-create-room must restore to CREATE_CHAT_ICON_SVG");
+
+        print("  PASS: REQ-036.1 - REQ-036.6: Limbo recovery, in-room invite button, two-stage morphing & TTL exemption verified cleanly.");
+    }
+
     print("\n===============================================================================");
     print("ALL BROWSER HEADLESS MESH TESTS PASSED SUCCESSFULLY!");
     print("===============================================================================");
