@@ -27,9 +27,13 @@ fn test_invite_payload_roundtrip_serialization() {
         },
         host_public_key: [0x11; 32],
         guest_private_key: Some([0x22; 32]),
+        host_peer_id: Some("host-peer-alice".to_string()),
+        assigned_peer_id: Some("guest-peer-bob".to_string()),
     };
 
     let json_str = to_json_string(&payload).expect("serialize to JSON string");
+    assert!(json_str.contains("\"host_peer_id\":\"host-peer-alice\""));
+    assert!(json_str.contains("\"assigned_peer_id\":\"guest-peer-bob\""));
     let decoded_str: InvitePayload = from_json_str(&json_str).expect("deserialize from JSON str");
     assert_eq!(payload, decoded_str);
 
@@ -37,6 +41,24 @@ fn test_invite_payload_roundtrip_serialization() {
     let decoded_bytes: InvitePayload =
         from_json_bytes(&json_bytes).expect("deserialize from JSON bytes");
     assert_eq!(payload, decoded_bytes);
+}
+
+#[test]
+fn test_invite_payload_backward_compatibility() {
+    let legacy_json = format!(
+        r#"{{
+        "do_id": "do-legacy",
+        "invite_uuid": "legacy-uuid",
+        "token": "legacy-token",
+        "sdp_offer": {{ "sdp": "v=0\r\n" }},
+        "host_public_key": {:?}
+    }}"#,
+        vec![0u8; 32]
+    );
+    let decoded: InvitePayload = from_json_str(&legacy_json).expect("deserialize legacy payload");
+    assert_eq!(decoded.guest_private_key, None);
+    assert_eq!(decoded.host_peer_id, None);
+    assert_eq!(decoded.assigned_peer_id, None);
 }
 
 #[test]
@@ -48,9 +70,11 @@ fn test_drop_payload_roundtrip_serialization() {
             sdp: "v=0\r\no=- 67890 2 IN IP4 127.0.0.1\r\n".to_string(),
         },
         joiner_public_key: [0x33; 32],
+        joiner_peer_id: Some("joiner-peer-charlie".to_string()),
     };
 
     let json_str = to_json_string(&payload).expect("serialize DropPayload to string");
+    assert!(json_str.contains("\"joiner_peer_id\":\"joiner-peer-charlie\""));
     let decoded_str: DropPayload = from_json_str(&json_str).expect("deserialize DropPayload");
     assert_eq!(payload, decoded_str);
 
@@ -58,6 +82,22 @@ fn test_drop_payload_roundtrip_serialization() {
     let decoded_bytes: DropPayload =
         from_json_bytes(&json_bytes).expect("deserialize DropPayload from bytes");
     assert_eq!(payload, decoded_bytes);
+}
+
+#[test]
+fn test_drop_payload_backward_compatibility() {
+    let legacy_json = format!(
+        r#"{{
+        "invite_uuid": "legacy-drop-uuid",
+        "token": "legacy-drop-token",
+        "sdp_answer": {{ "sdp": "v=0\r\n" }},
+        "joiner_public_key": {:?}
+    }}"#,
+        vec![1u8; 32]
+    );
+    let decoded: DropPayload =
+        from_json_str(&legacy_json).expect("deserialize legacy drop payload");
+    assert_eq!(decoded.joiner_peer_id, None);
 }
 
 #[test]
