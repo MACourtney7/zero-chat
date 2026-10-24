@@ -479,7 +479,7 @@ async function runTests() {
         assert(!pendingOffers.has("peer-C"), "peer-C must be removed from pendingOffers");
         assert(peerDepartureHandled === true, "peerDepartureHandled must be true");
         assert(msgInput.disabled === true, "msgInput must be disabled in disconnected state");
-        assert(msgInput.placeholder === "Peer left chat", "msgInput placeholder must be 'Peer left chat'");
+        assert(msgInput.placeholder === "", "msgInput placeholder must be empty on peer departure");
         assert(reconciliationTimer === null, "Reconciliation timer must be stopped");
 
         // Verify NO duplicate 'Peer left chat' notice was appended
@@ -835,6 +835,7 @@ async function runTests() {
         // 2. Click to Stage 2 & Temporary Messages (REQ-033.1, REQ-033.2, V-033.1, V-033.2)
         setLocalPeerId("peer-ui-host");
         await createRoomAsHost();
+        await delay(500);
 
         assert(btnCreateRoom.classList.contains("btn-waiting"), "Stage 2: button must transition to btn-waiting class");
         assert(!btnCreateRoom.classList.contains("btn-emerald"), "Stage 2: button must NOT have btn-emerald class");
@@ -853,10 +854,10 @@ async function runTests() {
         assert(msg1Text === "Invite link copied to clipboard", `First temp message must be 'Invite link copied to clipboard', got '${msg1Text}'`);
         assert(msg1.querySelector(".system-timestamp") === null, "Temporary message 1 must NOT contain timestamp");
 
-        // Message 2: "Waiting for peer..." with ticking dots
+        // Message 2: "Waiting for peer" with ticking dots (REQ-034.3)
         const msg2 = tempMessages[1];
         const msg2Text = msg2.querySelector(".system-text") ? msg2.querySelector(".system-text").textContent : "";
-        assert(msg2Text === "Waiting for peer...", `Second temp message must be 'Waiting for peer...', got '${msg2Text}'`);
+        assert(msg2Text === "Waiting for peer", `Second temp message must be 'Waiting for peer', got '${msg2Text}'`);
         assert(msg2.querySelector(".system-timestamp") === null, "Temporary message 2 must NOT contain timestamp");
         assert(msg2.querySelector(".ticking-dots") !== null, "Second temp message must contain .ticking-dots element");
 
@@ -870,6 +871,7 @@ async function runTests() {
 
         // 3. Re-click in Stage 2 clears and re-displays temporary messages (REQ-033.2, V-033.3)
         await createRoomAsHost();
+        await delay(500);
         assert(btnCreateRoom.classList.contains("btn-waiting"), "Re-click: button must remain in Stage 2");
         assert(btnCreateRoom.textContent.trim() === "", "Re-click: button must remain icon-only");
 
@@ -935,12 +937,95 @@ async function runTests() {
         print("  PASS: REQ-033.1 .. REQ-033.4: Icon-only button and temporary system messages verified cleanly.");
     }
 
+    // Test 14: REQ-034.1 - REQ-034.4: Staggered delivery, ellipsis fix, slashed person icon, empty placeholder
+    print("\n[Test 14] REQ-034.1 - REQ-034.4: Slashed person icon, empty placeholder, staggered notices & ellipsis fix...");
+    {
+        // 1. Assert #peer-count in home view contains slashed person icon SVG
+        resetToHome();
+        const peerCountEl = document.getElementById("peer-count");
+        assert(peerCountEl !== null, "#peer-count element must exist");
+        assert(peerCountEl.innerHTML.includes("peer-slashed-user-icon") && peerCountEl.innerHTML.includes("<svg"),
+            "Home View: #peer-count must contain slashed person icon SVG");
+        assert(msgInput.placeholder === "", "Home View: msgInput placeholder must be empty string");
+
+        // 2. Trigger create room: assert #peer-count transitions to '0'
+        setLocalPeerId("peer-ui-t14");
+        await createRoomAsHost();
+
+        assert(peerCountEl.textContent === "0",
+            `Room View (empty session): #peer-count must transition to '0', got '${peerCountEl.textContent}'`);
+
+        // Assert Notice 1 appended immediately
+        let tempMessages = feed.querySelectorAll(".system-temporary");
+        assert(tempMessages.length === 1,
+            `Immediately after create room, exactly 1 temporary notice must exist, got ${tempMessages.length}`);
+        const notice1Text = tempMessages[0].querySelector(".system-text") ? tempMessages[0].querySelector(".system-text").textContent : "";
+        assert(notice1Text === "Invite link copied to clipboard",
+            `Notice 1 must be 'Invite link copied to clipboard', got '${notice1Text}'`);
+
+        // Assert Notice 2 is NOT yet appended immediately (staggered by 450ms)
+        assert(tempMessages.length < 2,
+            "Notice 2 ('Waiting for peer') must NOT be appended immediately");
+
+        // Advance timers / wait 500ms
+        await delay(500);
+
+        // Assert Notice 2 is now appended
+        tempMessages = feed.querySelectorAll(".system-temporary");
+        assert(tempMessages.length === 2,
+            `After 500ms delay, exactly 2 temporary notices must exist, got ${tempMessages.length}`);
+        const notice2 = tempMessages[1];
+        const notice2Text = notice2.querySelector(".system-text") ? notice2.querySelector(".system-text").textContent : "";
+        assert(notice2Text === "Waiting for peer",
+            `Notice 2 .system-text must strictly be 'Waiting for peer' without literal dots, got '${notice2Text}'`);
+        assert(notice2.querySelector(".ticking-dots") !== null,
+            "Notice 2 must contain .ticking-dots element");
+
+        // 3. Re-click button: assert timer reset and staggered sequence restarts cleanly
+        await createRoomAsHost();
+        tempMessages = feed.querySelectorAll(".system-temporary");
+        assert(tempMessages.length === 1,
+            `Immediately after re-clicking create room button, only notice 1 should exist, got ${tempMessages.length}`);
+
+        await delay(500);
+        tempMessages = feed.querySelectorAll(".system-temporary");
+        assert(tempMessages.length === 2,
+            `After 500ms following re-click, notice 2 must be appended, got ${tempMessages.length}`);
+        assert(tempMessages[1].querySelector(".system-text").textContent === "Waiting for peer",
+            "Notice 2 text after re-click must be 'Waiting for peer'");
+
+        // 4. Test stagger timer cancellation on clearTemporarySystemMessages
+        await createRoomAsHost();
+        assert(feed.querySelectorAll(".system-temporary").length === 1, "Immediate notice 1 before clear");
+        clearTemporarySystemMessages();
+        assert(feed.querySelectorAll(".system-temporary").length === 0, "Cleared temp notices immediately");
+        await delay(500);
+        assert(feed.querySelectorAll(".system-temporary").length === 0,
+            "Staggered timer must be cancelled by clearTemporarySystemMessages; no notice should appear after 500ms");
+
+        // 5. Simulate active session and peer departure
+        setHasActiveSession(true);
+        handlePeerDeparture("departing-peer-t14");
+        assert(msgInput.disabled === true, "msgInput must be disabled on peer departure");
+        assert(msgInput.placeholder === "", `msgInput placeholder must be empty on peer departure, got '${msgInput.placeholder}'`);
+        assert(peerCountEl.textContent === "0", "#peer-count must remain '0' in room view when peer departs");
+
+        // 6. Simulate resetToHome()
+        resetToHome();
+        assert(peerCountEl.innerHTML.includes("peer-slashed-user-icon") && peerCountEl.innerHTML.includes("<svg"),
+            "resetToHome() must restore slashed person icon SVG to #peer-count");
+        assert(msgInput.placeholder === "", "msgInput placeholder must remain empty after resetToHome()");
+
+        print("  PASS: REQ-034.1 - REQ-034.4: Slashed person icon, empty placeholder, staggered notices & ellipsis fix verified.");
+    }
+
     print("\n===============================================================================");
     print("ALL BROWSER HEADLESS MESH TESTS PASSED SUCCESSFULLY!");
     print("===============================================================================");
 }
 
 runTests().catch((err) => {
-    print("TEST SUITE FAILED:", err.stack || err);
+    print("TEST SUITE FAILED: " + (err.message || err));
+    if (err.stack) print(err.stack);
     throw err;
 });
