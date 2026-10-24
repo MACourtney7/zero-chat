@@ -344,8 +344,6 @@ fn test_req_006_2_direct_mesh_snap_zero_cloud_edge() {
         charlie_mesh.has_peer("bob"),
         "Charlie must register direct peer 'bob' in routing table"
     );
-    assert_eq!(bob_mesh.peer_count(), 2); // alice + charlie
-    assert_eq!(charlie_mesh.peer_count(), 2); // alice + bob
 
     let charlie_to_bob = charlie_mesh
         .get_peer("bob")
@@ -368,6 +366,10 @@ fn test_req_006_2_direct_mesh_snap_zero_cloud_edge() {
 
     // Pair Channel_BC for direct loopback messaging
     WebRtcPeer::pair_for_testing(&charlie_to_bob, &bob_to_charlie).expect("pair Channel_BC");
+
+    // Once direct Channel_BC is open, both report peer_count == 2 (REQ-031.5)
+    assert_eq!(bob_mesh.peer_count(), 2); // alice + charlie
+    assert_eq!(charlie_mesh.peer_count(), 2); // alice + bob
 
     // Verify direct data channel text messaging over Channel_BC
     let direct_raw_received = Rc::new(RefCell::new(Vec::new()));
@@ -4134,4 +4136,608 @@ fn test_req_030_departure_counter_symmetry() {
             ))
         );
     }
+}
+
+// ============================================================================
+// TICKET-031 REGRESSION SIMULATION TESTS (V-031-1 through V-031-7)
+// ============================================================================
+
+/// V-031-1: REQ-031.1 & REQ-031.2: A creates chat, B joins. A invites C.
+/// B and C must snap a direct data channel via Alice's bridge without cloud edge,
+/// resulting in a full mesh where all three participants report open_peers == 2.
+#[test]
+fn test_req_031_invite_via_host_snaps_direct_bc() {
+    let (alice_sk, alice_pk) = generate_kp();
+    let (bob_sk, bob_pk) = generate_kp();
+    let (charlie_sk, charlie_pk) = generate_kp();
+
+    let alice_mesh = MeshTopology::new("alice", alice_sk);
+    let bob_mesh = MeshTopology::new("bob", bob_sk);
+    let charlie_mesh = MeshTopology::new("charlie", charlie_sk);
+
+    // 1. Alice <-> Bob connected
+    let alice_to_bob = WebRtcPeer::new();
+    let bob_to_alice = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&alice_to_bob, &bob_to_alice).expect("pair Alice-Bob");
+    alice_mesh
+        .add_peer("bob", bob_pk, alice_to_bob)
+        .expect("Alice adds Bob");
+    bob_mesh
+        .add_peer("alice", alice_pk, bob_to_alice)
+        .expect("Bob adds Alice");
+
+    assert_eq!(alice_mesh.open_peers(), 1);
+    assert_eq!(bob_mesh.open_peers(), 1);
+
+    // 2. Alice invites Charlie: Alice <-> Charlie connects
+    let alice_to_charlie = WebRtcPeer::new();
+    let charlie_to_alice = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&alice_to_charlie, &charlie_to_alice).expect("pair Alice-Charlie");
+    charlie_mesh
+        .add_peer("alice", alice_pk, charlie_to_alice)
+        .expect("Charlie adds Alice");
+    alice_mesh
+        .add_peer("charlie", charlie_pk, alice_to_charlie)
+        .expect("Alice adds Charlie");
+
+    // Alice now has 2 peers
+    assert_eq!(alice_mesh.open_peers(), 2);
+
+    // In a full mesh, Bob and Charlie MUST have direct links established via in-band relay signaling
+    assert!(
+        bob_mesh.has_peer("charlie"),
+        "Bob must automatically snap direct peer 'charlie' via Alice's bridge"
+    );
+    assert!(
+        charlie_mesh.has_peer("bob"),
+        "Charlie must automatically snap direct peer 'bob' via Alice's bridge"
+    );
+
+    // Pair the snapped direct channel for loopback testing
+    let b_to_c = bob_mesh
+        .get_peer("charlie")
+        .expect("Bob has peer Charlie")
+        .rtc_peer;
+    let c_to_b = charlie_mesh
+        .get_peer("bob")
+        .expect("Charlie has peer Bob")
+        .rtc_peer;
+    WebRtcPeer::pair_for_testing(&b_to_c, &c_to_b).expect("pair Channel_BC");
+
+    // All three nodes must report open_peers == 2
+    assert_eq!(alice_mesh.open_peers(), 2, "Alice open_peers == 2");
+    assert_eq!(bob_mesh.open_peers(), 2, "Bob open_peers == 2");
+    assert_eq!(charlie_mesh.open_peers(), 2, "Charlie open_peers == 2");
+}
+
+/// V-031-2: REQ-031.1 & REQ-031.4: Host leaves; surviving peers B and C keep direct channel,
+/// can chat directly with each other, and both stay active.
+#[test]
+fn test_req_031_host_leaves_survivors_keep_chatting() {
+    let (alice_sk, alice_pk) = generate_kp();
+    let (bob_sk, bob_pk) = generate_kp();
+    let (charlie_sk, charlie_pk) = generate_kp();
+
+    let alice_mesh = MeshTopology::new("alice", alice_sk);
+    let bob_mesh = MeshTopology::new("bob", bob_sk);
+    let charlie_mesh = MeshTopology::new("charlie", charlie_sk);
+
+    // Initial 3-node mesh
+    let alice_to_bob = WebRtcPeer::new();
+    let bob_to_alice = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&alice_to_bob, &bob_to_alice).expect("pair Alice-Bob");
+    alice_mesh
+        .add_peer("bob", bob_pk, alice_to_bob)
+        .expect("Alice adds Bob");
+    bob_mesh
+        .add_peer("alice", alice_pk, bob_to_alice.clone())
+        .expect("Bob adds Alice");
+
+    let alice_to_charlie = WebRtcPeer::new();
+    let charlie_to_alice = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&alice_to_charlie, &charlie_to_alice).expect("pair Alice-Charlie");
+    charlie_mesh
+        .add_peer("alice", alice_pk, charlie_to_alice.clone())
+        .expect("Charlie adds Alice");
+    alice_mesh
+        .add_peer("charlie", charlie_pk, alice_to_charlie)
+        .expect("Alice adds Charlie");
+
+    assert!(
+        bob_mesh.has_peer("charlie"),
+        "Bob must have snapped direct peer 'charlie'"
+    );
+    assert!(
+        charlie_mesh.has_peer("bob"),
+        "Charlie must have snapped direct peer 'bob'"
+    );
+
+    let b_to_c = bob_mesh
+        .get_peer("charlie")
+        .expect("Bob peer Charlie")
+        .rtc_peer;
+    let c_to_b = charlie_mesh
+        .get_peer("bob")
+        .expect("Charlie peer Bob")
+        .rtc_peer;
+    WebRtcPeer::pair_for_testing(&b_to_c, &c_to_b).expect("pair Channel_BC");
+
+    // Hook message callbacks on survivors
+    let bob_received = Rc::new(RefCell::new(Vec::new()));
+    let b_recv_clone = bob_received.clone();
+    bob_mesh.on_message(move |sender, msg| {
+        b_recv_clone
+            .borrow_mut()
+            .push((sender.to_string(), msg.to_string()));
+    });
+
+    let charlie_received = Rc::new(RefCell::new(Vec::new()));
+    let c_recv_clone = charlie_received.clone();
+    charlie_mesh.on_message(move |sender, msg| {
+        c_recv_clone
+            .borrow_mut()
+            .push((sender.to_string(), msg.to_string()));
+    });
+
+    // Host Alice leaves the chat (tearing down Channel_AB and Channel_AC)
+    bob_to_alice.close().expect("close Bob-Alice channel");
+    charlie_to_alice
+        .close()
+        .expect("close Charlie-Alice channel");
+
+    // Survivors Bob and Charlie must stay active with 1 open peer each
+    assert_eq!(
+        bob_mesh.open_peers(),
+        1,
+        "Bob sees 1 surviving peer (Charlie)"
+    );
+    assert_eq!(
+        charlie_mesh.open_peers(),
+        1,
+        "Charlie sees 1 surviving peer (Bob)"
+    );
+    assert!(bob_mesh.has_peer("charlie"));
+    assert!(charlie_mesh.has_peer("bob"));
+
+    // Charlie broadcasts a message; Bob must receive it directly over Channel_BC!
+    charlie_mesh
+        .broadcast_chat("Hello Bob from surviving Charlie!")
+        .expect("Charlie broadcasts");
+
+    assert_eq!(
+        *bob_received.borrow(),
+        vec![(
+            "charlie".to_string(),
+            "Hello Bob from surviving Charlie!".to_string()
+        )],
+        "Bob must receive Charlie's message over direct Channel_BC after Alice left"
+    );
+
+    // Bob broadcasts a reply; Charlie must receive it!
+    bob_mesh
+        .broadcast_chat("Hello Charlie, received directly!")
+        .expect("Bob broadcasts");
+
+    assert_eq!(
+        *charlie_received.borrow(),
+        vec![(
+            "bob".to_string(),
+            "Hello Charlie, received directly!".to_string()
+        )],
+        "Charlie must receive Bob's reply over direct Channel_BC"
+    );
+}
+
+/// V-031-3: REQ-031.1 & REQ-031.4: Member B leaves instead; Alice and Charlie remain connected
+/// and keep chatting symmetrically.
+#[test]
+fn test_req_031_member_leaves_symmetric() {
+    let (alice_sk, alice_pk) = generate_kp();
+    let (bob_sk, bob_pk) = generate_kp();
+    let (charlie_sk, charlie_pk) = generate_kp();
+
+    let alice_mesh = MeshTopology::new("alice", alice_sk);
+    let bob_mesh = MeshTopology::new("bob", bob_sk);
+    let charlie_mesh = MeshTopology::new("charlie", charlie_sk);
+
+    let alice_to_bob = WebRtcPeer::new();
+    let bob_to_alice = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&alice_to_bob, &bob_to_alice).expect("pair Alice-Bob");
+    alice_mesh
+        .add_peer("bob", bob_pk, alice_to_bob.clone())
+        .expect("Alice adds Bob");
+    bob_mesh
+        .add_peer("alice", alice_pk, bob_to_alice)
+        .expect("Bob adds Alice");
+
+    let alice_to_charlie = WebRtcPeer::new();
+    let charlie_to_alice = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&alice_to_charlie, &charlie_to_alice).expect("pair Alice-Charlie");
+    charlie_mesh
+        .add_peer("alice", alice_pk, charlie_to_alice)
+        .expect("Charlie adds Alice");
+    alice_mesh
+        .add_peer("charlie", charlie_pk, alice_to_charlie)
+        .expect("Alice adds Charlie");
+
+    assert!(bob_mesh.has_peer("charlie"));
+    assert!(charlie_mesh.has_peer("bob"));
+    let b_to_c = bob_mesh
+        .get_peer("charlie")
+        .expect("Bob peer Charlie")
+        .rtc_peer;
+    let c_to_b = charlie_mesh
+        .get_peer("bob")
+        .expect("Charlie peer Bob")
+        .rtc_peer;
+    WebRtcPeer::pair_for_testing(&b_to_c, &c_to_b).expect("pair Channel_BC");
+
+    let charlie_received = Rc::new(RefCell::new(Vec::new()));
+    let c_recv_clone = charlie_received.clone();
+    charlie_mesh.on_message(move |sender, msg| {
+        c_recv_clone
+            .borrow_mut()
+            .push((sender.to_string(), msg.to_string()));
+    });
+
+    let alice_received = Rc::new(RefCell::new(Vec::new()));
+    let a_recv_clone = alice_received.clone();
+    alice_mesh.on_message(move |sender, msg| {
+        a_recv_clone
+            .borrow_mut()
+            .push((sender.to_string(), msg.to_string()));
+    });
+
+    // Bob leaves
+    alice_to_bob.close().expect("close Alice-Bob channel");
+    c_to_b.close().expect("close Charlie-Bob channel");
+
+    assert_eq!(
+        alice_mesh.open_peers(),
+        1,
+        "Alice sees 1 surviving peer (Charlie)"
+    );
+    assert_eq!(
+        charlie_mesh.open_peers(),
+        1,
+        "Charlie sees 1 surviving peer (Alice)"
+    );
+
+    alice_mesh
+        .broadcast_chat("Hello Charlie from Alice!")
+        .expect("Alice broadcasts");
+    assert_eq!(
+        *charlie_received.borrow(),
+        vec![("alice".to_string(), "Hello Charlie from Alice!".to_string())]
+    );
+
+    charlie_mesh
+        .broadcast_chat("Hello Alice from Charlie!")
+        .expect("Charlie broadcasts");
+    assert_eq!(
+        *alice_received.borrow(),
+        vec![(
+            "charlie".to_string(),
+            "Hello Alice from Charlie!".to_string()
+        )]
+    );
+}
+
+/// V-031-4: REQ-031.2 & REQ-031.4: Four-node chain joins (A->B, B->C, C->D),
+/// all nodes snap full mesh, then A leaves; B, C, D remain fully meshed and chatting.
+#[test]
+fn test_req_031_chain_join_four_nodes() {
+    let (alice_sk, alice_pk) = generate_kp();
+    let (bob_sk, bob_pk) = generate_kp();
+    let (charlie_sk, charlie_pk) = generate_kp();
+    let (dave_sk, dave_pk) = generate_kp();
+
+    let alice_mesh = MeshTopology::new("alice", alice_sk);
+    let bob_mesh = MeshTopology::new("bob", bob_sk);
+    let charlie_mesh = MeshTopology::new("charlie", charlie_sk);
+    let dave_mesh = MeshTopology::new("dave", dave_sk);
+
+    // 1. A connects to B
+    let a_b = WebRtcPeer::new();
+    let b_a = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&a_b, &b_a).expect("pair AB");
+    alice_mesh.add_peer("bob", bob_pk, a_b).expect("A adds B");
+    bob_mesh.add_peer("alice", alice_pk, b_a).expect("B adds A");
+
+    // 2. B invites C
+    let b_c = WebRtcPeer::new();
+    let c_b = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&b_c, &c_b).expect("pair BC");
+    charlie_mesh.add_peer("bob", bob_pk, c_b).expect("C adds B");
+    bob_mesh
+        .add_peer("charlie", charlie_pk, b_c)
+        .expect("B adds C");
+
+    // A and C must snap
+    assert!(alice_mesh.has_peer("charlie"), "Alice snaps to Charlie");
+    assert!(charlie_mesh.has_peer("alice"), "Charlie snaps to Alice");
+    let a_c = alice_mesh.get_peer("charlie").unwrap().rtc_peer;
+    let c_a = charlie_mesh.get_peer("alice").unwrap().rtc_peer;
+    WebRtcPeer::pair_for_testing(&a_c, &c_a).expect("pair AC");
+
+    // 3. C invites D
+    let c_d = WebRtcPeer::new();
+    let d_c = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&c_d, &d_c).expect("pair CD");
+    dave_mesh
+        .add_peer("charlie", charlie_pk, d_c)
+        .expect("D adds C");
+    charlie_mesh
+        .add_peer("dave", dave_pk, c_d)
+        .expect("C adds D");
+
+    // D must snap to A and B; A and B must snap to D
+    assert!(dave_mesh.has_peer("alice"), "Dave snaps to Alice");
+    assert!(alice_mesh.has_peer("dave"), "Alice snaps to Dave");
+    let d_a = dave_mesh.get_peer("alice").unwrap().rtc_peer;
+    let a_d = alice_mesh.get_peer("dave").unwrap().rtc_peer;
+    WebRtcPeer::pair_for_testing(&d_a, &a_d).expect("pair DA");
+
+    assert!(dave_mesh.has_peer("bob"), "Dave snaps to Bob");
+    assert!(bob_mesh.has_peer("dave"), "Bob snaps to Dave");
+    let d_b = dave_mesh.get_peer("bob").unwrap().rtc_peer;
+    let b_d = bob_mesh.get_peer("dave").unwrap().rtc_peer;
+    WebRtcPeer::pair_for_testing(&d_b, &b_d).expect("pair DB");
+
+    // Verify all 4 nodes are fully meshed (open_peers == 3 each)
+    assert_eq!(alice_mesh.open_peers(), 3);
+    assert_eq!(bob_mesh.open_peers(), 3);
+    assert_eq!(charlie_mesh.open_peers(), 3);
+    assert_eq!(dave_mesh.open_peers(), 3);
+
+    // 4. Alice leaves
+    bob_mesh
+        .get_peer("alice")
+        .unwrap()
+        .rtc_peer
+        .close()
+        .unwrap();
+    charlie_mesh
+        .get_peer("alice")
+        .unwrap()
+        .rtc_peer
+        .close()
+        .unwrap();
+    dave_mesh
+        .get_peer("alice")
+        .unwrap()
+        .rtc_peer
+        .close()
+        .unwrap();
+    alice_mesh.disconnect_peer("bob").unwrap();
+    alice_mesh.disconnect_peer("charlie").unwrap();
+    alice_mesh.disconnect_peer("dave").unwrap();
+
+    // Verify survivors B, C, D each have 2 open peers
+    assert_eq!(bob_mesh.open_peers(), 2);
+    assert_eq!(charlie_mesh.open_peers(), 2);
+    assert_eq!(dave_mesh.open_peers(), 2);
+
+    // Chat test among survivors
+    let bob_recv = Rc::new(RefCell::new(Vec::new()));
+    let b_clone = bob_recv.clone();
+    bob_mesh.on_message(move |s, m| b_clone.borrow_mut().push((s.to_string(), m.to_string())));
+
+    let charlie_recv = Rc::new(RefCell::new(Vec::new()));
+    let c_clone = charlie_recv.clone();
+    charlie_mesh.on_message(move |s, m| c_clone.borrow_mut().push((s.to_string(), m.to_string())));
+
+    dave_mesh
+        .broadcast_chat("Hello from Dave!")
+        .expect("Dave broadcast");
+    assert_eq!(
+        *bob_recv.borrow(),
+        vec![("dave".to_string(), "Hello from Dave!".to_string())]
+    );
+    assert_eq!(
+        *charlie_recv.borrow(),
+        vec![("dave".to_string(), "Hello from Dave!".to_string())]
+    );
+}
+
+/// V-031-5: REQ-031.3: If a relayed offer is initially dropped,
+/// reconciliation retries the handshake and establishes the missing link.
+#[test]
+fn test_req_031_relay_handshake_retry() {
+    let (alice_sk, alice_pk) = generate_kp();
+    let (bob_sk, bob_pk) = generate_kp();
+    let (charlie_sk, charlie_pk) = generate_kp();
+
+    let alice_mesh = MeshTopology::new("alice", alice_sk);
+    let bob_mesh = MeshTopology::new("bob", bob_sk);
+    let charlie_mesh = MeshTopology::new("charlie", charlie_sk);
+
+    // Connect Alice <-> Bob
+    let alice_to_bob = WebRtcPeer::new();
+    let bob_to_alice = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&alice_to_bob, &bob_to_alice).expect("pair Alice-Bob");
+    alice_mesh
+        .add_peer("bob", bob_pk, alice_to_bob)
+        .expect("A adds B");
+    bob_mesh
+        .add_peer("alice", alice_pk, bob_to_alice)
+        .expect("B adds A");
+
+    // Connect Alice <-> Charlie
+    let alice_to_charlie = WebRtcPeer::new();
+    let charlie_to_alice = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&alice_to_charlie, &charlie_to_alice).expect("pair Alice-Charlie");
+    charlie_mesh
+        .add_peer("alice", alice_pk, charlie_to_alice)
+        .expect("C adds A");
+    alice_mesh
+        .add_peer("charlie", charlie_pk, alice_to_charlie)
+        .expect("A adds C");
+
+    // Simulate dropped initial snap offer/channel failure by removing the peer
+    bob_mesh.remove_peer("charlie").unwrap();
+    charlie_mesh.remove_peer("bob").unwrap();
+
+    // Direct link does not exist yet
+    assert!(!bob_mesh.has_peer("charlie"));
+    assert!(!charlie_mesh.has_peer("bob"));
+
+    // Reconciliation entry point retries the missing handshake
+    let retried = block_on(bob_mesh.reconcile_mesh()).expect("reconciliation");
+    assert!(
+        retried >= 1,
+        "reconcile_mesh must initiate handshake for missing Charlie link"
+    );
+
+    assert!(
+        bob_mesh.has_peer("charlie"),
+        "Direct link B->C created after reconcile retry"
+    );
+    assert!(
+        charlie_mesh.has_peer("bob"),
+        "Direct link C->B created after reconcile retry"
+    );
+
+    let b_c = bob_mesh.get_peer("charlie").unwrap().rtc_peer;
+    let c_b = charlie_mesh.get_peer("bob").unwrap().rtc_peer;
+    WebRtcPeer::pair_for_testing(&b_c, &c_b).expect("pair Channel_BC");
+
+    assert_eq!(bob_mesh.open_peers(), 2);
+    assert_eq!(charlie_mesh.open_peers(), 2);
+}
+
+/// V-031-6: REQ-031.2 & REQ-031.5: Re-introduction / re-handshake over an already-open link
+/// must be idempotent: must not close the channel, trigger departure callbacks, or purge.
+#[test]
+fn test_req_031_rehandshake_keeps_open_link() {
+    let (alice_sk, alice_pk) = generate_kp();
+    let (bob_sk, bob_pk) = generate_kp();
+    let (charlie_sk, charlie_pk) = generate_kp();
+
+    let alice_mesh = MeshTopology::new("alice", alice_sk);
+    let bob_mesh = MeshTopology::new("bob", bob_sk);
+    let charlie_mesh = MeshTopology::new("charlie", charlie_sk);
+
+    let alice_to_bob = WebRtcPeer::new();
+    let bob_to_alice = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&alice_to_bob, &bob_to_alice).expect("pair Alice-Bob");
+    alice_mesh
+        .add_peer("bob", bob_pk, alice_to_bob)
+        .expect("A adds B");
+    bob_mesh
+        .add_peer("alice", alice_pk, bob_to_alice)
+        .expect("B adds A");
+
+    let alice_to_charlie = WebRtcPeer::new();
+    let charlie_to_alice = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&alice_to_charlie, &charlie_to_alice).expect("pair Alice-Charlie");
+    charlie_mesh
+        .add_peer("alice", alice_pk, charlie_to_alice)
+        .expect("C adds A");
+    alice_mesh
+        .add_peer("charlie", charlie_pk, alice_to_charlie)
+        .expect("A adds C");
+
+    assert!(bob_mesh.has_peer("charlie"));
+    assert!(charlie_mesh.has_peer("bob"));
+
+    let b_to_c = bob_mesh.get_peer("charlie").unwrap().rtc_peer;
+    let c_to_b = charlie_mesh.get_peer("bob").unwrap().rtc_peer;
+    WebRtcPeer::pair_for_testing(&b_to_c, &c_to_b).expect("pair Channel_BC");
+
+    // Track departure and burn callbacks on Bob
+    let left_counter = Rc::new(RefCell::new(0usize));
+    let lc_clone = left_counter.clone();
+    bob_mesh.on_peer_left(move |_| {
+        *lc_clone.borrow_mut() += 1;
+    });
+
+    let burn_counter = Rc::new(RefCell::new(0usize));
+    let bc_clone = burn_counter.clone();
+    bob_mesh.on_burn_peer_messages(move |_| {
+        *bc_clone.borrow_mut() += 1;
+    });
+
+    // Send a redundant re-introduction PeerJoined signal for Charlie to Bob
+    let re_intro = MeshRelayMessage {
+        frame_id: "re-intro-001".to_string(),
+        ttl: 3,
+        signal: MeshRelaySignal::PeerJoined {
+            peer_id: "charlie".to_string(),
+            public_key: charlie_pk,
+        },
+    };
+    let re_intro_json = to_json_string(&re_intro).expect("json");
+    block_on(bob_mesh.handle_incoming_message("alice", &re_intro_json))
+        .expect("handle redundant PeerJoined");
+
+    // Also trigger reconciliation while link is already healthy
+    let initiated = block_on(bob_mesh.reconcile_mesh()).expect("reconcile");
+    assert_eq!(
+        initiated, 0,
+        "No new handshakes should be initiated for healthy link"
+    );
+
+    // Channel_BC must remain open and unaffected
+    assert_eq!(
+        *left_counter.borrow(),
+        0,
+        "Spurious on_peer_left must NOT fire"
+    );
+    assert_eq!(
+        *burn_counter.borrow(),
+        0,
+        "Spurious burn callback must NOT fire"
+    );
+    assert!(bob_mesh.has_peer("charlie"), "Bob still holds peer Charlie");
+    assert_eq!(bob_mesh.open_peers(), 2, "Bob still reports 2 open peers");
+
+    // Direct communication still works
+    let bob_recv = Rc::new(RefCell::new(Vec::new()));
+    let br_clone = bob_recv.clone();
+    bob_mesh.on_message(move |s, m| br_clone.borrow_mut().push((s.to_string(), m.to_string())));
+
+    charlie_mesh
+        .broadcast_chat("Still connected!")
+        .expect("broadcast");
+    assert_eq!(
+        *bob_recv.borrow(),
+        vec![("charlie".to_string(), "Still connected!".to_string())]
+    );
+}
+
+/// V-031-7: REQ-031.4 & REQ-031.5: In a 2-node chat, when one leaves,
+/// the remaining node reports open_peers == 0 and cleans up gracefully.
+#[test]
+fn test_req_031_last_two_one_leaves() {
+    let (alice_sk, alice_pk) = generate_kp();
+    let (bob_sk, bob_pk) = generate_kp();
+
+    let alice_mesh = MeshTopology::new("alice", alice_sk);
+    let bob_mesh = MeshTopology::new("bob", bob_sk);
+
+    let alice_to_bob = WebRtcPeer::new();
+    let bob_to_alice = WebRtcPeer::new();
+    WebRtcPeer::pair_for_testing(&alice_to_bob, &bob_to_alice).expect("pair AB");
+    alice_mesh
+        .add_peer("bob", bob_pk, alice_to_bob)
+        .expect("A adds B");
+    bob_mesh
+        .add_peer("alice", alice_pk, bob_to_alice.clone())
+        .expect("B adds A");
+
+    assert_eq!(bob_mesh.open_peers(), 1);
+    assert_eq!(alice_mesh.open_peers(), 1);
+
+    // Alice leaves
+    bob_to_alice.close().expect("close Bob-Alice channel");
+
+    // Bob now sees 0 open peers
+    assert_eq!(
+        bob_mesh.open_peers(),
+        0,
+        "Bob sees 0 open peers after Alice leaves"
+    );
+    assert_eq!(bob_mesh.peer_count(), 0);
+    assert!(!bob_mesh.has_peer("alice"));
 }
