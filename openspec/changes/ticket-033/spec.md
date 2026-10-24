@@ -54,7 +54,7 @@ The current room creation button and system message lifecycle contain visual clu
   - Copies (or re-copies) the invite link to `navigator.clipboard`.
   - Displays a temporary `"Invite link copied to clipboard"` system message (without timestamp).
   - The message self-clears (is removed from the feed) automatically after **5,000ms (5 seconds)**.
-  - If the user clicks `#header-add-btn` again during the 5-second countdown, the temporary message remains visible and the 5-second timer **restarts**.
+  - If the user clicks `#header-add-btn` again during the 5-second countdown, the currently displayed `"Invite link copied to clipboard"` message disappears and is immediately re-displayed, and the 5-second countdown timer restarts.
 
 ### REQ-033.4: Quality Gates & Automated Regression
 - Update headless browser regression tests (`zero_client/tests/browser/test_mesh_scenario.js`) to assert:
@@ -86,5 +86,5 @@ The current room creation button and system message lifecycle contain visual clu
 | **V-033.2** | Verify clicking `#btn-create-room` displays `"Invite link copied to clipboard"` and `"Waiting for peer..."` with ticking dots and without timestamps. |
 | **V-033.3** | Verify re-clicking `#btn-create-room` clears and re-emits both temporary messages. |
 | **V-033.4** | Verify arrival of any permanent system message clears all active temporary messages. |
-| **V-033.5** | Verify clicking `#header-add-btn` emits `"Invite link copied to clipboard"` without timestamp, self-clears after 5s, and restarts timer on re-click. |
+| **V-033.5** | Verify clicking `#header-add-btn` emits `"Invite link copied to clipboard"` without timestamp, self-clears after 5s, and re-clicking removes the current message, re-displays it, and restarts the 5s timer. |
 | **V-033.6** | Verify all headless browser mesh tests and cargo test suites pass cleanly. |
