@@ -886,7 +886,7 @@ async function runTests() {
 
         const permanentMessages = feed.querySelectorAll(".system-message");
         assert(permanentMessages.length === 1, "Only permanent message should remain in feed");
-        assert(permanentMessages[0].querySelector(".system-timestamp") !== null, "Permanent message must include timestamp");
+        assert(permanentMessages[0].querySelector(".system-timestamp") === null, "Permanent message must NOT include timestamp");
         assert(permanentMessages[0].querySelector(".system-text").textContent === "Peer joined chat",
             "Permanent message text must be 'Peer joined chat'");
 
