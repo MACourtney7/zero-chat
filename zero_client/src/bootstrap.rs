@@ -214,6 +214,7 @@ pub async fn execute_joiner_autodrop(
         token: invite.token.clone(),
         sdp_answer,
         joiner_public_key,
+        joiner_peer_id: None,
     };
 
     let endpoint_url = format!("{clean_base}/drop/{}/{}", invite.do_id, invite.invite_uuid);
@@ -629,6 +630,7 @@ mod tests {
                     sdp: dummy_offer().sdp,
                 },
                 joiner_public_key: [3u8; 32],
+                joiner_peer_id: None,
             };
 
             // 1. Success on normal URL
@@ -688,6 +690,8 @@ mod tests {
                 sdp_offer: dummy_offer(),
                 host_public_key: [5u8; 32],
                 guest_private_key: None,
+                host_peer_id: None,
+                assigned_peer_id: None,
             };
 
             let drop =
@@ -758,6 +762,7 @@ mod tests {
                 token: "hmac-token".to_string(),
                 sdp_answer: answer,
                 joiner_public_key: [8u8; 32],
+                joiner_peer_id: None,
             };
             let drop_json = to_json_string(&drop).expect("serialize drop");
 

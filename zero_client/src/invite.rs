@@ -85,6 +85,8 @@ pub fn create_offline_invite(
         sdp_offer,
         host_public_key,
         guest_private_key,
+        host_peer_id: None,
+        assigned_peer_id: None,
     })
 }
 

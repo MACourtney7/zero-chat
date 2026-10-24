@@ -20,6 +20,7 @@ fn sample_drop_payload(invite_uuid: &str, token: &str) -> DropPayload {
             sdp: "v=0\r\no=- 999 2 IN IP4 127.0.0.1\r\na=setup:active\r\n".to_string(),
         },
         joiner_public_key: *joiner_kp.public_key_bytes(),
+        joiner_peer_id: None,
     }
 }
 
@@ -269,6 +270,60 @@ fn test_valid_dead_drop_pipes_answer_to_hibernating_websocket() {
     let received_payload: DropPayload =
         from_json_str(forwarded_json).expect("deserialize forwarded DropPayload");
     assert_eq!(received_payload, expected_payload);
+}
+
+#[test]
+fn test_dead_drop_preserves_joiner_peer_id_to_host_websocket() {
+    let host_secret = [0x44u8; 32];
+    let invite_uuid = "invite-joiner-peer-id-001";
+
+    let mut host_socket = MockHostSocket::new();
+    process_host_upgrade(
+        Some("websocket"),
+        Some(&hex::encode(host_secret)),
+        &mut host_socket,
+    )
+    .expect("host upgrade should succeed");
+
+    let invite_token = compute_invite_token(&host_secret, invite_uuid).expect("compute token");
+
+    let joiner_kp = X25519Keypair::from_private_key([0x55; 32]);
+    let payload = DropPayload {
+        invite_uuid: invite_uuid.to_string(),
+        token: invite_token.hmac_hex.clone(),
+        sdp_answer: SdpAnswer {
+            sdp: "v=0\r\no=- 100 2 IN IP4 127.0.0.1\r\na=setup:active\r\n".to_string(),
+        },
+        joiner_public_key: *joiner_kp.public_key_bytes(),
+        joiner_peer_id: Some("peer-bob-assigned-123".to_string()),
+    };
+    let body_bytes = to_json_bytes(&payload).expect("serialize DropPayload");
+
+    let mut sockets = vec![host_socket];
+    let mut room_state = EphemeralRoomState::new();
+
+    let drop_res = process_dead_drop(
+        invite_uuid,
+        None,
+        &body_bytes,
+        &mut room_state,
+        &mut sockets,
+    )
+    .expect("dead drop with joiner_peer_id should succeed");
+    assert_eq!(drop_res.status, 200);
+
+    // Host receives the exact DropPayload containing joiner_peer_id
+    assert_eq!(sockets[0].sent_messages.len(), 1);
+    let forwarded_json = &sockets[0].sent_messages[0];
+    assert!(forwarded_json.contains("\"joiner_peer_id\":\"peer-bob-assigned-123\""));
+
+    let received_payload: DropPayload =
+        from_json_str(forwarded_json).expect("deserialize forwarded DropPayload");
+    assert_eq!(received_payload, payload);
+    assert_eq!(
+        received_payload.joiner_peer_id.as_deref(),
+        Some("peer-bob-assigned-123")
+    );
 }
 
 #[test]
