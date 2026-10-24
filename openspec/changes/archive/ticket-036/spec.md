@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-036"
 title: "Limbo Recovery: In-Room Plus Invite Button on Peer Disconnect, Staggered Notice Flow, and Two-Stage Icon Morphing"
-state: "IN_PROGRESS"
+state: "COMPLETED"
 created_at: "2026-10-24T18:20:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-036/main"
@@ -85,6 +85,19 @@ In `zero_chat`, when all peers disconnect from an active chat room, the remainin
 - All 123 Rust workspace tests pass (`cargo test --workspace`).
 - `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` pass cleanly with zero warnings.
 
+### REQ-036.7: Zero Whitespace Between Text and Ticking Ellipsis
+- In all messages featuring animated ticking dots (`.ticking-dots`), there must be zero whitespace between the preceding text and the animated ticking ellipsis.
+- Specifically:
+  - In `zero_client/style.css`, remove the 8px flex gap between `.system-text`/`.transient-text` and `.ticking-dots`:
+    ```css
+    .system-temporary,
+    .transient-status,
+    .system-message:has(.ticking-dots) {
+      gap: 0;
+    }
+    ```
+  - Across all call sites (`appendTemporarySystemMessage`, `showTransientStatus`): verify base text strings contain no literal trailing whitespace (e.g. `"Waiting for peer"` without trailing space).
+
 ---
 
 ## 3. Architecture & Affected Modules
@@ -97,5 +110,7 @@ In `zero_chat`, when all peers disconnect from an active chat room, the remainin
   - Engine state transitions (`onStateChangeCb`, `onPeerStateChangeCb`): when a peer opens, hides `createRoomBar`, unhides `messageForm`, and restores `headerAddBtn`.
   - Function `resetToHome`: restores `createRoomBar` to default Stage 1 (`CREATE_CHAT_ICON_SVG`).
   - Function `appendTemporarySystemMessage`: removes call to `registerEphemeralLifecycle(el)`, ensuring temporary messages do not timeout at 90s.
+- `zero_client/style.css`:
+  - `.system-temporary`, `.transient-status`, `.system-message:has(.ticking-dots)`: `gap: 0;` eliminating gap before ticking dots.
 - `zero_client/tests/browser/test_mesh_scenario.js`:
-  - Add Test 16 testing the complete limbo recovery workflow and temporary notice TTL exemption.
+  - Add Test 16 testing the complete limbo recovery workflow, temporary notice TTL exemption, and zero whitespace ticking dots.

@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.9.0"
+version: "1.10.0"
 milestone: "ephemeral-ui-modernization"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-24T18:00:00Z"
+updated_at: "2026-10-24T19:30:00Z"
 ---
 ```
 
@@ -47,6 +47,15 @@ updated_at: "2026-10-24T18:00:00Z"
     - Quiet Room Invariant: when all messages dissolve in an active room session (`isInRoomSession`), the chat remains an open, serene, quiet space without re-popping the welcome splash screen.
     - Each chat bubble features a dedicated top-right flame burn button (`.btn-message-burn`, min-size `135px × 44px`, flame-red hover accent, default text cursor preserved).
     - Clicking the flame button dissolves the message locally and broadcasts an in-band `{ type: "signal", signal: { BurnMessage: { message_id, ttl: 3 } } }` frame across the mesh; receiving peers deduplicate via `seenMessageIds`, dissolve matching bubble with the 200ms animation, and gossip forward.
+13. **Limbo State Recovery, In-Room Plus Invite Button, Staggered Notice Flow & Ticking Ellipsis Alignment**:
+    - When all peers depart from an active room session (`!anyConnecting` / `openPeerCount === 0`), the disabled message form (`#message-form`) is hidden and replaced by `#create-room-bar`.
+    - `#btn-create-room` renders in Stage 1 Plus mode: `.btn-action.btn-action-full.btn-emerald` with a 20x20 plus (`+`) icon matching the top-bar invite button geometry (`<svg width="20" height="20" viewBox="0 0 24 24" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`) and `aria-label="Add peer"`. Top bar `#header-add-btn` is hidden.
+    - Clicking the button in this disconnected in-room state generates an in-room WebRTC peer offer on the active engine, connects the signaling dead-drop socket (`pendingInviteWs`), copies the invite URL to clipboard, transforms into Stage 2 (`.btn-waiting`, `COPY_ICON_SVG`, `aria-label="Copy invite link"`), and emits immediate Notice 1 (`"Invite link copied to clipboard"`) followed by staggered Notice 2 (`"Waiting for peer"` with animated `.ticking-dots`) after 450ms.
+    - Re-clicks while waiting re-copy the URL and restart the staggered notices cleanly.
+    - Peer reconnection restores `#message-form` enabled for messaging, restores `#header-add-btn`, hides `#create-room-bar`, and clears temporary notices.
+    - Leaving or destroying the chat (`resetToHome()`) restores `#btn-create-room` to the default chat-bubble-plus icon (`CREATE_CHAT_ICON_SVG`).
+    - Temporary system messages (`.system-temporary`, which omit timestamps) are exempt from 90s TTL and do not age-fade or dissolve.
+    - Zero whitespace gap on all ticking ellipsis messages: `.system-temporary`, `.transient-status`, and `.system-message:has(.ticking-dots)` define `gap: 0; margin-left: 0;` eliminating any gap before `.ticking-dots`.
 
 ---
 
@@ -240,7 +249,7 @@ Integration Test Suites:
     * REQ-001.1 through REQ-001.5 + Serde backward compatibility & round-trip assertions
 
 Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
-  - 15 comprehensive multi-participant mesh, departure & UI scenarios passed:
+  - 16 comprehensive multi-participant mesh, departure & UI scenarios passed:
     * Test 1: Full mesh establishment with 3 peers (A, B, C) (K_3)
     * Test 2: Host A departs; C broadcasts; B receives directly
     * Test 3: C departs; B reflects 0 open peers
@@ -256,7 +265,8 @@ Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
     * Test 13: Simplified icon-only button, temporary system messages & pulse animation (REQ-033.1 - REQ-033.4)
     * Test 14: Zero input placeholder, staggered temporary notices, single ellipsis & slashed person icon (REQ-034.1 - REQ-034.4)
     * Test 15: Enhanced Burn Behavior - 90s TTL, 70s aging fade, per-message flame button, distributed BurnMessage signaling, quiet room invariant, and reset restoration (REQ-035.1 - REQ-035.5)
+    * Test 16: Limbo State Recovery - in-room plus button, two-stage copy morphing, staggered notices, 95s TTL immunity, peer reconnection, and zero whitespace ticking dots (REQ-036.1 - REQ-036.7)
 
-Total: 123 Rust tests + 15 Browser tests passed, 0 failed.
+Total: 123 Rust tests + 16 Browser tests passed, 0 failed.
 ```
 
