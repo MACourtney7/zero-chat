@@ -310,7 +310,10 @@
 
             get openPeerCount() {
                 let count = 0;
-                for (const peer of this.peers.values()) {
+                for (const [pId, peer] of this.peers.entries()) {
+                    if (typeof departedPeers !== "undefined" && departedPeers.has(pId)) {
+                        continue;
+                    }
                     if (peer.state === "open" && peer.dc && peer.dc.readyState === "open") {
                         count++;
                     }
@@ -488,6 +491,9 @@
                 }
                 this.peers.delete(peerId);
                 this._updateOverallState(peerId);
+                if (typeof updatePeerCountDisplay === "function") {
+                    updatePeerCountDisplay();
+                }
             }
 
             async create_peer_offer(peerId = "peer-01") {
@@ -979,13 +985,16 @@
         let hasActiveSession = false;
         let peerDepartureHandled = false;
         let opportunisticLeaveSent = false;
-        const localPeerId = "peer-" + Math.random().toString(36).slice(2, 8);
+        let localPeerId = "peer-" + Math.random().toString(36).slice(2, 8);
 
         let pendingInviteUrl = null;
         let pendingInvitePeerId = null;
         let pendingInviteWs = null;
 
-        function clearPendingInvite() {
+        function clearPendingInvite(peerId = null) {
+            if (peerId && pendingInvitePeerId && peerId !== pendingInvitePeerId) {
+                return;
+            }
             pendingInviteUrl = null;
             pendingInvitePeerId = null;
             if (pendingInviteWs) {
@@ -1012,10 +1021,10 @@
             }
 
             try {
-                const invitePeerId = "peer-" + Math.random().toString(36).slice(2, 8);
-                pendingInvitePeerId = invitePeerId;
+                const assignedPeerId = "peer-" + Math.random().toString(36).slice(2, 8);
+                pendingInvitePeerId = assignedPeerId;
 
-                const offerSdp = await engine.create_peer_offer(invitePeerId);
+                const offerSdp = await engine.create_peer_offer(assignedPeerId);
 
                 const doId = "room-" + Math.random().toString(36).slice(2, 10);
                 const hostSecretBytes = crypto.getRandomValues(new Uint8Array(32));
@@ -1032,6 +1041,7 @@
                     sdp_offer: { sdp: offerSdp },
                     host_public_key: hostPubkey,
                     host_peer_id: (engine && engine.localPeerId) || localPeerId,
+                    assigned_peer_id: assignedPeerId,
                     guest_private_key: null
                 };
 
@@ -1047,11 +1057,9 @@
                     try {
                         const drop = JSON.parse(ev.data);
                         if (drop && drop.sdp_answer && drop.sdp_answer.sdp) {
-                            const targetPeerId = drop.joiner_peer_id || drop.peer_id || invitePeerId;
-                            if (drop.joiner_peer_id && drop.joiner_peer_id !== invitePeerId && engine.peers.has(invitePeerId)) {
-                                engine.rename_peer(invitePeerId, drop.joiner_peer_id);
-                            } else if (drop.peer_id && drop.peer_id !== invitePeerId && engine.peers.has(invitePeerId)) {
-                                engine.rename_peer(invitePeerId, drop.peer_id);
+                            const targetPeerId = drop.joiner_peer_id || drop.peer_id || assignedPeerId;
+                            if (targetPeerId !== assignedPeerId && engine.peers.has(assignedPeerId)) {
+                                engine.rename_peer(assignedPeerId, targetPeerId);
                             }
                             await engine.apply_answer(drop.sdp_answer.sdp, targetPeerId);
                             try {
@@ -1321,7 +1329,7 @@
                     isBurned = false;
                     peerDepartureHandled = false;
                     opportunisticLeaveSent = false;
-                    clearPendingInvite();
+                    clearPendingInvite(peerId);
                     hideWelcomeSplash();
                     updateStatus("open", "P2P Established");
                     if (idleStatusCapsule) idleStatusCapsule.classList.add("hidden");
@@ -1410,7 +1418,7 @@
                     memberHandshakeState.delete(peerId);
                     startReconciliationTimer();
                     updatePeerCountDisplay();
-                    clearPendingInvite();
+                    clearPendingInvite(peerId);
                     if (headerAddBtn) {
                         headerAddBtn.classList.remove("hidden");
                     }
@@ -1518,10 +1526,13 @@
                         }
                     }
 
+                    // 1. Invoke handlePeerDeparture first to record leavingPeerId in departedPeers and purge messages:
+                    handlePeerDeparture(leavingPeerId);
+
+                    // 2. Then quietly close the peer without triggering duplicate departure:
                     if (leavingPeerId && activeEng && activeEng.peers && activeEng.peers.has(leavingPeerId)) {
-                        activeEng.close_peer(leavingPeerId);
-                    } else {
-                        handlePeerDeparture(leavingPeerId);
+                        activeEng._teardownPeerQuietly(leavingPeerId);
+                        activeEng.peers.delete(leavingPeerId);
                     }
                     return;
                 }
@@ -1828,8 +1839,8 @@
                 window.engine = engine;
                 initEngineListeners();
 
-                const initialPeerId = "peer-joiner";
-                const offerSdp = await engine.create_offer(initialPeerId);
+                const assignedPeerId = "peer-" + Math.random().toString(36).slice(2, 8);
+                const offerSdp = await engine.create_peer_offer(assignedPeerId);
 
                 // Generate random room DO ID and 32-byte host secret
                 const doId = "room-" + Math.random().toString(36).slice(2, 10);
@@ -1848,6 +1859,7 @@
                     sdp_offer: { sdp: offerSdp },
                     host_public_key: hostPubkey,
                     host_peer_id: (engine && engine.localPeerId) || localPeerId,
+                    assigned_peer_id: assignedPeerId,
                     guest_private_key: null
                 };
 
@@ -1866,9 +1878,9 @@
                         if (drop && drop.sdp_answer && drop.sdp_answer.sdp) {
                             showTransientStatus("Establishing secure connection");
                             updateStatus("connecting", "Received answer! Snapping P2P channel...");
-                            const targetPeerId = drop.joiner_peer_id || drop.peer_id || initialPeerId;
-                            if (targetPeerId !== initialPeerId && engine.peers.has(initialPeerId)) {
-                                engine.rename_peer(initialPeerId, targetPeerId);
+                            const targetPeerId = drop.joiner_peer_id || drop.peer_id || assignedPeerId;
+                            if (targetPeerId !== assignedPeerId && engine.peers.has(assignedPeerId)) {
+                                engine.rename_peer(assignedPeerId, targetPeerId);
                             } else if (targetPeerId !== "peer-01" && engine.peers.has("peer-01")) {
                                 engine.rename_peer("peer-01", targetPeerId);
                             }
@@ -1940,6 +1952,7 @@
                 const jsonStr = base64UrlToUtf8(rawPayload);
                 const invite = JSON.parse(jsonStr);
 
+                localPeerId = invite.assigned_peer_id || ("peer-" + Math.random().toString(36).slice(2, 8));
                 engine = new ZeroWebRtcEngine(localPeerId);
                 window.engine = engine;
                 initEngineListeners();
@@ -1952,8 +1965,8 @@
                     token: invite.token,
                     sdp_answer: { sdp: answerSdp },
                     joiner_public_key: Array.from(crypto.getRandomValues(new Uint8Array(32))),
-                    joiner_peer_id: (engine && engine.localPeerId) || localPeerId,
-                    peer_id: (engine && engine.localPeerId) || localPeerId
+                    joiner_peer_id: localPeerId,
+                    peer_id: localPeerId
                 };
 
                 const dropUrl = `${WORKER_ORIGIN}/drop/${invite.do_id}/${invite.invite_uuid}`;
@@ -2164,6 +2177,14 @@
         window.handleHeaderAddPeerClick = handleHeaderAddPeerClick;
         window.getPendingInviteUrl = () => pendingInviteUrl;
         window.getActiveHostInviteUrl = () => activeHostInviteUrl;
+        window.getPendingInvitePeerId = () => pendingInvitePeerId;
+        window.getPendingInviteWs = () => pendingInviteWs;
+        window.getLocalPeerId = () => localPeerId;
+        window.setLocalPeerId = (id) => { localPeerId = id; };
+        window.clearPendingInvite = clearPendingInvite;
+        window.handlePeerDeparture = handlePeerDeparture;
+        window.createRoomAsHost = createRoomAsHost;
+        window.joinRoomFromHash = joinRoomFromHash;
         window.headerAddBtn = headerAddBtn;
         window.activeSessionPeers = activeSessionPeers;
         window.knownSessionMembers = knownSessionMembers;
