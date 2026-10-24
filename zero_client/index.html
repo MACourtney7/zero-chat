@@ -913,6 +913,9 @@
         }
 
         function showWelcomeSplash() {
+            if (isInRoomSession) {
+                return; // Stay empty and quiet in an active room
+            }
             if (feed.querySelectorAll(".message-bubble, .system-message, .security-alert-card").length > 0) {
                 return;
             }
@@ -942,11 +945,86 @@
             return peerColorMap.get(peerId);
         }
 
-        function appendMessageBubble(senderName, text, isSelf, peerId) {
+        function dissolveMessage(el) {
+            if (!el || el._isDissolving) return;
+            el._isDissolving = true;
+            if (el._agingTimer) {
+                clearTimeout(el._agingTimer);
+                el._agingTimer = null;
+            }
+            if (el._dissolveTimer) {
+                clearTimeout(el._dissolveTimer);
+                el._dissolveTimer = null;
+            }
+            el.classList.add("message-dissolve");
+            setTimeout(() => {
+                if (el.parentNode) {
+                    el.remove();
+                }
+            }, 200);
+        }
+
+        function registerEphemeralLifecycle(el) {
+            // At 70s: start gentle aging transition to 0.80 opacity
+            el._agingTimer = setTimeout(() => {
+                if (el.parentNode) {
+                    el.classList.add("message-aging");
+                }
+            }, 70000);
+
+            // At 90s: trigger 200ms soft dissolve and remove
+            el._dissolveTimer = setTimeout(() => {
+                dissolveMessage(el);
+            }, 90000);
+        }
+
+        function burnMessageAcrossMesh(messageUuid) {
+            if (!messageUuid) return;
+            const targetBubble = feed.querySelector(`.message-bubble[data-message-id="${messageUuid}"]`);
+            if (targetBubble) {
+                dissolveMessage(targetBubble);
+            }
+
+            if (engine && engine.openPeerCount > 0) {
+                const frameId = generateUuid();
+                markMessageSeen(frameId);
+                const burnFrame = {
+                    frame_id: frameId,
+                    ttl: 3,
+                    signal: {
+                        BurnMessage: {
+                            message_uuid: messageUuid
+                        }
+                    }
+                };
+                engine.broadcast_text(JSON.stringify(burnFrame));
+            }
+        }
+
+        function appendMessageBubble(senderName, text, isSelf, peerId, messageUuid) {
             hideWelcomeSplash();
             const bubble = document.createElement("div");
             bubble.className = `message-bubble ${isSelf ? "message-outgoing" : "message-incoming"}`;
             bubble.setAttribute("data-peer-id", isSelf ? "self" : (peerId || senderName || "peer-01"));
+
+            const msgId = messageUuid || generateUuid();
+            bubble.setAttribute("data-message-id", msgId);
+
+            const burnBtn = document.createElement("button");
+            burnBtn.type = "button";
+            burnBtn.className = "btn-message-burn";
+            burnBtn.setAttribute("aria-label", "Burn message");
+            burnBtn.innerHTML = `
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"></path>
+                </svg>`;
+            burnBtn.addEventListener("click", (e) => {
+                if (e && typeof e.stopPropagation === "function") {
+                    e.stopPropagation();
+                }
+                burnMessageAcrossMesh(msgId);
+            });
+            bubble.appendChild(burnBtn);
 
             const header = document.createElement("div");
             header.className = "message-header";
@@ -982,6 +1060,9 @@
 
             feed.appendChild(bubble);
             feed.scrollTop = feed.scrollHeight;
+
+            registerEphemeralLifecycle(bubble);
+            return bubble;
         }
 
         function clearTemporarySystemMessages() {
@@ -995,7 +1076,17 @@
             }
             headerAddFeedbackEl = null;
             const temps = feed.querySelectorAll(".system-temporary");
-            temps.forEach((el) => el.remove());
+            temps.forEach((el) => {
+                if (el._agingTimer) {
+                    clearTimeout(el._agingTimer);
+                    el._agingTimer = null;
+                }
+                if (el._dissolveTimer) {
+                    clearTimeout(el._dissolveTimer);
+                    el._dissolveTimer = null;
+                }
+                el.remove();
+            });
         }
 
         function triggerCreateRoomNotices() {
@@ -1034,6 +1125,7 @@
 
             feed.appendChild(el);
             feed.scrollTop = feed.scrollHeight;
+            registerEphemeralLifecycle(el);
             return el;
         }
 
@@ -1093,6 +1185,8 @@
 
             feed.appendChild(el);
             feed.scrollTop = feed.scrollHeight;
+            registerEphemeralLifecycle(el);
+            return el;
         }
 
         let engine = null;
@@ -1363,7 +1457,17 @@
                 memberHandshakeState.delete(peerId);
 
                 const peerBubbles = feed.querySelectorAll(`.message-bubble[data-peer-id="${peerId}"]`);
-                peerBubbles.forEach((el) => el.remove());
+                peerBubbles.forEach((el) => {
+                    if (el._agingTimer) {
+                        clearTimeout(el._agingTimer);
+                        el._agingTimer = null;
+                    }
+                    if (el._dissolveTimer) {
+                        clearTimeout(el._dissolveTimer);
+                        el._dissolveTimer = null;
+                    }
+                    el.remove();
+                });
             }
 
             // Emit a single "Peer left chat" notice if requested
@@ -1881,7 +1985,7 @@
                         }
 
                         const senderPeerId = broadcast.origin_peer_id || incomingPeerId || "peer-01";
-                        appendMessageBubble("Peer", bodyText, false, senderPeerId);
+                        appendMessageBubble("Peer", bodyText, false, senderPeerId, messageUuid);
 
                         // Gossip Flooding (REQ-026.3)
                         const currentTtl = broadcast.ttl !== undefined ? broadcast.ttl : data.ttl;
@@ -1912,12 +2016,40 @@
                         }
                         return;
                     }
+
+                    // E. BurnMessage (REQ-035.3)
+                    if (signal.BurnMessage) {
+                        const burnUuid = signal.BurnMessage.message_uuid;
+                        const frameId = data.frame_id || burnUuid;
+                        if (frameId && seenMessageIds.has(frameId)) {
+                            return;
+                        }
+                        if (frameId) {
+                            markMessageSeen(frameId);
+                        }
+
+                        const targetBubble = feed.querySelector(`.message-bubble[data-message-id="${burnUuid}"]`);
+                        if (targetBubble) {
+                            dissolveMessage(targetBubble);
+                        }
+
+                        // Forward with TTL
+                        const currentTtl = data.ttl !== undefined ? data.ttl : 1;
+                        if (currentTtl > 1) {
+                            const nextMsg = { ...data, ttl: currentTtl - 1 };
+                            const fwdEng = activeEng || engine;
+                            if (fwdEng && typeof fwdEng.broadcast_text === "function") {
+                                fwdEng.broadcast_text(JSON.stringify(nextMsg));
+                            }
+                        }
+                        return;
+                    }
                 }
             }
 
             // Backwards Compatibility: plain text or non-signal JSON
             const fallbackText = (data && (typeof data.text === "string" ? data.text : (typeof data.body === "string" ? data.body : null))) || text;
-            appendMessageBubble("Peer", fallbackText, false, incomingPeerId || "peer-01");
+            appendMessageBubble("Peer", fallbackText, false, incomingPeerId || "peer-01", (data && data.frame_id) || generateUuid());
         }
 
         if (typeof window !== "undefined") {
@@ -2151,7 +2283,7 @@
 
             try {
                 engine.broadcast_text(JSON.stringify(broadcastMsg));
-                appendMessageBubble("You", text, true);
+                appendMessageBubble("You", text, true, "self", messageUuid);
             } catch (e) {
                 console.error("Send error:", e);
                 appendSystemMessage("Failed to deliver message");
@@ -2207,6 +2339,16 @@
                 try { hostWs.close(); } catch (_) {}
                 hostWs = null;
             }
+            feed.querySelectorAll(".message-bubble, .system-message").forEach((el) => {
+                if (el._agingTimer) {
+                    clearTimeout(el._agingTimer);
+                    el._agingTimer = null;
+                }
+                if (el._dissolveTimer) {
+                    clearTimeout(el._dissolveTimer);
+                    el._dissolveTimer = null;
+                }
+            });
             feed.innerHTML = "";
             showWelcomeSplash();
             updateStatus("disconnected", "Disconnected");
@@ -2339,6 +2481,12 @@
         window.SLASHED_PERSON_ICON_SVG = SLASHED_PERSON_ICON_SVG;
         window.triggerCreateRoomNotices = triggerCreateRoomNotices;
         window.getStaggerNoticeTimer = () => staggerNoticeTimer;
+        window.dissolveMessage = dissolveMessage;
+        window.registerEphemeralLifecycle = registerEphemeralLifecycle;
+        window.burnMessageAcrossMesh = burnMessageAcrossMesh;
+        window.appendMessageBubble = appendMessageBubble;
+        window.showWelcomeSplash = showWelcomeSplash;
+        window.hideWelcomeSplash = hideWelcomeSplash;
     </script>
 </body>
 </html>

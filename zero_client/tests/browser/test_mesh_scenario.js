@@ -1019,6 +1019,146 @@ async function runTests() {
         print("  PASS: REQ-034.1 - REQ-034.4: Slashed person icon, empty placeholder, staggered notices & ellipsis fix verified.");
     }
 
+    // Test 15: REQ-035.1 - REQ-035.5: Enhanced Burn Behavior (90s TTL, aging fade, per-message burn, minimal dissolve, quiet room)
+    print("\n[Test 15] REQ-035.1 - REQ-035.5: Enhanced Burn Behavior suite...");
+    {
+        // 1. Verify CSS styles for .message-bubble, .btn-message-burn, .message-aging, .message-dissolve
+        function readCssFile() {
+            if (typeof read === "function") {
+                try { return read("zero_client/style.css"); } catch (_) {}
+            }
+            if (typeof require !== "undefined") {
+                try { return require("fs").readFileSync("zero_client/style.css", "utf-8"); } catch (_) {}
+            }
+            return "";
+        }
+        const cssContent = readCssFile();
+        if (cssContent) {
+            assert(cssContent.includes(".message-bubble") && cssContent.includes("min-width: 135px;") && cssContent.includes("min-height: 44px;"),
+                "style.css: .message-bubble must define min-width: 135px and min-height: 44px");
+            assert(cssContent.includes(".btn-message-burn"),
+                "style.css: must define .btn-message-burn");
+            assert(cssContent.includes(".message-aging") && cssContent.includes("opacity: 0.8 !important;") && cssContent.includes("transition: opacity 20s linear !important;"),
+                "style.css: .message-aging must define 0.8 opacity and 20s linear transition");
+            assert(cssContent.includes(".message-dissolve") && cssContent.includes("opacity: 0 !important;") && cssContent.includes("scale(0.98)"),
+                "style.css: .message-dissolve must define 0 opacity and scale(0.98)");
+        }
+
+        resetToHome();
+        setIsInRoomSession(true);
+
+        // 2. Verify .btn-message-burn rendered in both outgoing and incoming message bubbles with min-size
+        const outBubble = appendMessageBubble("You", "Short", true, "self", "test-msg-out-035");
+        assert(outBubble !== null, "Outgoing bubble must be created");
+        assert(outBubble.getAttribute("data-message-id") === "test-msg-out-035", "Outgoing bubble must have data-message-id");
+        const outBurnBtn = outBubble.querySelector(".btn-message-burn");
+        assert(outBurnBtn !== null, "Outgoing bubble must contain .btn-message-burn");
+        assert(outBurnBtn.getAttribute("aria-label") === "Burn message", "Burn button must have aria-label='Burn message'");
+        assert(outBurnBtn.querySelector("svg") !== null, "Burn button must contain flame SVG icon");
+
+        const computedStyle = getComputedStyle(outBubble);
+        assert(computedStyle.minWidth === "135px", `Bubble minWidth must be 135px, got ${computedStyle.minWidth}`);
+        assert(computedStyle.minHeight === "44px", `Bubble minHeight must be 44px, got ${computedStyle.minHeight}`);
+
+        const inBubble = appendMessageBubble("Peer", "Hello from peer", false, "peer-B", "test-msg-in-035");
+        assert(inBubble !== null, "Incoming bubble must be created");
+        assert(inBubble.getAttribute("data-message-id") === "test-msg-in-035", "Incoming bubble must have data-message-id");
+        const inBurnBtn = inBubble.querySelector(".btn-message-burn");
+        assert(inBurnBtn !== null, "Incoming bubble must contain .btn-message-burn");
+        assert(inBurnBtn.getAttribute("aria-label") === "Burn message", "Burn button on incoming bubble must have aria-label='Burn message'");
+
+        // 3. Verify local click on burn button triggers .message-dissolve and removes bubble after 200ms
+        assert(!outBubble.classList.contains("message-dissolve"), "Before click: outBubble must not have .message-dissolve");
+        outBurnBtn.click();
+        assert(outBubble.classList.contains("message-dissolve"), "Immediately after click: outBubble must have .message-dissolve class");
+
+        advanceTimersByTime(200);
+        await delay(50);
+        assert(outBubble.parentNode === null, "200ms after click: outBubble must be removed from the DOM");
+
+        // 4. Verify 3-peer distributed burn: Peer A has bubble, Peer B broadcasts BurnMessage -> Peer A dissolves
+        const distBubble = appendMessageBubble("Peer", "Distributed message test", false, "peer-B", "dist-burn-uuid-123");
+        assert(feed.querySelector('.message-bubble[data-message-id="dist-burn-uuid-123"]') !== null,
+            "distBubble must exist in feed before distributed burn");
+
+        const mockEngine = new ZeroWebRtcEngine("peer-A");
+        let broadcastedFrame = null;
+        mockEngine.broadcast_text = function(text) {
+            broadcastedFrame = JSON.parse(text);
+        };
+
+        const burnSignalData = {
+            frame_id: "burn-frame-001",
+            ttl: 3,
+            signal: {
+                BurnMessage: {
+                    message_uuid: "dist-burn-uuid-123"
+                }
+            }
+        };
+
+        await handleEngineMessage(JSON.stringify(burnSignalData), "peer-B", mockEngine);
+
+        assert(distBubble.classList.contains("message-dissolve"),
+            "On BurnMessage receipt: target bubble must receive .message-dissolve class");
+        assert(broadcastedFrame !== null, "Engine must forward BurnMessage frame with decremented TTL");
+        assert(broadcastedFrame.ttl === 2, `Forwarded BurnMessage must have ttl=2, got ${broadcastedFrame.ttl}`);
+        assert(broadcastedFrame.signal && broadcastedFrame.signal.BurnMessage.message_uuid === "dist-burn-uuid-123",
+            "Forwarded frame must contain BurnMessage with matching uuid");
+
+        advanceTimersByTime(200);
+        await delay(50);
+        assert(distBubble.parentNode === null, "200ms after BurnMessage: distBubble must be removed from DOM");
+
+        // 5. Verify 70s aging transition (.message-aging) and 90s auto-dissolve for chat bubbles and system messages
+        const agingChat = appendMessageBubble("Peer", "Aging chat message", false, "peer-C", "aging-chat-001");
+        const agingSystem = appendSystemMessage("Aging system notice");
+
+        assert(!agingChat.classList.contains("message-aging"), "At 0s: chat bubble must not have .message-aging");
+        assert(!agingSystem.classList.contains("message-aging"), "At 0s: system message must not have .message-aging");
+        assert(!agingChat.classList.contains("message-dissolve"), "At 0s: chat bubble must not have .message-dissolve");
+
+        // Advance 70 seconds: aging transition to 0.8 opacity starts
+        advanceTimersByTime(70000);
+        assert(agingChat.classList.contains("message-aging"), "At 70s: chat bubble must have .message-aging");
+        assert(agingSystem.classList.contains("message-aging"), "At 70s: system message must have .message-aging");
+        assert(!agingChat.classList.contains("message-dissolve"), "At 70s: chat bubble must not yet have .message-dissolve");
+
+        // Advance 20 more seconds (90s total): triggers soft dissolve
+        advanceTimersByTime(20000);
+        assert(agingChat.classList.contains("message-dissolve"), "At 90s: chat bubble must have .message-dissolve");
+        assert(agingSystem.classList.contains("message-dissolve"), "At 90s: system message must have .message-dissolve");
+
+        // Advance 200ms: element removal
+        advanceTimersByTime(200);
+        await delay(50);
+        assert(agingChat.parentNode === null, "At 90.2s: agingChat must be removed from DOM");
+        assert(agingSystem.parentNode === null, "At 90.2s: agingSystem must be removed from DOM");
+
+        // 6. Verify quiet room invariant: when all messages in an active room dissolve, #welcome-splash remains hidden
+        assert(Boolean(isInRoomSession) === true, "Must be in active room session");
+        assert(feed.querySelectorAll(".message-bubble, .system-message").length === 0,
+            "Feed must be completely empty after messages dissolve");
+
+        showWelcomeSplash();
+        const splashEl = document.getElementById("welcome-splash");
+        if (splashEl) {
+            assert(splashEl.classList.contains("hidden"),
+                "Quiet Room Invariant: #welcome-splash must remain hidden when feed becomes empty in active room");
+        }
+
+        // 7. Verify resetToHome() clears room state and restores welcome splash
+        resetToHome();
+        assert(Boolean(isInRoomSession) === false, "After resetToHome(): isInRoomSession must be false");
+        const homeSplash = document.getElementById("welcome-splash");
+        if (homeSplash) {
+            assert(!homeSplash.classList.contains("hidden"),
+                "After resetToHome(): #welcome-splash must be visible in home view");
+        }
+
+        print("  PASS: REQ-035.1 - REQ-035.5: Enhanced Burn Behavior verified cleanly (90s TTL, aging fade, per-message distributed burn, dissolve animation, quiet room invariant).");
+    }
+
     print("\n===============================================================================");
     print("ALL BROWSER HEADLESS MESH TESTS PASSED SUCCESSFULLY!");
     print("===============================================================================");

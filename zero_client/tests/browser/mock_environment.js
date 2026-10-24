@@ -9,27 +9,59 @@
         };
     }
 
-    if (!global.clearTimeout) {
-        let timeoutCounter = 0;
-        const activeTimeouts = new Map();
-        const nativeSetTimeout = global.setTimeout;
-        global.setTimeout = function(fn, ms) {
-            const id = ++timeoutCounter;
-            activeTimeouts.set(id, true);
-            nativeSetTimeout(function() {
-                if (activeTimeouts.has(id)) {
-                    activeTimeouts.delete(id);
-                    fn();
-                }
-            }, ms);
-            return id;
-        };
-        global.clearTimeout = function(id) {
-            if (id) {
+    let timeoutCounter = 0;
+    const activeTimeouts = new Map();
+    const nativeSetTimeout = global.setTimeout;
+    const nativeClearTimeout = global.clearTimeout;
+    let virtualTime = 0;
+
+    global.setTimeout = function(fn, ms) {
+        const id = ++timeoutCounter;
+        const due = virtualTime + (ms || 0);
+        activeTimeouts.set(id, { fn, dueTime: due, ms: ms || 0 });
+        nativeSetTimeout(function() {
+            if (activeTimeouts.has(id)) {
                 activeTimeouts.delete(id);
+                fn();
             }
-        };
-    }
+        }, ms || 0);
+        return id;
+    };
+
+    global.clearTimeout = function(id) {
+        if (id) {
+            activeTimeouts.delete(id);
+            if (nativeClearTimeout) {
+                nativeClearTimeout(id);
+            }
+        }
+    };
+
+    global.advanceTimersByTime = function(ms) {
+        const targetTime = virtualTime + (ms || 0);
+        while (true) {
+            let earliestId = null;
+            let earliestDue = Infinity;
+            for (const [id, t] of activeTimeouts.entries()) {
+                if (t.dueTime <= targetTime && t.dueTime < earliestDue) {
+                    earliestDue = t.dueTime;
+                    earliestId = id;
+                }
+            }
+            if (earliestId === null) {
+                break;
+            }
+            const t = activeTimeouts.get(earliestId);
+            activeTimeouts.delete(earliestId);
+            virtualTime = t.dueTime;
+            try {
+                t.fn();
+            } catch (err) {
+                console.error("Error in timer callback during advanceTimersByTime:", err);
+            }
+        }
+        virtualTime = targetTime;
+    };
 
     if (!global.setInterval) {
         let intervalCounter = 0;
@@ -112,11 +144,19 @@
     }
 
     // 2. Mock DOM
-    function createMockElement(id = "", className = "") {
+    function createMockElement(id = "", className = "", tag = "div") {
+        if (!tag || tag === "div") {
+            if (className && !className.includes(" ") && ["div", "button", "span", "svg", "path", "p", "a", "input", "form"].includes(className.toLowerCase())) {
+                tag = className;
+                className = "";
+            }
+        }
         const attributes = new Map();
         let classListArray = (className || "").split(" ").filter(Boolean);
         const listeners = new Map();
+        const styleProps = new Map();
         const element = {
+            tagName: (tag || "div").toUpperCase(),
             id: id,
             get className() {
                 return classListArray.join(" ");
@@ -157,11 +197,30 @@
                 this._textContent = "";
                 if (val === "") {
                     this.children = [];
+                } else if (val.includes("<")) {
+                    const tagRegex = /<([a-zA-Z0-9_-]+)([^>]*)>/g;
+                    let m;
+                    while ((m = tagRegex.exec(val)) !== null) {
+                        const tName = m[1];
+                        if (!tName.startsWith("/")) {
+                            const ch = createMockElement("", "", tName);
+                            ch.parentNode = this;
+                            this.children.push(ch);
+                        }
+                    }
                 }
             },
             disabled: false,
             placeholder: "",
-            style: { setProperty: function() {} },
+            style: {
+                _props: styleProps,
+                setProperty: function(k, v) { styleProps.set(k, String(v)); },
+                getPropertyValue: function(k) { return styleProps.get(k) || ""; },
+                get minWidth() { return styleProps.get("min-width") || ""; },
+                set minWidth(v) { styleProps.set("min-width", String(v)); },
+                get minHeight() { return styleProps.get("min-height") || ""; },
+                set minHeight(v) { styleProps.set("min-height", String(v)); }
+            },
             offsetWidth: 100,
             children: [],
             appendChild: function(child) {
@@ -178,29 +237,39 @@
                     const idx = this.parentNode.children.indexOf(this);
                     if (idx >= 0) this.parentNode.children.splice(idx, 1);
                 }
+                this.parentNode = null;
             },
             querySelectorAll: function(selector) {
                 const results = [];
+                const subSelectors = selector.split(",").map(s => s.trim());
+                function matchesSingle(ch, sel) {
+                    if (sel.includes("[") && sel.includes("]")) {
+                        const m = sel.match(/^(\.?)([a-zA-Z0-9_-]*)\[([a-zA-Z0-9_-]+)=["']?([^"']+)["']?\]$/);
+                        if (m) {
+                            const [_, isClass, tagOrClass, attrName, attrVal] = m;
+                            if (isClass === "." && tagOrClass && !ch.classList.contains(tagOrClass)) {
+                                return false;
+                            }
+                            if (isClass !== "." && tagOrClass && ch.tagName !== tagOrClass.toUpperCase() && ch.tagName !== tagOrClass.toLowerCase()) {
+                                return false;
+                            }
+                            return ch.getAttribute(attrName) === attrVal;
+                        }
+                    } else if (sel.startsWith(".message-bubble:not(.message-outgoing)")) {
+                        return ch.classList.contains("message-bubble") && !ch.classList.contains("message-outgoing");
+                    } else if (sel.startsWith(".")) {
+                        const classes = sel.slice(1).split(".").filter(Boolean);
+                        return classes.length > 0 && classes.every(c => ch.classList.contains(c));
+                    } else if (/^[a-zA-Z0-9_-]+$/.test(sel)) {
+                        return ch.tagName === sel.toUpperCase() || ch.tagName === sel.toLowerCase();
+                    }
+                    return false;
+                }
                 function traverse(el) {
                     for (const ch of el.children) {
-                        let match = false;
-                        if (selector.startsWith(".") && selector.includes("[")) {
-                            const m = selector.match(/^\.([a-zA-Z0-9_-]+)\[([a-zA-Z0-9_-]+)="([^"]+)"\]$/);
-                            if (m) {
-                                const [_, cls, attrName, attrVal] = m;
-                                if (ch.classList.contains(cls) && ch.getAttribute(attrName) === attrVal) {
-                                    match = true;
-                                }
-                            }
-                        } else if (selector.startsWith(".message-bubble:not(.message-outgoing)")) {
-                            if (ch.classList.contains("message-bubble") && !ch.classList.contains("message-outgoing")) {
-                                match = true;
-                            }
-                        } else if (selector.startsWith(".")) {
-                            const classes = selector.slice(1).split(".").filter(Boolean);
-                            if (classes.length > 0 && classes.every(c => ch.classList.contains(c))) match = true;
+                        if (subSelectors.some(sel => matchesSingle(ch, sel))) {
+                            results.push(ch);
                         }
-                        if (match) results.push(ch);
                         traverse(ch);
                     }
                 }
@@ -229,7 +298,7 @@
             click: function() {
                 if (listeners.has("click")) {
                     for (const cb of listeners.get("click")) {
-                        cb({ target: this, preventDefault: () => {} });
+                        cb({ target: this, preventDefault: () => {}, stopPropagation: () => {} });
                     }
                 }
             }
@@ -278,6 +347,32 @@
             replaceState: function() {}
         };
         global.window.addEventListener = function() {};
+    }
+
+    if (!global.getComputedStyle) {
+        global.getComputedStyle = function(el) {
+            if (!el) return {};
+            const res = {};
+            if (el.style && el.style._props) {
+                for (const [k, v] of el.style._props.entries()) {
+                    res[k] = v;
+                }
+            }
+            if (el.classList && el.classList.contains("message-bubble")) {
+                res.position = res.position || "relative";
+                res.minWidth = res["min-width"] || "135px";
+                res.minHeight = res["min-height"] || "44px";
+            }
+            if (el.classList && el.classList.contains("btn-message-burn")) {
+                res.position = "absolute";
+                res.top = "6px";
+                res.right = "8px";
+                res.width = "22px";
+                res.height = "22px";
+            }
+            return res;
+        };
+        global.window.getComputedStyle = global.getComputedStyle;
     }
 
     // Mock WebSocket and fetch for signaling
