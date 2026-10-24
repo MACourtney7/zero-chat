@@ -233,7 +233,7 @@ impl ChatUi {
     }
 
     /// Appends a new chat message bubble (REQ-005.1).
-    /// Displays sender ID, timestamp, decrypted plaintext, and crypto verification tag.
+    /// Displays sender ID, decrypted plaintext, and crypto verification tag.
     pub fn append_message(
         &self,
         sender_id: &str,
@@ -260,7 +260,7 @@ impl ChatUi {
             .set_attribute("data-peer-id", peer_attr)
             .map_err(|e| UiError::DomOperationFailed(format!("{e:?}")))?;
 
-        // Header: Sender + Timestamp
+        // Header: Sender
         let header = document
             .create_element("div")
             .map_err(|e| UiError::DomOperationFailed(format!("{e:?}")))?;
@@ -274,17 +274,6 @@ impl ChatUi {
         sender_el.set_text_content(Some(display_sender));
         header
             .append_child(&sender_el)
-            .map_err(|e| UiError::DomOperationFailed(format!("{e:?}")))?;
-
-        let time_el = document
-            .create_element("span")
-            .map_err(|e| UiError::DomOperationFailed(format!("{e:?}")))?;
-        time_el.set_class_name("message-timestamp");
-        let date = js_sys::Date::new_0();
-        let time_str = format!("{:02}:{:02}", date.get_hours(), date.get_minutes());
-        time_el.set_text_content(Some(&time_str));
-        header
-            .append_child(&time_el)
             .map_err(|e| UiError::DomOperationFailed(format!("{e:?}")))?;
 
         bubble
