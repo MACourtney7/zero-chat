@@ -93,6 +93,7 @@
     function createMockElement(id = "", className = "") {
         const attributes = new Map();
         let classListArray = (className || "").split(" ").filter(Boolean);
+        const listeners = new Map();
         const element = {
             id: id,
             get className() {
@@ -113,7 +114,17 @@
                     return classListArray.includes(c);
                 }
             },
-            textContent: "",
+            _textContent: "",
+            get textContent() {
+                if (this._textContent !== "") return this._textContent;
+                if (this.children && this.children.length > 0) {
+                    return this.children.map(c => c.textContent || "").join("");
+                }
+                return "";
+            },
+            set textContent(val) {
+                this._textContent = val;
+            },
             _innerHTML: "",
             get innerHTML() {
                 return this._innerHTML;
@@ -127,10 +138,15 @@
             disabled: false,
             placeholder: "",
             style: { setProperty: function() {} },
+            offsetWidth: 100,
             children: [],
             appendChild: function(child) {
                 child.parentNode = this;
                 this.children.push(child);
+                return child;
+            },
+            removeChild: function(child) {
+                if (child) child.remove();
                 return child;
             },
             remove: function() {
@@ -157,8 +173,8 @@
                                 match = true;
                             }
                         } else if (selector.startsWith(".")) {
-                            const cls = selector.slice(1);
-                            if (ch.classList.contains(cls)) match = true;
+                            const classes = selector.slice(1).split(".").filter(Boolean);
+                            if (classes.length > 0 && classes.every(c => ch.classList.contains(c))) match = true;
                         }
                         if (match) results.push(ch);
                         traverse(ch);
@@ -175,8 +191,24 @@
             getAttribute: function(k) { return attributes.get(k) || null; },
             focus: function() {},
             value: "",
-            addEventListener: function(event, cb) {},
-            removeEventListener: function(event, cb) {}
+            addEventListener: function(event, cb) {
+                if (!listeners.has(event)) listeners.set(event, []);
+                listeners.get(event).push(cb);
+            },
+            removeEventListener: function(event, cb) {
+                if (listeners.has(event)) {
+                    const list = listeners.get(event);
+                    const idx = list.indexOf(cb);
+                    if (idx >= 0) list.splice(idx, 1);
+                }
+            },
+            click: function() {
+                if (listeners.has("click")) {
+                    for (const cb of listeners.get("click")) {
+                        cb({ target: this, preventDefault: () => {} });
+                    }
+                }
+            }
         };
         return element;
     }

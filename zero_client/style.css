@@ -681,6 +681,29 @@ html, body {
   animation: fadeIn 0.2s ease-out;
 }
 
+.system-temporary {
+  /* Temporary system messages inherit from .system-message without timestamp */
+}
+
+.notice-pulse {
+  animation: noticePulse 0.4s ease-out;
+}
+
+@keyframes noticePulse {
+  0% {
+    transform: scale(0.98);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.02);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
 .system-timestamp {
   font-family: var(--font-mono);
   font-size: 0.68rem;

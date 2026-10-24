@@ -818,6 +818,123 @@ async function runTests() {
         print("  PASS: REQ-032.1 E2E: createRoomAsHost and joinRoomFromHash completed without peer identity drift.");
     }
 
+    // Test 13: REQ-033.1 .. REQ-033.4: Simplified Icon-Only Bottom Button & Temporary System Message Lifecycle
+    print("\n[Test 13] REQ-033.1 - REQ-033.4: Icon-only button and temporary system messages lifecycle...");
+    {
+        // 1. Reset to home and verify Stage 1 initial state (REQ-033.1, V-033.1)
+        resetToHome();
+        assert(btnCreateRoom !== null, "btnCreateRoom must exist");
+        assert(btnCreateRoom.classList.contains("btn-emerald"), "Stage 1: button must have btn-emerald class");
+        assert(!btnCreateRoom.classList.contains("btn-waiting"), "Stage 1: button must NOT have btn-waiting class");
+        assert(btnCreateRoom.getAttribute("aria-label") === "Create Chat", "Stage 1: button aria-label must be 'Create Chat'");
+        assert(btnCreateRoom.textContent.trim() === "", `Stage 1: button text must be empty, got '${btnCreateRoom.textContent}'`);
+        assert(btnCreateRoom.querySelector("span") === null, "Stage 1: button must not contain text spans");
+        assert(btnCreateRoom.innerHTML.includes("<svg") && btnCreateRoom.innerHTML.includes("<line"),
+            "Stage 1: button must display speech bubble + icon SVG");
+
+        // 2. Click to Stage 2 & Temporary Messages (REQ-033.1, REQ-033.2, V-033.1, V-033.2)
+        setLocalPeerId("peer-ui-host");
+        await createRoomAsHost();
+
+        assert(btnCreateRoom.classList.contains("btn-waiting"), "Stage 2: button must transition to btn-waiting class");
+        assert(!btnCreateRoom.classList.contains("btn-emerald"), "Stage 2: button must NOT have btn-emerald class");
+        assert(btnCreateRoom.getAttribute("aria-label") === "Copy invite link", "Stage 2: button aria-label must be 'Copy invite link'");
+        assert(btnCreateRoom.textContent.trim() === "", `Stage 2: button text must be empty, got '${btnCreateRoom.textContent}'`);
+        assert(btnCreateRoom.querySelector("span") === null, "Stage 2: button must not contain text spans");
+        assert(btnCreateRoom.innerHTML.includes("<rect"), "Stage 2: button must display overlapping rectangles copy icon SVG");
+
+        // Verify temporary system messages in feed
+        const tempMessages = feed.querySelectorAll(".system-temporary");
+        assert(tempMessages.length === 2, `Feed must contain exactly 2 temporary system messages, got ${tempMessages.length}`);
+
+        // Message 1: "Invite link copied to clipboard"
+        const msg1 = tempMessages[0];
+        const msg1Text = msg1.querySelector(".system-text") ? msg1.querySelector(".system-text").textContent : "";
+        assert(msg1Text === "Invite link copied to clipboard", `First temp message must be 'Invite link copied to clipboard', got '${msg1Text}'`);
+        assert(msg1.querySelector(".system-timestamp") === null, "Temporary message 1 must NOT contain timestamp");
+
+        // Message 2: "Waiting for peer..." with ticking dots
+        const msg2 = tempMessages[1];
+        const msg2Text = msg2.querySelector(".system-text") ? msg2.querySelector(".system-text").textContent : "";
+        assert(msg2Text === "Waiting for peer...", `Second temp message must be 'Waiting for peer...', got '${msg2Text}'`);
+        assert(msg2.querySelector(".system-timestamp") === null, "Temporary message 2 must NOT contain timestamp");
+        assert(msg2.querySelector(".ticking-dots") !== null, "Second temp message must contain .ticking-dots element");
+
+        // Verify permanent "Secure chat created" is NOT emitted
+        const allSystemMessages = feed.querySelectorAll(".system-message");
+        const secureChatEmitted = Array.from(allSystemMessages).some(m => {
+            const t = m.querySelector(".system-text");
+            return t && t.textContent.includes("Secure chat created");
+        });
+        assert(!secureChatEmitted, "'Secure chat created' permanent message must NOT be emitted");
+
+        // 3. Re-click in Stage 2 clears and re-displays temporary messages (REQ-033.2, V-033.3)
+        await createRoomAsHost();
+        assert(btnCreateRoom.classList.contains("btn-waiting"), "Re-click: button must remain in Stage 2");
+        assert(btnCreateRoom.textContent.trim() === "", "Re-click: button must remain icon-only");
+
+        const tempMessagesAfterReclick = feed.querySelectorAll(".system-temporary");
+        assert(tempMessagesAfterReclick.length === 2,
+            `Re-clicking bottom button must clear and re-display exactly 2 temporary messages, got ${tempMessagesAfterReclick.length}`);
+
+        // 4. Permanent system message clears all active temporary messages (REQ-033.2, V-033.4)
+        appendSystemMessage("Peer joined chat");
+        const remainingTemps = feed.querySelectorAll(".system-temporary");
+        assert(remainingTemps.length === 0, `Permanent message must clear all temporary messages, remaining: ${remainingTemps.length}`);
+
+        const permanentMessages = feed.querySelectorAll(".system-message");
+        assert(permanentMessages.length === 1, "Only permanent message should remain in feed");
+        assert(permanentMessages[0].querySelector(".system-timestamp") !== null, "Permanent message must include timestamp");
+        assert(permanentMessages[0].querySelector(".system-text").textContent === "Peer joined chat",
+            "Permanent message text must be 'Peer joined chat'");
+
+        // 5. Header [+] button 5-second self-clearing notice (REQ-033.3, V-033.5)
+        setHasActiveSession(true);
+        const headerBtnBefore = headerAddBtn.className;
+        const headerHtmlBefore = headerAddBtn.innerHTML;
+
+        await handleHeaderAddPeerClick();
+
+        // Verify [+] button itself is completely untouched
+        assert(headerAddBtn.className === headerBtnBefore, "Header [+] button classes must NOT change");
+        assert(headerAddBtn.innerHTML === headerHtmlBefore, "Header [+] button innerHTML must NOT change");
+
+        // Verify temporary notice appeared in feed with .notice-pulse and no timestamp
+        const headerNotices = feed.querySelectorAll(".header-add-notice");
+        assert(headerNotices.length === 1, "Feed must contain 1 header-add-notice temporary element");
+        const noticeEl = headerNotices[0];
+        assert(noticeEl.classList.contains("system-temporary"), "Header notice must have .system-temporary class");
+        assert(noticeEl.classList.contains("notice-pulse"), "Header notice must have .notice-pulse class");
+        assert(noticeEl.querySelector(".system-timestamp") === null, "Header notice must NOT contain timestamp");
+        assert(noticeEl.querySelector(".system-text").textContent === "Invite link copied to clipboard",
+            "Header notice text must be 'Invite link copied to clipboard'");
+        assert(getHeaderAddFeedbackTimer() !== null, "5-second timer must be active");
+
+        // Re-click within 5s window restarts timer and re-triggers pulse without duplicating notice
+        await delay(50);
+        await handleHeaderAddPeerClick();
+
+        const headerNoticesAfterReclick = feed.querySelectorAll(".header-add-notice");
+        assert(headerNoticesAfterReclick.length === 1, "Re-clicking [+] must NOT duplicate the notice element");
+        assert(headerNoticesAfterReclick[0].classList.contains("notice-pulse"), "Notice must re-trigger .notice-pulse");
+        assert(getHeaderAddFeedbackTimer() !== null, "5-second timer must be restarted");
+
+        // Wait for 5s timer to expire and verify notice self-clears
+        await delay(5100);
+        const expiredNotices = feed.querySelectorAll(".header-add-notice");
+        assert(expiredNotices.length === 0, "Header temporary notice must self-clear after 5,000ms");
+        assert(getHeaderAddFeedbackTimer() === null, "Header timer must be cleared");
+
+        // 6. Reset to Home restores Stage 1
+        resetToHome();
+        assert(btnCreateRoom.classList.contains("btn-emerald"), "After reset: button must return to btn-emerald");
+        assert(!btnCreateRoom.classList.contains("btn-waiting"), "After reset: button must NOT have btn-waiting");
+        assert(btnCreateRoom.getAttribute("aria-label") === "Create Chat", "After reset: aria-label must be 'Create Chat'");
+        assert(btnCreateRoom.textContent.trim() === "", "After reset: text must remain empty");
+
+        print("  PASS: REQ-033.1 .. REQ-033.4: Icon-only button and temporary system messages verified cleanly.");
+    }
+
     print("\n===============================================================================");
     print("ALL BROWSER HEADLESS MESH TESTS PASSED SUCCESSFULLY!");
     print("===============================================================================");
