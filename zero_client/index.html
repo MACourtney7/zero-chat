@@ -218,9 +218,16 @@
         const announcedJoinPeers = new Set();
         const departedPeers = new Set();
         const activeSessionPeers = new Set();
+        const knownSessionMembers = new Set();
+        const memberHandshakeState = new Map();
+        let reconciliationTimer = null;
+        const RECONCILIATION_INTERVAL_MS = 2000;
+        const TIE_BREAKER_GRACE_MS = 4000;
+        const MAX_HANDSHAKE_RETRIES = 5;
 
         function updatePeerCountDisplay() {
-            const count = Math.max(engine ? engine.openPeerCount : 0, activeSessionPeers.size);
+            // Truthful peer count: strictly open DataChannels only (REQ-031.5)
+            const count = engine ? engine.openPeerCount : 0;
             if (peerCountEl) {
                 peerCountEl.textContent = String(count);
             }
@@ -390,7 +397,7 @@
                 if (!ch) return;
                 let peer = this.peers.get(peerId);
                 if (!peer) {
-                    peer = { pc: null, dc: ch, state: "connecting", peerId };
+                    peer = { pc: null, dc: ch, state: "connecting", peerId, createdAt: Date.now() };
                     this.peers.set(peerId, peer);
                 } else {
                     peer.dc = ch;
@@ -454,14 +461,48 @@
                 });
             }
 
+            _teardownPeerQuietly(peerId) {
+                if (this.pendingOffers) {
+                    this.pendingOffers.delete(peerId);
+                }
+                pendingOffers.delete(peerId);
+                const peer = this.peers.get(peerId);
+                if (!peer) return;
+                peer.state = "closed";
+                if (peer.dc) {
+                    try {
+                        peer.dc.onopen = null;
+                        peer.dc.onclose = null;
+                        peer.dc.onerror = null;
+                        peer.dc.onmessage = null;
+                        peer.dc.close();
+                    } catch (_) {}
+                }
+                if (peer.pc) {
+                    try {
+                        peer.pc.onconnectionstatechange = null;
+                        peer.pc.oniceconnectionstatechange = null;
+                        peer.pc.ondatachannel = null;
+                        peer.pc.close();
+                    } catch (_) {}
+                }
+                this.peers.delete(peerId);
+                this._updateOverallState(peerId);
+            }
+
             async create_peer_offer(peerId = "peer-01") {
-                if (this.peers.has(peerId)) {
-                    this.close_peer(peerId);
+                const existing = this.peers.get(peerId);
+                if (existing) {
+                    if (existing.state === "open" && existing.dc && existing.dc.readyState === "open") {
+                        // Idempotent: already open, do not tear down or disrupt live link (REQ-031.2)
+                        return (existing.pc && existing.pc.localDescription) ? existing.pc.localDescription.sdp : "";
+                    }
+                    this._teardownPeerQuietly(peerId);
                 }
 
                 const pc = new RTCPeerConnection(this.rtcConfig);
                 const dc = pc.createDataChannel("zero-chat", { ordered: true });
-                const peer = { pc, dc, state: "connecting", peerId };
+                const peer = { pc, dc, state: "connecting", peerId, createdAt: Date.now() };
                 this.peers.set(peerId, peer);
 
                 this._attachDataChannel(peerId, dc);
@@ -499,7 +540,12 @@
                 pendingOffers.delete(peerId);
                 const peer = this.peers.get(peerId);
                 if (!peer || !peer.pc) {
-                    throw new Error(`Peer connection not found for ${peerId}`);
+                    console.debug(`[accept_peer_answer] Peer connection not found for ${peerId}`);
+                    return;
+                }
+                if (peer.pc.signalingState && peer.pc.signalingState !== "have-local-offer") {
+                    console.debug(`[accept_peer_answer] Dropping answer for ${peerId}: signalingState is ${peer.pc.signalingState}`);
+                    return;
                 }
                 await peer.pc.setRemoteDescription(new RTCSessionDescription({ type: "answer", sdp: answerSdp }));
             }
@@ -510,12 +556,17 @@
                     peerId = "peer-01";
                 }
                 peerId = peerId || "peer-01";
-                if (this.peers.has(peerId)) {
-                    this.close_peer(peerId);
+                const existing = this.peers.get(peerId);
+                if (existing) {
+                    if (existing.state === "open" && existing.dc && existing.dc.readyState === "open") {
+                        // Idempotent: already open, do not tear down or disrupt live link (REQ-031.2)
+                        return (existing.pc && existing.pc.localDescription) ? existing.pc.localDescription.sdp : "";
+                    }
+                    this._teardownPeerQuietly(peerId);
                 }
 
                 const pc = new RTCPeerConnection(this.rtcConfig);
-                const peer = { pc, dc: null, state: "connecting", peerId };
+                const peer = { pc, dc: null, state: "connecting", peerId, createdAt: Date.now() };
                 this.peers.set(peerId, peer);
 
                 pc.ondatachannel = (ev) => {
@@ -557,12 +608,18 @@
             }
 
             async initiate_relay_handshake(relayPeerId, targetPeerId) {
+                const existing = this.peers.get(targetPeerId);
+                if (existing && existing.state === "open" && existing.dc && existing.dc.readyState === "open") {
+                    return; // Already open
+                }
+
                 if (this.pendingOffers) {
                     this.pendingOffers.add(targetPeerId);
                 }
                 pendingOffers.add(targetPeerId);
                 try {
                     const offerSdp = await this.create_peer_offer(targetPeerId);
+                    if (!offerSdp) return;
                     const nonce = Array.from(crypto.getRandomValues(new Uint8Array(12)));
                     const ciphertext = Array.from(new TextEncoder().encode(offerSdp));
                     const offerMsg = {
@@ -633,6 +690,15 @@
                     activeSessionPeers.delete(oldPeerId);
                     activeSessionPeers.add(newPeerId);
                 }
+                if (knownSessionMembers.has(oldPeerId)) {
+                    knownSessionMembers.delete(oldPeerId);
+                    knownSessionMembers.add(newPeerId);
+                }
+                if (memberHandshakeState.has(oldPeerId)) {
+                    const st = memberHandshakeState.get(oldPeerId);
+                    memberHandshakeState.delete(oldPeerId);
+                    memberHandshakeState.set(newPeerId, st);
+                }
                 if (announcedJoinPeers.has(oldPeerId)) {
                     announcedJoinPeers.delete(oldPeerId);
                     announcedJoinPeers.add(newPeerId);
@@ -698,6 +764,20 @@
 
         async function initiateRelayHandshake(relayPeerId, targetPeerId) {
             if (!engine) return;
+            const now = Date.now();
+            let st = memberHandshakeState.get(targetPeerId);
+            if (!st) {
+                st = {
+                    firstSeen: now,
+                    attempts: 1,
+                    lastAttempt: now,
+                    failedSurfaced: false
+                };
+                memberHandshakeState.set(targetPeerId, st);
+            } else {
+                st.attempts++;
+                st.lastAttempt = now;
+            }
             return engine.initiate_relay_handshake(relayPeerId, targetPeerId);
         }
 
@@ -1002,8 +1082,147 @@
             }
         }
 
-        function handlePeerDeparture(peerId = null) {
+        function startReconciliationTimer() {
+            if (!reconciliationTimer) {
+                reconciliationTimer = setInterval(reconcileMesh, RECONCILIATION_INTERVAL_MS);
+            }
+        }
+
+        function stopReconciliationTimer() {
+            if (reconciliationTimer) {
+                clearInterval(reconciliationTimer);
+                reconciliationTimer = null;
+            }
+        }
+
+        async function reconcileMesh() {
+            if (!hasActiveSession || isBurned || !engine) return;
+
+            const myPeerId = (engine && engine.localPeerId) || localPeerId;
+            const now = Date.now();
+
+            // 1. Clean up any stalled connecting peers (>= 8000ms) BEFORE openPeers check (REQ-031.8b)
+            const stalledPeers = [];
+            for (const [pId, p] of engine.peers.entries()) {
+                const realId = p.peerId || pId;
+                const isConnecting = p && (p.state === "connecting" || (p.dc && p.dc.readyState === "connecting"));
+                if (isConnecting) {
+                    const st = memberHandshakeState.get(realId);
+                    const lastAttempt = (st && st.lastAttempt > 0) ? st.lastAttempt : (p.createdAt || 0);
+                    const connectingDuration = lastAttempt > 0 ? (now - lastAttempt) : 0;
+                    if (connectingDuration >= 8000) {
+                        stalledPeers.push(realId);
+                    }
+                }
+            }
+
+            for (const stalledId of stalledPeers) {
+                console.debug(`[Reconciliation] Cleaning up stalled connecting peer ${stalledId}`);
+                engine._teardownPeerQuietly(stalledId);
+                pendingOffers.delete(stalledId);
+                if (engine.pendingOffers) engine.pendingOffers.delete(stalledId);
+            }
+
+            // 2. Collect currently open peers and check if any connecting peers remain
+            const openPeers = [];
+            let anyConnecting = false;
+            for (const [pId, p] of engine.peers.entries()) {
+                const realId = p.peerId || pId;
+                if (p.state === "open" && p.dc && p.dc.readyState === "open") {
+                    openPeers.push(realId);
+                    knownSessionMembers.add(realId);
+                } else if (p.state === "connecting" || (p.dc && p.dc.readyState === "connecting")) {
+                    anyConnecting = true;
+                }
+            }
+
+            if (openPeers.length === 0) {
+                if (!anyConnecting) {
+                    // All peers departed and no connecting peers remain: trigger disconnected/home transition
+                    // without duplicate "Peer left chat" (respect departedPeers)
+                    for (const stalledId of stalledPeers) {
+                        departedPeers.add(stalledId);
+                    }
+                    handlePeerDeparture(null, false);
+                }
+                return;
+            }
+
+            // 3. Reconcile known session members against open or connecting channels
+            for (const remotePeerId of Array.from(knownSessionMembers)) {
+                if (remotePeerId === myPeerId) continue;
+
+                const peer = engine.peers.get(remotePeerId);
+                const isOpen = peer && peer.state === "open" && peer.dc && peer.dc.readyState === "open";
+                const isConnecting = peer && (peer.state === "connecting" || (peer.dc && peer.dc.readyState === "connecting"));
+
+                if (isOpen) {
+                    memberHandshakeState.delete(remotePeerId);
+                    continue;
+                }
+
+                let st = memberHandshakeState.get(remotePeerId);
+                if (!st) {
+                    st = {
+                        firstSeen: now,
+                        attempts: 0,
+                        lastAttempt: 0,
+                        failedSurfaced: false
+                    };
+                    memberHandshakeState.set(remotePeerId, st);
+                }
+
+                if (isConnecting) {
+                    continue;
+                }
+
+                if (st.attempts >= MAX_HANDSHAKE_RETRIES) {
+                    if (!st.failedSurfaced) {
+                        st.failedSurfaced = true;
+                        console.warn(`[Reconciliation] Max retries reached for peer ${remotePeerId}`);
+                        appendSystemMessage("Could not connect directly to a participant");
+                    }
+                    continue;
+                }
+
+                // Deterministic tie-breaker:
+                // myPeerId < remotePeerId initiates immediately.
+                // The other side initiates after grace window (TIE_BREAKER_GRACE_MS) if still unlinked (REQ-031.3).
+                const isPreferredInitiator = myPeerId < remotePeerId;
+                const elapsedSinceFirstSeen = now - st.firstSeen;
+                const backoff = st.attempts === 0 ? 0 : Math.min(10000, 2000 * Math.pow(1.5, st.attempts));
+                const elapsedSinceLastAttempt = now - st.lastAttempt;
+
+                if (!isPreferredInitiator && elapsedSinceFirstSeen < TIE_BREAKER_GRACE_MS) {
+                    continue;
+                }
+
+                if (st.attempts > 0 && elapsedSinceLastAttempt < backoff) {
+                    continue;
+                }
+
+                const relayPeerId = openPeers.find(id => id !== remotePeerId);
+                if (!relayPeerId) {
+                    continue;
+                }
+
+                st.attempts++;
+                st.lastAttempt = now;
+                console.debug(`[Reconciliation] Attempt ${st.attempts}/${MAX_HANDSHAKE_RETRIES} to snap direct link with ${remotePeerId} via ${relayPeerId}`);
+
+                try {
+                    pendingOffers.delete(remotePeerId);
+                    if (engine.pendingOffers) engine.pendingOffers.delete(remotePeerId);
+                    await initiateRelayHandshake(relayPeerId, remotePeerId);
+                } catch (err) {
+                    console.warn(`[Reconciliation] Relay handshake attempt to ${remotePeerId} failed:`, err);
+                }
+            }
+        }
+
+        function handlePeerDeparture(peerId = null, emitNotice = true) {
             if (!hasActiveSession || isBurned) return;
+            if (peerDepartureHandled && !peerId) return;
 
             // Selectively purge only that peer's message bubbles
             if (peerId) {
@@ -1013,17 +1232,22 @@
                 departedPeers.add(peerId);
                 announcedJoinPeers.delete(peerId);
                 activeSessionPeers.delete(peerId);
+                knownSessionMembers.delete(peerId);
+                memberHandshakeState.delete(peerId);
 
                 const peerBubbles = feed.querySelectorAll(`.message-bubble[data-peer-id="${peerId}"]`);
                 peerBubbles.forEach((el) => el.remove());
             }
 
-            // Emit a single "Peer left chat" notice
-            appendSystemMessage("Peer left chat");
+            // Emit a single "Peer left chat" notice if requested
+            if (emitNotice) {
+                appendSystemMessage("Peer left chat");
+            }
 
             updatePeerCountDisplay();
 
-            const survivingCount = Math.max(engine ? engine.openPeerCount : 0, activeSessionPeers.size);
+            // Truthful surviving count: open channels only (REQ-031.5)
+            const survivingCount = engine ? engine.openPeerCount : 0;
 
             if (survivingCount > 0) {
                 // Surviving peers remain in active chat
@@ -1036,42 +1260,55 @@
                 }
                 if (sendBtn) sendBtn.disabled = false;
             } else {
-                // ONLY when engine.openPeerCount === 0 AND activeSessionPeers.size === 0 (last peer disconnects):
-                peerDepartureHandled = true;
+                let anyConnecting = false;
+                if (engine && engine.peers) {
+                    for (const p of engine.peers.values()) {
+                        if (p.state === "connecting" || (p.dc && p.dc.readyState === "connecting")) {
+                            anyConnecting = true;
+                            break;
+                        }
+                    }
+                }
 
-                // Also purge any remaining remote bubbles
-                const remoteBubbles = feed.querySelectorAll(".message-bubble:not(.message-outgoing)");
-                remoteBubbles.forEach((el) => el.remove());
+                if (!anyConnecting) {
+                    // All peers have departed and none are connecting
+                    peerDepartureHandled = true;
+                    stopReconciliationTimer();
 
-                if (headerAddBtn) {
-                    headerAddBtn.classList.add("hidden");
-                }
-                if (headerLeaveBtn) {
-                    headerLeaveBtn.classList.remove("hidden");
-                }
-                if (idleStatusCapsule) {
-                    idleStatusCapsule.classList.add("hidden");
-                }
-                if (burnRoomBar) {
-                    burnRoomBar.classList.remove("hidden");
-                }
-                if (messageForm) {
-                    messageForm.classList.remove("hidden");
-                }
-                if (msgInput) {
-                    msgInput.disabled = true;
-                    msgInput.placeholder = "Peer left chat";
-                }
-                if (sendBtn) {
-                    sendBtn.disabled = true;
-                }
-                if (createRoomBar) {
-                    createRoomBar.classList.add("hidden");
-                }
-                if (peerListEl) {
-                    peerListEl.classList.remove("hidden");
-                    if (!peerListEl.querySelector(".peer-pill")) {
-                        peerListEl.innerHTML = `<span class="peer-pill"><svg class="peer-lock-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></span>`;
+                    // Also purge any remaining remote bubbles
+                    const remoteBubbles = feed.querySelectorAll(".message-bubble:not(.message-outgoing)");
+                    remoteBubbles.forEach((el) => el.remove());
+
+                    if (headerAddBtn) {
+                        headerAddBtn.classList.add("hidden");
+                    }
+                    if (headerLeaveBtn) {
+                        headerLeaveBtn.classList.remove("hidden");
+                    }
+                    if (idleStatusCapsule) {
+                        idleStatusCapsule.classList.add("hidden");
+                    }
+                    if (burnRoomBar) {
+                        burnRoomBar.classList.remove("hidden");
+                    }
+                    if (messageForm) {
+                        messageForm.classList.remove("hidden");
+                    }
+                    if (msgInput) {
+                        msgInput.disabled = true;
+                        msgInput.placeholder = "Peer left chat";
+                    }
+                    if (sendBtn) {
+                        sendBtn.disabled = true;
+                    }
+                    if (createRoomBar) {
+                        createRoomBar.classList.add("hidden");
+                    }
+                    if (peerListEl) {
+                        peerListEl.classList.remove("hidden");
+                        if (!peerListEl.querySelector(".peer-pill")) {
+                            peerListEl.innerHTML = `<span class="peer-pill"><svg class="peer-lock-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></span>`;
+                        }
                     }
                 }
             }
@@ -1089,8 +1326,11 @@
                     updateStatus("open", "P2P Established");
                     if (idleStatusCapsule) idleStatusCapsule.classList.add("hidden");
                     if (peerId) {
+                        departedPeers.delete(peerId);
                         activeSessionPeers.add(peerId);
+                        knownSessionMembers.add(peerId);
                     }
+                    startReconciliationTimer();
                     updatePeerCountDisplay();
                     if (peerListEl) {
                         peerListEl.classList.remove("hidden");
@@ -1164,7 +1404,11 @@
 
             engine.onPeerStateChangeCb = (peerId, peerState) => {
                 if (peerState === "open") {
+                    departedPeers.delete(peerId); // Clear departed flag on legitimate reconnect / open (REQ-031.5)
                     activeSessionPeers.add(peerId);
+                    knownSessionMembers.add(peerId);
+                    memberHandshakeState.delete(peerId);
+                    startReconciliationTimer();
                     updatePeerCountDisplay();
                     clearPendingInvite();
                     if (headerAddBtn) {
@@ -1177,16 +1421,18 @@
                         }
                     }
 
-                    // Universal Peer Introduction (REQ-029.3)
+                    // Universal Peer Introduction (REQ-029.3 / REQ-031.2)
                     if (engine) {
                         for (const [existingPeerId, existingPeer] of engine.peers.entries()) {
                             if (existingPeerId !== peerId && existingPeer.state === "open" && existingPeer.dc && existingPeer.dc.readyState === "open") {
+                                const realExistingId = existingPeer.peerId || existingPeerId;
+                                const realNewId = peerId;
                                 const msgToNew = {
                                     frame_id: generateUuid(),
                                     ttl: 3,
                                     signal: {
                                         PeerJoined: {
-                                            peer_id: existingPeerId,
+                                            peer_id: realExistingId,
                                             public_key: new Array(32).fill(0)
                                         }
                                     }
@@ -1196,7 +1442,7 @@
                                     ttl: 3,
                                     signal: {
                                         PeerJoined: {
-                                            peer_id: peerId,
+                                            peer_id: realNewId,
                                             public_key: new Array(32).fill(0)
                                         }
                                     }
@@ -1204,12 +1450,12 @@
                                 try {
                                     engine.send_text(JSON.stringify(msgToNew), peerId);
                                 } catch (e) {
-                                    console.warn(`Failed to introduce ${existingPeerId} to ${peerId}:`, e);
+                                    console.warn(`Failed to introduce ${realExistingId} to ${peerId}:`, e);
                                 }
                                 try {
                                     engine.send_text(JSON.stringify(msgToExisting), existingPeerId);
                                 } catch (e) {
-                                    console.warn(`Failed to introduce ${peerId} to ${existingPeerId}:`, e);
+                                    console.warn(`Failed to introduce ${realNewId} to ${existingPeerId}:`, e);
                                 }
                             }
                         }
@@ -1221,259 +1467,335 @@
                 }
             };
 
+            const boundEngine = engine;
             engine.onMessageCb = async (text, incomingPeerId) => {
-                let data = null;
-                try {
-                    data = JSON.parse(text);
-                } catch (_) {}
+                await handleEngineMessage(text, incomingPeerId, boundEngine);
+            };
+        }
 
-                if (data && typeof data === "object") {
-                    // 1. Leave & burn handlers
-                    const isLeave = data.type === "leave_and_burn" ||
-                        data.signal === "leave_and_burn" ||
-                        data.action === "leave_and_burn" ||
-                        Boolean(data.signal && (data.signal.PeerLeftAndBurn || data.signal === "leave_and_burn"));
+        async function handleEngineMessage(text, incomingPeerId, eng = engine) {
+            let data = null;
+            try {
+                data = JSON.parse(text);
+            } catch (_) {}
 
-                    if (isLeave) {
-                        const leavingPeerId = (data.signal && data.signal.PeerLeftAndBurn && data.signal.PeerLeftAndBurn.peer_id) ||
-                            data.peer_id ||
-                            incomingPeerId;
+            const activeEng = eng || engine;
 
-                        // Forward leave signal to other open peers if needed (REQ-029.4)
-                        if (engine && engine.peers) {
-                            const fwdTtl = (data.ttl !== undefined ? data.ttl : 3) - 1;
-                            if (fwdTtl > 0) {
-                                const fwdMsg = {
-                                    frame_id: generateUuid(),
-                                    ttl: fwdTtl,
-                                    peer_id: leavingPeerId,
-                                    signal: {
-                                        PeerLeftAndBurn: {
-                                            peer_id: leavingPeerId
-                                        }
+            if (data && typeof data === "object") {
+                // 1. Leave & burn handlers
+                const isLeave = data.type === "leave_and_burn" ||
+                    data.signal === "leave_and_burn" ||
+                    data.action === "leave_and_burn" ||
+                    Boolean(data.signal && (data.signal.PeerLeftAndBurn || data.signal === "leave_and_burn"));
+
+                if (isLeave) {
+                    const leavingPeerId = (data.signal && data.signal.PeerLeftAndBurn && data.signal.PeerLeftAndBurn.peer_id) ||
+                        data.peer_id ||
+                        incomingPeerId;
+
+                    // Forward leave signal to other open peers if needed (REQ-029.4)
+                    if (activeEng && activeEng.peers) {
+                        const fwdTtl = (data.ttl !== undefined ? data.ttl : 3) - 1;
+                        if (fwdTtl > 0) {
+                            const fwdMsg = {
+                                frame_id: generateUuid(),
+                                ttl: fwdTtl,
+                                peer_id: leavingPeerId,
+                                signal: {
+                                    PeerLeftAndBurn: {
+                                        peer_id: leavingPeerId
                                     }
-                                };
-                                const fwdJson = JSON.stringify(fwdMsg);
-                                for (const [pId, p] of engine.peers.entries()) {
-                                    if (pId !== incomingPeerId && pId !== leavingPeerId && p.state === "open" && p.dc && p.dc.readyState === "open") {
-                                        try {
-                                            p.dc.send(fwdJson);
-                                        } catch (_) {}
-                                    }
+                                }
+                            };
+                            const fwdJson = JSON.stringify(fwdMsg);
+                            for (const [pId, p] of activeEng.peers.entries()) {
+                                if (pId !== incomingPeerId && pId !== leavingPeerId && p.state === "open" && p.dc && p.dc.readyState === "open") {
+                                    try {
+                                        p.dc.send(fwdJson);
+                                    } catch (_) {}
                                 }
                             }
                         }
+                    }
 
-                        if (leavingPeerId && engine && engine.peers && engine.peers.has(leavingPeerId)) {
-                            engine.close_peer(leavingPeerId);
-                        }
+                    if (leavingPeerId && activeEng && activeEng.peers && activeEng.peers.has(leavingPeerId)) {
+                        activeEng.close_peer(leavingPeerId);
+                    } else {
                         handlePeerDeparture(leavingPeerId);
-                        return;
                     }
-
-                    const isBurn = data.type === "global_burn" ||
-                        data.signal === "global_burn" ||
-                        data.action === "global_burn" ||
-                        Boolean(data.signal && (data.signal.GlobalBurnSession || data.signal === "global_burn"));
-
-                    if (isBurn) {
-                        resetToHome();
-                        return;
-                    }
-
-                    // 2. In-band SDP Relay Signaling & Mesh Snapping
-                    const signal = data.signal;
-                    if (signal && typeof signal === "object") {
-                        // A. RelaySdpOffer
-                        if (signal.RelaySdpOffer) {
-                            const { from_peer_id, to_peer_id, sealed_offer } = signal.RelaySdpOffer;
-                            const myPeerId = (engine && engine.localPeerId) || localPeerId;
-
-                            if (to_peer_id !== myPeerId) {
-                                // Intermediate relay bridge (REQ-026.1)
-                                if (data.ttl > 1) {
-                                    const fwd = {
-                                        ...data,
-                                        ttl: data.ttl - 1
-                                    };
-                                    try {
-                                        engine.send_text(JSON.stringify(fwd), to_peer_id);
-                                    } catch (e) {
-                                        console.warn(`Bridge failed to forward RelaySdpOffer to ${to_peer_id}:`, e);
-                                    }
-                                }
-                                return;
-                            } else {
-                                // Target Peer: decode offer, create answer, reply back to incomingPeerId (REQ-026.2)
-                                try {
-                                    let offerSdp = "";
-                                    if (sealed_offer && Array.isArray(sealed_offer.ciphertext)) {
-                                        offerSdp = new TextDecoder().decode(new Uint8Array(sealed_offer.ciphertext));
-                                    } else if (sealed_offer && typeof sealed_offer.sdp === "string") {
-                                        offerSdp = sealed_offer.sdp;
-                                    } else if (typeof sealed_offer === "string") {
-                                        offerSdp = sealed_offer;
-                                    }
-
-                                    activeSessionPeers.add(from_peer_id);
-                                    updatePeerCountDisplay();
-
-                                    const answerSdp = await engine.create_peer_answer(from_peer_id, offerSdp);
-                                    const nonce = Array.from(crypto.getRandomValues(new Uint8Array(12)));
-                                    const ciphertext = Array.from(new TextEncoder().encode(answerSdp));
-
-                                    const answerMsg = {
-                                        frame_id: generateUuid(),
-                                        ttl: 3,
-                                        signal: {
-                                            RelaySdpAnswer: {
-                                                from_peer_id: myPeerId,
-                                                to_peer_id: from_peer_id,
-                                                sealed_answer: {
-                                                    nonce,
-                                                    ciphertext
-                                                }
-                                            }
-                                        }
-                                    };
-                                    engine.send_text(JSON.stringify(answerMsg), incomingPeerId);
-                                } catch (err) {
-                                    console.error(`Failed to handle RelaySdpOffer from ${from_peer_id}:`, err);
-                                }
-                                return;
-                            }
-                        }
-
-                        // B. RelaySdpAnswer
-                        if (signal.RelaySdpAnswer) {
-                            const { from_peer_id, to_peer_id, sealed_answer } = signal.RelaySdpAnswer;
-                            const myPeerId = (engine && engine.localPeerId) || localPeerId;
-
-                            if (to_peer_id !== myPeerId) {
-                                // Intermediate relay bridge (REQ-026.1)
-                                if (data.ttl > 1) {
-                                    const fwd = {
-                                        ...data,
-                                        ttl: data.ttl - 1
-                                    };
-                                    try {
-                                        engine.send_text(JSON.stringify(fwd), to_peer_id);
-                                    } catch (e) {
-                                        console.warn(`Bridge failed to forward RelaySdpAnswer to ${to_peer_id}:`, e);
-                                    }
-                                }
-                                return;
-                            } else {
-                                // Offering Peer: decode answer, apply answer, complete direct snap (REQ-026.2)
-                                try {
-                                    let answerSdp = "";
-                                    if (sealed_answer && Array.isArray(sealed_answer.ciphertext)) {
-                                        answerSdp = new TextDecoder().decode(new Uint8Array(sealed_answer.ciphertext));
-                                    } else if (sealed_answer && typeof sealed_answer.sdp === "string") {
-                                        answerSdp = sealed_answer.sdp;
-                                    } else if (typeof sealed_answer === "string") {
-                                        answerSdp = sealed_answer;
-                                    }
-
-                                    activeSessionPeers.add(from_peer_id);
-                                    updatePeerCountDisplay();
-
-                                    await engine.accept_peer_answer(from_peer_id, answerSdp);
-                                    pendingOffers.delete(from_peer_id);
-                                    if (engine.pendingOffers) engine.pendingOffers.delete(from_peer_id);
-                                } catch (err) {
-                                    console.error(`Failed to apply RelaySdpAnswer from ${from_peer_id}:`, err);
-                                }
-                                return;
-                            }
-                        }
-
-                        // C. PeerJoined
-                        if (signal.PeerJoined) {
-                            const remotePeerId = signal.PeerJoined.peer_id;
-                            const myPeerId = (engine && engine.localPeerId) || localPeerId;
-
-                            if (remotePeerId && remotePeerId !== myPeerId) {
-                                activeSessionPeers.add(remotePeerId);
-                                updatePeerCountDisplay();
-
-                                const peerObj = engine && engine.peers && engine.peers.get(remotePeerId);
-                                const peerExists = peerObj && (peerObj.state === "open" || peerObj.state === "connecting");
-                                const isPending = pendingOffers.has(remotePeerId) || (engine.pendingOffers && engine.pendingOffers.has(remotePeerId));
-
-                                if (!peerExists && !isPending) {
-                                    // Glare avoidance rule (REQ-029.3): purely deterministic lexicographical tie-breaker
-                                    const shouldInitiate = myPeerId < remotePeerId;
-                                    if (shouldInitiate) {
-                                        await initiateRelayHandshake(incomingPeerId, remotePeerId);
-                                    }
-                                }
-                            }
-                            return;
-                        }
-
-                        // D. BroadcastChat
-                        if (signal.BroadcastChat) {
-                            const broadcast = signal.BroadcastChat;
-                            const messageUuid = broadcast.message_uuid || data.frame_id;
-
-                            if (!messageUuid || seenMessageIds.has(messageUuid)) {
-                                // Loop suppression (REQ-026.3): DROP immediately
-                                return;
-                            }
-
-                            // Add to seen deduplication cache
-                            markMessageSeen(messageUuid);
-
-                            // Decode plaintext body
-                            let bodyText = "";
-                            if (broadcast.sealed_message && Array.isArray(broadcast.sealed_message.ciphertext)) {
-                                bodyText = new TextDecoder().decode(new Uint8Array(broadcast.sealed_message.ciphertext));
-                            } else if (typeof broadcast.body === "string") {
-                                bodyText = broadcast.body;
-                            } else if (typeof broadcast.text === "string") {
-                                bodyText = broadcast.text;
-                            }
-
-                            const senderPeerId = broadcast.origin_peer_id || incomingPeerId || "peer-01";
-                            appendMessageBubble("Peer", bodyText, false, senderPeerId);
-
-                            // Gossip Flooding (REQ-026.3)
-                            const currentTtl = broadcast.ttl !== undefined ? broadcast.ttl : data.ttl;
-                            if (currentTtl > 1) {
-                                const nextTtl = currentTtl - 1;
-                                const forwardedMsg = {
-                                    frame_id: data.frame_id || messageUuid,
-                                    ttl: nextTtl,
-                                    signal: {
-                                        BroadcastChat: {
-                                            ...broadcast,
-                                            ttl: nextTtl
-                                        }
-                                    }
-                                };
-                                const fwdJson = JSON.stringify(forwardedMsg);
-                                for (const [pId, p] of engine.peers.entries()) {
-                                    if (pId !== incomingPeerId && pId !== broadcast.origin_peer_id) {
-                                        if (p.dc && p.dc.readyState === "open") {
-                                            try {
-                                                p.dc.send(fwdJson);
-                                            } catch (e) {
-                                                console.warn(`Gossip flood send error to ${pId}:`, e);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            return;
-                        }
-                    }
+                    return;
                 }
 
-                // Backwards Compatibility: plain text or non-signal JSON
-                const fallbackText = (data && (typeof data.text === "string" ? data.text : (typeof data.body === "string" ? data.body : null))) || text;
-                appendMessageBubble("Peer", fallbackText, false, incomingPeerId || "peer-01");
-            };
+                const isBurn = data.type === "global_burn" ||
+                    data.signal === "global_burn" ||
+                    data.action === "global_burn" ||
+                    Boolean(data.signal && (data.signal.GlobalBurnSession || data.signal === "global_burn"));
+
+                if (isBurn) {
+                    resetToHome();
+                    return;
+                }
+
+                // 2. In-band SDP Relay Signaling & Mesh Snapping
+                const signal = data.signal;
+                if (signal && typeof signal === "object") {
+                    // A. RelaySdpOffer
+                    if (signal.RelaySdpOffer) {
+                        const { from_peer_id, to_peer_id, sealed_offer } = signal.RelaySdpOffer;
+                        const myPeerId = (activeEng && activeEng.localPeerId) || localPeerId;
+
+                        if (to_peer_id !== myPeerId) {
+                            // Intermediate relay bridge (REQ-026.1)
+                            if (data.ttl > 1) {
+                                const fwd = {
+                                    ...data,
+                                    ttl: data.ttl - 1
+                                };
+                                try {
+                                    activeEng.send_text(JSON.stringify(fwd), to_peer_id);
+                                } catch (e) {
+                                    console.warn(`Bridge failed to forward RelaySdpOffer to ${to_peer_id}:`, e);
+                                }
+                            }
+                            return;
+                        } else {
+                            // Target Peer: decode offer, create answer, reply back to incomingPeerId (REQ-026.2)
+                            try {
+                                let offerSdp = "";
+                                if (sealed_offer && Array.isArray(sealed_offer.ciphertext)) {
+                                    offerSdp = new TextDecoder().decode(new Uint8Array(sealed_offer.ciphertext));
+                                } else if (sealed_offer && typeof sealed_offer.sdp === "string") {
+                                    offerSdp = sealed_offer.sdp;
+                                } else if (typeof sealed_offer === "string") {
+                                    offerSdp = sealed_offer;
+                                }
+
+                                activeSessionPeers.add(from_peer_id);
+                                knownSessionMembers.add(from_peer_id);
+                                updatePeerCountDisplay();
+
+                                // If already open, do not disrupt existing connection (REQ-031.2)
+                                const existingPeer = activeEng.peers.get(from_peer_id);
+                                if (existingPeer && existingPeer.state === "open" && existingPeer.dc && existingPeer.dc.readyState === "open") {
+                                    return;
+                                }
+
+                                // Glare resolution (REQ-031.8a)
+                                const hasPendingOffer = pendingOffers.has(from_peer_id) ||
+                                    (activeEng.pendingOffers && activeEng.pendingOffers.has(from_peer_id)) ||
+                                    Boolean(existingPeer && existingPeer.pc && existingPeer.pc.signalingState === "have-local-offer");
+                                const isConnecting = existingPeer && (existingPeer.state === "connecting" || (existingPeer.dc && existingPeer.dc.readyState === "connecting"));
+
+                                if (isConnecting && hasPendingOffer) {
+                                    if (myPeerId < from_peer_id) {
+                                        // Impolite/initiator wins: ignore incoming offer and keep waiting for answer to our offer
+                                        console.debug(`[Glare] Glare detected with ${from_peer_id}: impolite winner (${myPeerId} < ${from_peer_id}), ignoring incoming offer`);
+                                        return;
+                                    } else {
+                                        // Polite: quietly tear down our offer, clear pending/handshake state, then accept incoming offer
+                                        console.debug(`[Glare] Glare detected with ${from_peer_id}: polite loser (${myPeerId} >= ${from_peer_id}), yielding to remote offer`);
+                                        activeEng._teardownPeerQuietly(from_peer_id);
+                                        pendingOffers.delete(from_peer_id);
+                                        if (activeEng.pendingOffers) activeEng.pendingOffers.delete(from_peer_id);
+                                        const st = memberHandshakeState.get(from_peer_id);
+                                        if (st) {
+                                            st.lastAttempt = Date.now();
+                                        } else {
+                                            memberHandshakeState.set(from_peer_id, {
+                                                firstSeen: Date.now(),
+                                                attempts: 0,
+                                                lastAttempt: Date.now(),
+                                                failedSurfaced: false
+                                            });
+                                        }
+                                    }
+                                }
+
+                                const answerSdp = await activeEng.create_peer_answer(from_peer_id, offerSdp);
+                                if (!answerSdp) return;
+                                const nonce = Array.from(crypto.getRandomValues(new Uint8Array(12)));
+                                const ciphertext = Array.from(new TextEncoder().encode(answerSdp));
+
+                                const answerMsg = {
+                                    frame_id: generateUuid(),
+                                    ttl: 3,
+                                    signal: {
+                                        RelaySdpAnswer: {
+                                            from_peer_id: myPeerId,
+                                            to_peer_id: from_peer_id,
+                                            sealed_answer: {
+                                                nonce,
+                                                ciphertext
+                                            }
+                                        }
+                                    }
+                                };
+                                activeEng.send_text(JSON.stringify(answerMsg), incomingPeerId);
+                            } catch (err) {
+                                console.error(`Failed to handle RelaySdpOffer from ${from_peer_id}:`, err);
+                            }
+                            return;
+                        }
+                    }
+
+                    // B. RelaySdpAnswer
+                    if (signal.RelaySdpAnswer) {
+                        const { from_peer_id, to_peer_id, sealed_answer } = signal.RelaySdpAnswer;
+                        const myPeerId = (activeEng && activeEng.localPeerId) || localPeerId;
+
+                        if (to_peer_id !== myPeerId) {
+                            // Intermediate relay bridge (REQ-026.1)
+                            if (data.ttl > 1) {
+                                const fwd = {
+                                    ...data,
+                                    ttl: data.ttl - 1
+                                };
+                                try {
+                                    activeEng.send_text(JSON.stringify(fwd), to_peer_id);
+                                } catch (e) {
+                                    console.warn(`Bridge failed to forward RelaySdpAnswer to ${to_peer_id}:`, e);
+                                }
+                            }
+                            return;
+                        } else {
+                            // Offering Peer: decode answer, apply answer, complete direct snap (REQ-026.2)
+                            try {
+                                const peerObj = activeEng && activeEng.peers && activeEng.peers.get(from_peer_id);
+                                const hasPendingOffer = pendingOffers.has(from_peer_id) || (activeEng && activeEng.pendingOffers && activeEng.pendingOffers.has(from_peer_id));
+                                const isHaveLocalOffer = Boolean(peerObj && peerObj.pc && peerObj.pc.signalingState === "have-local-offer");
+
+                                // Guard: if no matching pending offer / signalingState !== "have-local-offer", drop answer quietly
+                                if (!hasPendingOffer && !isHaveLocalOffer) {
+                                    console.debug(`[RelaySdpAnswer] Dropping answer from ${from_peer_id}: no pending offer`);
+                                    return;
+                                }
+                                if (peerObj && peerObj.pc && peerObj.pc.signalingState && peerObj.pc.signalingState !== "have-local-offer") {
+                                    console.debug(`[RelaySdpAnswer] Dropping answer from ${from_peer_id}: signalingState is ${peerObj.pc.signalingState}`);
+                                    return;
+                                }
+
+                                let answerSdp = "";
+                                if (sealed_answer && Array.isArray(sealed_answer.ciphertext)) {
+                                    answerSdp = new TextDecoder().decode(new Uint8Array(sealed_answer.ciphertext));
+                                } else if (sealed_answer && typeof sealed_answer.sdp === "string") {
+                                    answerSdp = sealed_answer.sdp;
+                                } else if (typeof sealed_answer === "string") {
+                                    answerSdp = sealed_answer;
+                                }
+
+                                activeSessionPeers.add(from_peer_id);
+                                knownSessionMembers.add(from_peer_id);
+                                updatePeerCountDisplay();
+
+                                await activeEng.accept_peer_answer(from_peer_id, answerSdp);
+                                pendingOffers.delete(from_peer_id);
+                                if (activeEng.pendingOffers) activeEng.pendingOffers.delete(from_peer_id);
+                                memberHandshakeState.delete(from_peer_id);
+                            } catch (err) {
+                                console.error(`Failed to apply RelaySdpAnswer from ${from_peer_id}:`, err);
+                            }
+                            return;
+                        }
+                    }
+
+                    // C. PeerJoined
+                    if (signal.PeerJoined) {
+                        const remotePeerId = signal.PeerJoined.peer_id;
+                        const myPeerId = (activeEng && activeEng.localPeerId) || localPeerId;
+
+                        if (remotePeerId && remotePeerId !== myPeerId) {
+                            activeSessionPeers.add(remotePeerId);
+                            knownSessionMembers.add(remotePeerId);
+                            updatePeerCountDisplay();
+
+                            const peerObj = activeEng && activeEng.peers && activeEng.peers.get(remotePeerId);
+                            const peerOpen = peerObj && peerObj.state === "open" && peerObj.dc && peerObj.dc.readyState === "open";
+                            const peerConnecting = peerObj && peerObj.state === "connecting";
+                            const isPending = pendingOffers.has(remotePeerId) || (activeEng.pendingOffers && activeEng.pendingOffers.has(remotePeerId));
+
+                            if (!peerOpen && !peerConnecting && !isPending) {
+                                // Glare avoidance rule (REQ-029.3 / REQ-031.2): deterministic tie-breaker
+                                const shouldInitiate = myPeerId < remotePeerId;
+                                if (shouldInitiate) {
+                                    if (activeEng === engine) {
+                                        await initiateRelayHandshake(incomingPeerId, remotePeerId);
+                                    } else {
+                                        await activeEng.initiate_relay_handshake(incomingPeerId, remotePeerId);
+                                    }
+                                }
+                            }
+                        }
+                        return;
+                    }
+
+                    // D. BroadcastChat
+                    if (signal.BroadcastChat) {
+                        const broadcast = signal.BroadcastChat;
+                        const messageUuid = broadcast.message_uuid || data.frame_id;
+
+                        if (!messageUuid || seenMessageIds.has(messageUuid)) {
+                            // Loop suppression (REQ-026.3): DROP immediately
+                            return;
+                        }
+
+                        // Add to seen deduplication cache
+                        markMessageSeen(messageUuid);
+
+                        // Decode plaintext body
+                        let bodyText = "";
+                        if (broadcast.sealed_message && Array.isArray(broadcast.sealed_message.ciphertext)) {
+                            bodyText = new TextDecoder().decode(new Uint8Array(broadcast.sealed_message.ciphertext));
+                        } else if (typeof broadcast.body === "string") {
+                            bodyText = broadcast.body;
+                        } else if (typeof broadcast.text === "string") {
+                            bodyText = broadcast.text;
+                        }
+
+                        const senderPeerId = broadcast.origin_peer_id || incomingPeerId || "peer-01";
+                        appendMessageBubble("Peer", bodyText, false, senderPeerId);
+
+                        // Gossip Flooding (REQ-026.3)
+                        const currentTtl = broadcast.ttl !== undefined ? broadcast.ttl : data.ttl;
+                        if (currentTtl > 1) {
+                            const nextTtl = currentTtl - 1;
+                            const forwardedMsg = {
+                                frame_id: data.frame_id || messageUuid,
+                                ttl: nextTtl,
+                                signal: {
+                                    BroadcastChat: {
+                                        ...broadcast,
+                                        ttl: nextTtl
+                                    }
+                                }
+                            };
+                            const fwdJson = JSON.stringify(forwardedMsg);
+                            for (const [pId, p] of activeEng.peers.entries()) {
+                                if (pId !== incomingPeerId && pId !== broadcast.origin_peer_id) {
+                                    if (p.dc && p.dc.readyState === "open") {
+                                        try {
+                                            p.dc.send(fwdJson);
+                                        } catch (e) {
+                                            console.warn(`Gossip flood send error to ${pId}:`, e);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        return;
+                    }
+                }
+            }
+
+            // Backwards Compatibility: plain text or non-signal JSON
+            const fallbackText = (data && (typeof data.text === "string" ? data.text : (typeof data.body === "string" ? data.body : null))) || text;
+            appendMessageBubble("Peer", fallbackText, false, incomingPeerId || "peer-01");
+        }
+
+        if (typeof window !== "undefined") {
+            window.handleEngineMessage = handleEngineMessage;
+        }
+        if (typeof global !== "undefined") {
+            global.handleEngineMessage = handleEngineMessage;
         }
 
         // =========================================================================
@@ -1664,6 +1986,12 @@
         function doSendMessage() {
             if (!msgInput.value.trim() || !engine) return;
             const text = msgInput.value.trim();
+
+            if (engine.openPeerCount === 0) {
+                appendSystemMessage("Message not sent: no connected peers");
+                return;
+            }
+
             msgInput.value = "";
 
             const messageUuid = generateUuid();
@@ -1693,6 +2021,7 @@
                 appendMessageBubble("You", text, true);
             } catch (e) {
                 console.error("Send error:", e);
+                appendSystemMessage("Failed to deliver message");
             }
         }
 
@@ -1702,6 +2031,7 @@
         });
 
         function resetToHome() {
+            stopReconciliationTimer();
             hasActiveSession = false;
             isBurned = true;
             peerDepartureHandled = false;
@@ -1719,6 +2049,9 @@
             pendingOffers.clear();
             announcedJoinPeers.clear();
             departedPeers.clear();
+            activeSessionPeers.clear();
+            knownSessionMembers.clear();
+            memberHandshakeState.clear();
             clearTransientStatus();
             if (engine) {
                 engine.onStateChangeCb = null;
@@ -1737,7 +2070,6 @@
             if (idleStatusCapsule) {
                 idleStatusCapsule.classList.remove("hidden");
             }
-            activeSessionPeers.clear();
             updatePeerCountDisplay();
             if (peerListEl) {
                 peerListEl.classList.add("hidden");
@@ -1765,13 +2097,17 @@
             if (opportunisticLeaveSent) return;
             if (engine && engine.dc && engine.dc.readyState === "open") {
                 try {
+                    const myId = (engine && engine.localPeerId) || localPeerId;
                     const leaveMsg = JSON.stringify({
                         type: "leave_and_burn",
-                        signal: "leave_and_burn",
-                        action: "leave_and_burn",
-                        peer_id: localPeerId
+                        peer_id: myId,
+                        signal: {
+                            PeerLeftAndBurn: {
+                                peer_id: myId
+                            }
+                        }
                     });
-                    engine.send_text(leaveMsg);
+                    engine.broadcast_text(leaveMsg);
                     opportunisticLeaveSent = true;
                 } catch (_) {}
             }
@@ -1830,6 +2166,9 @@
         window.getActiveHostInviteUrl = () => activeHostInviteUrl;
         window.headerAddBtn = headerAddBtn;
         window.activeSessionPeers = activeSessionPeers;
+        window.knownSessionMembers = knownSessionMembers;
+        window.reconcileMesh = reconcileMesh;
+        window.memberHandshakeState = memberHandshakeState;
         window.updatePeerCountDisplay = updatePeerCountDisplay;
     </script>
 </body>

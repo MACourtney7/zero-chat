@@ -96,6 +96,24 @@ pub struct ConnectedPeer {
     pub session_crypto: Option<ChatSessionCrypto>,
 }
 
+/// Information about a known session member discovered via introductions or joins (REQ-031.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnownMember {
+    pub peer_id: String,
+    pub public_key: [u8; 32],
+    pub relay_peer_id: Option<String>,
+    pub handshake_retries: usize,
+    pub last_attempt_failed: bool,
+    pub reconcile_ticks_since_discovered: usize,
+}
+
+/// Maximum retry limit for in-band mesh reconciliation handshakes (REQ-031.3).
+pub const MAX_HANDSHAKE_RETRIES: usize = 5;
+
+/// Number of reconcile ticks a higher peer ID waits before initiating a fallback handshake (REQ-031.8).
+/// Mirrors the browser client grace period (e.g. 4 seconds grace with 2-second periodic tick interval).
+pub const NON_INITIATOR_GRACE_TICKS: usize = 2;
+
 pub type MessageCallback = Rc<dyn Fn(&str, &str)>; // (sender_id, plaintext)
 pub type PeerEventCallback = Rc<dyn Fn(&str)>; // (peer_id)
 pub type BurnPeerCallback = Rc<dyn Fn(&str)>;
@@ -117,6 +135,7 @@ struct MeshTopologyInner {
     peers: HashMap<String, ConnectedPeer>,
     pending_offers: HashMap<String, WebRtcPeer>, // target_peer_id -> pending WebRtcPeer
     known_public_keys: HashMap<String, [u8; 32]>,
+    known_members: HashMap<String, KnownMember>,
     seen_messages: HashSet<String>,
     seen_message_order: Vec<String>,
     max_seen_cache: usize,
@@ -142,6 +161,7 @@ impl MeshTopology {
                 peers: HashMap::new(),
                 pending_offers: HashMap::new(),
                 known_public_keys: HashMap::new(),
+                known_members: HashMap::new(),
                 seen_messages: HashSet::new(),
                 seen_message_order: Vec::new(),
                 max_seen_cache: 1024,
@@ -183,6 +203,16 @@ impl MeshTopology {
         public_key: [u8; 32],
         rtc_peer: WebRtcPeer,
     ) -> Result<(), MeshError> {
+        self.add_peer_internal(peer_id, public_key, rtc_peer, true)
+    }
+
+    fn add_peer_internal(
+        &self,
+        peer_id: &str,
+        public_key: [u8; 32],
+        rtc_peer: WebRtcPeer,
+        notify_existing: bool,
+    ) -> Result<(), MeshError> {
         let (local_priv, existing_peers, joined_cbs) = {
             let mut inner = self.inner.borrow_mut();
             if inner.peers.contains_key(peer_id) {
@@ -191,6 +221,23 @@ impl MeshTopology {
             inner
                 .known_public_keys
                 .insert(peer_id.to_string(), public_key);
+            inner
+                .known_members
+                .entry(peer_id.to_string())
+                .and_modify(|m| {
+                    m.public_key = public_key;
+                    m.handshake_retries = 0;
+                    m.last_attempt_failed = false;
+                    m.reconcile_ticks_since_discovered = 0;
+                })
+                .or_insert_with(|| KnownMember {
+                    peer_id: peer_id.to_string(),
+                    public_key,
+                    relay_peer_id: None,
+                    handshake_retries: 0,
+                    last_attempt_failed: false,
+                    reconcile_ticks_since_discovered: 0,
+                });
             let existing: Vec<(String, WebRtcPeer, [u8; 32])> = inner
                 .peers
                 .iter()
@@ -247,28 +294,32 @@ impl MeshTopology {
             );
         }
 
-        // Inform existing peers of newly joined peer and vice versa (MeshRelaySignal::PeerJoined)
-        for (existing_id, existing_rtc, existing_pk) in existing_peers {
-            if let Ok(msg_to_existing) = to_json_string(&MeshRelayMessage {
-                frame_id: generate_message_uuid().unwrap_or_else(|_| "join".to_string()),
-                ttl: 3,
-                signal: MeshRelaySignal::PeerJoined {
-                    peer_id: peer_id.to_string(),
-                    public_key,
-                },
-            }) {
-                let _ = existing_rtc.send_text(&msg_to_existing);
-            }
+        if notify_existing {
+            // Inform existing peers of newly joined peer and vice versa (MeshRelaySignal::PeerJoined).
+            // Introduce existing peers to the newly joined peer FIRST so the joiner has their public keys
+            // before existing peers initiate any in-band relay offers.
+            for (existing_id, existing_rtc, existing_pk) in existing_peers {
+                if let Ok(msg_to_new) = to_json_string(&MeshRelayMessage {
+                    frame_id: generate_message_uuid().unwrap_or_else(|_| "join".to_string()),
+                    ttl: 3,
+                    signal: MeshRelaySignal::PeerJoined {
+                        peer_id: existing_id,
+                        public_key: existing_pk,
+                    },
+                }) {
+                    let _ = rtc_peer.send_text(&msg_to_new);
+                }
 
-            if let Ok(msg_to_new) = to_json_string(&MeshRelayMessage {
-                frame_id: generate_message_uuid().unwrap_or_else(|_| "join".to_string()),
-                ttl: 3,
-                signal: MeshRelaySignal::PeerJoined {
-                    peer_id: existing_id,
-                    public_key: existing_pk,
-                },
-            }) {
-                let _ = rtc_peer.send_text(&msg_to_new);
+                if let Ok(msg_to_existing) = to_json_string(&MeshRelayMessage {
+                    frame_id: generate_message_uuid().unwrap_or_else(|_| "join".to_string()),
+                    ttl: 3,
+                    signal: MeshRelaySignal::PeerJoined {
+                        peer_id: peer_id.to_string(),
+                        public_key,
+                    },
+                }) {
+                    let _ = existing_rtc.send_text(&msg_to_existing);
+                }
             }
         }
 
@@ -323,9 +374,155 @@ impl MeshTopology {
         self.inner.borrow().peers.contains_key(peer_id)
     }
 
-    /// Returns the number of currently connected peers.
+    /// Returns the number of currently connected peers with open data channels (REQ-031.5).
     pub fn peer_count(&self) -> usize {
-        self.inner.borrow().peers.len()
+        self.open_peer_count()
+    }
+
+    /// Returns the number of currently open peer channels (REQ-031.5).
+    pub fn open_peer_count(&self) -> usize {
+        self.inner
+            .borrow()
+            .peers
+            .values()
+            .filter(|p| p.rtc_peer.state() == PeerLifecycleState::Open)
+            .count()
+    }
+
+    /// Returns the number of currently open peer channels (alias for open_peer_count, REQ-031.5).
+    pub fn open_peers(&self) -> usize {
+        self.open_peer_count()
+    }
+
+    /// Returns list of peer IDs with open data channels (REQ-031.5).
+    pub fn open_connected_peers(&self) -> Vec<String> {
+        let mut list: Vec<String> = self
+            .inner
+            .borrow()
+            .peers
+            .iter()
+            .filter(|(_, p)| p.rtc_peer.state() == PeerLifecycleState::Open)
+            .map(|(id, _)| id.clone())
+            .collect();
+        list.sort();
+        list
+    }
+
+    /// Returns true if `peer_id` has an open data channel in the mesh (REQ-031.5).
+    pub fn has_open_peer(&self, peer_id: &str) -> bool {
+        self.inner
+            .borrow()
+            .peers
+            .get(peer_id)
+            .map(|p| p.rtc_peer.state() == PeerLifecycleState::Open)
+            .unwrap_or(false)
+    }
+
+    /// Returns list of known session member IDs (REQ-031.3).
+    pub fn known_members(&self) -> Vec<String> {
+        let mut list: Vec<String> = self.inner.borrow().known_members.keys().cloned().collect();
+        list.sort();
+        list
+    }
+
+    /// Returns true if `peer_id` is a known session member (REQ-031.3).
+    pub fn is_known_member(&self, peer_id: &str) -> bool {
+        self.inner.borrow().known_members.contains_key(peer_id)
+    }
+
+    /// Reconciles missing mesh links against known session members (REQ-031.3).
+    ///
+    /// Iterates over all known session members that do not currently have an open DataChannel.
+    /// If an open relay peer is available and bounded retry attempts have not been exceeded,
+    /// initiates an in-band relay SDP handshake to snap the direct connection.
+    ///
+    /// Returns the number of new handshakes successfully initiated.
+    pub async fn reconcile_mesh(&self) -> Result<usize, MeshError> {
+        let (known, open_peers) = {
+            let inner = self.inner.borrow();
+            let mut open_p = HashSet::new();
+            for (id, p) in &inner.peers {
+                if p.rtc_peer.state() == PeerLifecycleState::Open {
+                    open_p.insert(id.clone());
+                }
+            }
+            let km: Vec<KnownMember> = inner.known_members.values().cloned().collect();
+            (km, open_p)
+        };
+
+        let mut initiated = 0;
+        let local_id = self.local_peer_id();
+
+        for member in known {
+            if member.peer_id == local_id {
+                continue;
+            }
+            if open_peers.contains(&member.peer_id) {
+                let mut inner = self.inner.borrow_mut();
+                if let Some(m) = inner.known_members.get_mut(&member.peer_id) {
+                    m.handshake_retries = 0;
+                    m.last_attempt_failed = false;
+                    m.reconcile_ticks_since_discovered = 0;
+                }
+                continue;
+            }
+
+            // REQ-031.8 (c): Tie-breaker for reconciliation initiation.
+            // If local_id < member.peer_id, initiate immediately as deterministic primary.
+            // If local_id > member.peer_id, wait for NON_INITIATOR_GRACE_TICKS reconcile ticks
+            // before falling back to initiate, mirroring the browser client grace window.
+            let is_primary_initiator = local_id < member.peer_id;
+            if !is_primary_initiator
+                && member.reconcile_ticks_since_discovered < NON_INITIATOR_GRACE_TICKS
+            {
+                let mut inner = self.inner.borrow_mut();
+                if let Some(m) = inner.known_members.get_mut(&member.peer_id) {
+                    m.reconcile_ticks_since_discovered += 1;
+                }
+                continue;
+            }
+
+            if member.handshake_retries >= MAX_HANDSHAKE_RETRIES {
+                let mut inner = self.inner.borrow_mut();
+                if let Some(m) = inner.known_members.get_mut(&member.peer_id) {
+                    m.last_attempt_failed = true;
+                }
+                continue;
+            }
+
+            // Find an open relay peer
+            let relay = {
+                let preferred = member
+                    .relay_peer_id
+                    .as_ref()
+                    .filter(|r| open_peers.contains(*r));
+
+                if let Some(r) = preferred {
+                    Some(r.clone())
+                } else {
+                    open_peers.iter().find(|p| *p != &member.peer_id).cloned()
+                }
+            };
+
+            if let Some(relay_id) = relay {
+                {
+                    let mut inner = self.inner.borrow_mut();
+                    inner.pending_offers.remove(&member.peer_id);
+                    if let Some(m) = inner.known_members.get_mut(&member.peer_id) {
+                        m.handshake_retries += 1;
+                    }
+                }
+                if self
+                    .initiate_relay_handshake(&relay_id, &member.peer_id, member.public_key)
+                    .await
+                    .is_ok()
+                {
+                    initiated += 1;
+                }
+            }
+        }
+
+        Ok(initiated)
     }
 
     /// Retrieves a snapshot of the connected peer, if present.
@@ -335,10 +532,24 @@ impl MeshTopology {
 
     /// Manually records a known peer's public key (e.g. from an out-of-band discovery or invite).
     pub fn learn_peer_key(&self, peer_id: &str, public_key: [u8; 32]) {
-        self.inner
-            .borrow_mut()
+        let mut inner = self.inner.borrow_mut();
+        inner
             .known_public_keys
             .insert(peer_id.to_string(), public_key);
+        inner
+            .known_members
+            .entry(peer_id.to_string())
+            .and_modify(|m| {
+                m.public_key = public_key;
+            })
+            .or_insert_with(|| KnownMember {
+                peer_id: peer_id.to_string(),
+                public_key,
+                relay_peer_id: None,
+                handshake_retries: 0,
+                last_attempt_failed: false,
+                reconcile_ticks_since_discovered: 0,
+            });
     }
 
     /// Sets the maximum deduplication cache capacity (useful for cache boundary testing).
@@ -469,12 +680,48 @@ impl MeshTopology {
                     peer_id,
                     public_key,
                 } => {
-                    if peer_id != self.local_peer_id() {
-                        self.inner
-                            .borrow_mut()
-                            .known_public_keys
-                            .insert(peer_id, public_key);
+                    if peer_id == self.local_peer_id() {
+                        return Ok(());
                     }
+
+                    let should_initiate = {
+                        let mut inner = self.inner.borrow_mut();
+                        inner.known_public_keys.insert(peer_id.clone(), public_key);
+                        inner
+                            .known_members
+                            .entry(peer_id.clone())
+                            .and_modify(|m| {
+                                m.public_key = public_key;
+                                if m.relay_peer_id.is_none() {
+                                    m.relay_peer_id = Some(from_peer_id.to_string());
+                                }
+                            })
+                            .or_insert_with(|| KnownMember {
+                                peer_id: peer_id.clone(),
+                                public_key,
+                                relay_peer_id: Some(from_peer_id.to_string()),
+                                handshake_retries: 0,
+                                last_attempt_failed: false,
+                                reconcile_ticks_since_discovered: 0,
+                            });
+
+                        let already_connected = inner
+                            .peers
+                            .get(&peer_id)
+                            .map(|p| p.rtc_peer.state() == PeerLifecycleState::Open)
+                            .unwrap_or(false);
+
+                        let already_pending = inner.pending_offers.contains_key(&peer_id);
+
+                        !already_connected && !already_pending && inner.local_peer_id < peer_id
+                    };
+
+                    if should_initiate {
+                        let _ = self
+                            .initiate_relay_handshake(from_peer_id, &peer_id, public_key)
+                            .await;
+                    }
+
                     Ok(())
                 }
 
@@ -528,6 +775,17 @@ impl MeshTopology {
                             MeshError::Crypto(CryptoError::Utf8Error(e.to_string()))
                         })?;
 
+                        // IDEMPOTENCY CHECK (REQ-031.2 & REQ-031.5):
+                        // If already open, do not replace or tear down!
+                        {
+                            let inner = self.inner.borrow();
+                            if let Some(existing) = inner.peers.get(offer_from) {
+                                if existing.rtc_peer.state() == PeerLifecycleState::Open {
+                                    return Ok(());
+                                }
+                            }
+                        }
+
                         let new_peer = WebRtcPeer::new();
                         let answer = new_peer.accept_offer_and_create_answer(&offer_sdp).await?;
                         let sealed_answer = crypto.seal_raw(answer.sdp.as_bytes())?;
@@ -559,8 +817,14 @@ impl MeshTopology {
                         let answer_json = to_json_string(&answer_relay)?;
                         relay_transport.send_text(&answer_json)?;
 
-                        // Add new direct peer to routing table
-                        self.add_peer(offer_from, sender_pk, new_peer)?;
+                        // Add new direct peer to routing table.
+                        // If an older non-open peer exists, remove it cleanly first
+                        {
+                            let mut inner = self.inner.borrow_mut();
+                            inner.peers.remove(offer_from);
+                        }
+
+                        self.add_peer_internal(offer_from, sender_pk, new_peer, false)?;
                         Ok(())
                     }
                 }
@@ -626,7 +890,25 @@ impl MeshTopology {
                         })?;
 
                         pending_peer.apply_answer(&answer_sdp).await?;
-                        self.add_peer(answer_from, target_pk, pending_peer)?;
+
+                        // IDEMPOTENCY CHECK (REQ-031.2 & REQ-031.5):
+                        // If already open, do not replace
+                        {
+                            let inner = self.inner.borrow();
+                            if let Some(existing) = inner.peers.get(answer_from) {
+                                if existing.rtc_peer.state() == PeerLifecycleState::Open {
+                                    return Ok(());
+                                }
+                            }
+                        }
+
+                        // If an older non-open peer exists, remove it first
+                        {
+                            let mut inner = self.inner.borrow_mut();
+                            inner.peers.remove(answer_from);
+                        }
+
+                        self.add_peer_internal(answer_from, target_pk, pending_peer, false)?;
                         Ok(())
                     }
                 }
@@ -826,6 +1108,7 @@ impl MeshTopology {
                         inner.peers.clear();
                         inner.pending_offers.clear();
                         inner.known_public_keys.clear();
+                        inner.known_members.clear();
                         inner.seen_messages.clear();
                         inner.seen_message_order.clear();
                         let cbs = inner.on_global_burn_callbacks.clone();
@@ -1020,6 +1303,7 @@ impl MeshTopology {
             inner.peers.clear();
             inner.pending_offers.clear();
             inner.known_public_keys.clear();
+            inner.known_members.clear();
             inner.seen_messages.clear();
             inner.seen_message_order.clear();
         }
@@ -1074,6 +1358,7 @@ mod tests {
 
         let (_bob_sk, bob_pk) = generate_kp();
         let bob_peer = WebRtcPeer::new();
+        bob_peer.mark_open_for_testing().unwrap();
 
         // 1. Add Bob
         alice_mesh
@@ -1092,6 +1377,7 @@ mod tests {
         // 3. Add Charlie via register_peer
         let (_charlie_sk, charlie_pk) = generate_kp();
         let charlie_peer = WebRtcPeer::new();
+        charlie_peer.mark_open_for_testing().unwrap();
         alice_mesh
             .register_peer("charlie", charlie_pk, charlie_peer)
             .expect("register charlie");
@@ -1233,13 +1519,15 @@ mod tests {
         // Direct snap established: both Charlie and Bob now have direct peers for each other
         assert!(charlie_mesh.has_peer("bob"));
         assert!(bob_mesh.has_peer("charlie"));
-        assert_eq!(charlie_mesh.peer_count(), 2); // alice + bob
-        assert_eq!(bob_mesh.peer_count(), 2); // alice + charlie
 
-        // Pair the snapped peers for direct loopback messaging
+        // Pair the snapped peers for direct loopback messaging (transitions state to Open)
         let charlie_to_bob = charlie_mesh.get_peer("bob").unwrap().rtc_peer;
         let bob_to_charlie = bob_mesh.get_peer("charlie").unwrap().rtc_peer;
         WebRtcPeer::pair_for_testing(&charlie_to_bob, &bob_to_charlie).unwrap();
+
+        // Once direct channels are open, both Charlie and Bob report peer_count == 2 (REQ-031.5)
+        assert_eq!(charlie_mesh.peer_count(), 2); // alice + bob
+        assert_eq!(bob_mesh.peer_count(), 2); // alice + charlie
 
         // Register on_message callback on Bob
         let bob_received = Rc::new(RefCell::new(Vec::new()));
@@ -1418,6 +1706,7 @@ mod tests {
         });
 
         let bob_peer = WebRtcPeer::new();
+        bob_peer.mark_open_for_testing().unwrap();
         alice_mesh
             .add_peer("bob", bob_pk, bob_peer.clone())
             .unwrap();
