@@ -980,6 +980,10 @@ async function runTests() {
             `Notice 2 .system-text must strictly be 'Waiting for peer' without literal dots, got '${notice2Text}'`);
         assert(notice2.querySelector(".ticking-dots") !== null,
             "Notice 2 must contain .ticking-dots element");
+        assert(window.getComputedStyle(notice2).gap === "0px" || window.getComputedStyle(notice2).gap === "0",
+            "Notice 2 (.system-temporary) must have gap: 0 to eliminate ellipsis gap");
+        assert(window.getComputedStyle(notice2.querySelector(".ticking-dots")).marginLeft === "0px" || window.getComputedStyle(notice2.querySelector(".ticking-dots")).marginLeft === "0",
+            ".ticking-dots must have marginLeft: 0");
 
         // 3. Re-click button: assert timer reset and staggered sequence restarts cleanly
         await createRoomAsHost();
@@ -1265,6 +1269,18 @@ async function runTests() {
             `Notice 2 text must be 'Waiting for peer', got '${tempNotices[1].querySelector(".system-text").textContent}'`);
         assert(tempNotices[1].querySelector(".ticking-dots") !== null,
             "Notice 2 must contain animated .ticking-dots element");
+        assert(window.getComputedStyle(tempNotices[1]).gap === "0px" || window.getComputedStyle(tempNotices[1]).gap === "0",
+            "Notice 2 (.system-temporary) must have gap: 0 to eliminate ellipsis gap");
+
+        // Verify transient-status also has zero gap (REQ-036.7)
+        showTransientStatus("Establishing secure connection");
+        const transientEl = feed.querySelector(".transient-status");
+        assert(transientEl !== null, "Transient status element must be in feed");
+        assert(window.getComputedStyle(transientEl).gap === "0px" || window.getComputedStyle(transientEl).gap === "0",
+            ".transient-status must have gap: 0 to eliminate ellipsis gap");
+        assert(transientEl.innerHTML === '<span class="transient-text">Establishing secure connection</span><span class="ticking-dots"></span>',
+            "Transient status must have zero whitespace separation between text span and ticking dots span");
+        clearTransientStatus();
 
         // 6. Verify 90s TTL exemption (REQ-036.5)
         advanceTimersByTime(95000);
