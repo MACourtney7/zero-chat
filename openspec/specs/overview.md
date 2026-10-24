@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.11.0"
+version: "1.12.0"
 milestone: "ephemeral-ui-modernization"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-24T23:15:00Z"
+updated_at: "2026-10-24T23:40:00Z"
 ---
 ```
 
@@ -67,6 +67,10 @@ updated_at: "2026-10-24T23:15:00Z"
     - **Immediate Connection Failure Recovery**: Zero 15–30s delay on dead-drop failure; `joinRoomFromHash` immediately closes the engine (`engine.close()`), displays `"Failed to establish connection"`, unhides `#header-leave-btn`, and immediately shows `#create-room-bar` in Stage 1 Plus mode.
     - **Display Timestamp Removal Across All Messages**: Timestamps are completely removed from display across all system messages (`.system-timestamp`) and chat message bubbles (`.message-timestamp`) in both HTML and Rust WASM UI client.
     - **"Joined chat" Message Integrity**: `"Joined chat"` is emitted strictly once upon joiner initial connection (`isJoining === true`), immediately toggling `isJoining = false`. Hosts never emit `"Joined chat"`. Subsequent connections emit `"Peer joined chat"` with duplicate suppression via `announcedJoinPeers`.
+15. **Symmetrical Flex Chat Bubble Header & Centerline Icon Alignment**:
+    - `.message-header` serves as the unified top-row flex container (`display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 22px;`) within `.message-bubble`.
+    - Houses the left-aligned identity dot (`.peer-dot` / `.self-dot`) and the right-aligned flame burn button (`.btn-message-burn`, `position: relative; margin-left: auto; width: 22px; height: 22px;`).
+    - Eliminates arbitrary absolute offsets; both the 7px circular dot and the 22px flame button (13px SVG) are anchored along the exact same horizontal centerline (`11px`), providing pixel-perfect vertical alignment and symmetry across both outgoing and incoming messages.
 
 ---
 
