@@ -1057,6 +1057,8 @@ async function runTests() {
         assert(outBubble.getAttribute("data-message-id") === "test-msg-out-035", "Outgoing bubble must have data-message-id");
         const outBurnBtn = outBubble.querySelector(".btn-message-burn");
         assert(outBurnBtn !== null, "Outgoing bubble must contain .btn-message-burn");
+        assert(outBubble.querySelector(".message-header .btn-message-burn") !== null, "Outgoing bubble header must contain .btn-message-burn");
+        assert(outBubble.querySelector(".message-header .peer-dot") !== null, "Outgoing bubble header must contain .peer-dot");
         assert(outBurnBtn.getAttribute("aria-label") === "Burn message", "Burn button must have aria-label='Burn message'");
         assert(outBurnBtn.querySelector("svg") !== null, "Burn button must contain flame SVG icon");
 
@@ -1069,6 +1071,8 @@ async function runTests() {
         assert(inBubble.getAttribute("data-message-id") === "test-msg-in-035", "Incoming bubble must have data-message-id");
         const inBurnBtn = inBubble.querySelector(".btn-message-burn");
         assert(inBurnBtn !== null, "Incoming bubble must contain .btn-message-burn");
+        assert(inBubble.querySelector(".message-header .btn-message-burn") !== null, "Incoming bubble header must contain .btn-message-burn");
+        assert(inBubble.querySelector(".message-header .peer-dot") !== null, "Incoming bubble header must contain .peer-dot");
         assert(inBurnBtn.getAttribute("aria-label") === "Burn message", "Burn button on incoming bubble must have aria-label='Burn message'");
 
         // 3. Verify local click on burn button triggers .message-dissolve and removes bubble after 200ms
@@ -1392,6 +1396,8 @@ async function runTests() {
         const cssContent = readCssFile();
         if (cssContent) {
             assert(cssContent.includes(".btn-message-burn"), "Must define .btn-message-burn");
+            assert(cssContent.includes(".message-header") && cssContent.includes("display: flex;") && cssContent.includes("justify-content: space-between;"),
+                "style.css: .message-header must define display: flex and justify-content: space-between");
             assert(cssContent.includes(".feature-icon"), "Must define .feature-icon");
         }
 
