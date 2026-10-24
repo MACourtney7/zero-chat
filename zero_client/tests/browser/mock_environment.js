@@ -91,21 +91,45 @@
 
     // 2. Mock DOM
     function createMockElement(id = "", className = "") {
-        return {
+        const attributes = new Map();
+        let classListArray = (className || "").split(" ").filter(Boolean);
+        const element = {
             id: id,
-            className: className,
+            get className() {
+                return classListArray.join(" ");
+            },
+            set className(v) {
+                classListArray = (v || "").split(" ").filter(Boolean);
+            },
             classList: {
-                add: function(c) {},
-                remove: function(c) {},
-                contains: function(c) { return false; }
+                add: function(c) {
+                    if (!classListArray.includes(c)) classListArray.push(c);
+                },
+                remove: function(c) {
+                    const idx = classListArray.indexOf(c);
+                    if (idx >= 0) classListArray.splice(idx, 1);
+                },
+                contains: function(c) {
+                    return classListArray.includes(c);
+                }
             },
             textContent: "",
-            innerHTML: "",
+            _innerHTML: "",
+            get innerHTML() {
+                return this._innerHTML;
+            },
+            set innerHTML(val) {
+                this._innerHTML = val;
+                if (val === "") {
+                    this.children = [];
+                }
+            },
             disabled: false,
             placeholder: "",
             style: { setProperty: function() {} },
             children: [],
             appendChild: function(child) {
+                child.parentNode = this;
                 this.children.push(child);
                 return child;
             },
@@ -115,16 +139,48 @@
                     if (idx >= 0) this.parentNode.children.splice(idx, 1);
                 }
             },
-            querySelectorAll: function() { return []; },
-            querySelector: function() { return null; },
-            setAttribute: function() {},
-            getAttribute: function() { return null; },
+            querySelectorAll: function(selector) {
+                const results = [];
+                function traverse(el) {
+                    for (const ch of el.children) {
+                        let match = false;
+                        if (selector.startsWith(".") && selector.includes("[")) {
+                            const m = selector.match(/^\.([a-zA-Z0-9_-]+)\[([a-zA-Z0-9_-]+)="([^"]+)"\]$/);
+                            if (m) {
+                                const [_, cls, attrName, attrVal] = m;
+                                if (ch.classList.contains(cls) && ch.getAttribute(attrName) === attrVal) {
+                                    match = true;
+                                }
+                            }
+                        } else if (selector.startsWith(".message-bubble:not(.message-outgoing)")) {
+                            if (ch.classList.contains("message-bubble") && !ch.classList.contains("message-outgoing")) {
+                                match = true;
+                            }
+                        } else if (selector.startsWith(".")) {
+                            const cls = selector.slice(1);
+                            if (ch.classList.contains(cls)) match = true;
+                        }
+                        if (match) results.push(ch);
+                        traverse(ch);
+                    }
+                }
+                traverse(this);
+                return results;
+            },
+            querySelector: function(selector) {
+                const res = this.querySelectorAll(selector);
+                return res.length > 0 ? res[0] : null;
+            },
+            setAttribute: function(k, v) { attributes.set(k, String(v)); },
+            getAttribute: function(k) { return attributes.get(k) || null; },
             focus: function() {},
             value: "",
             addEventListener: function(event, cb) {},
             removeEventListener: function(event, cb) {}
         };
+        return element;
     }
+    global.createMockElement = createMockElement;
 
     const elementRegistry = new Map();
     if (!global.document) {
@@ -141,6 +197,16 @@
         };
     }
 
+    if (!global.navigator) {
+        global.navigator = {
+            clipboard: {
+                writeText: async function(text) {
+                    global._lastCopiedText = text;
+                }
+            }
+        };
+    }
+
     if (!global.window) {
         global.window = global;
         global.window.location = {
@@ -153,6 +219,61 @@
         };
         global.window.addEventListener = function() {};
     }
+
+    // Mock WebSocket and fetch for signaling
+    const signalingRooms = new Map();
+
+    class MockWebSocket {
+        constructor(url) {
+            this.url = url;
+            this.readyState = 1; // OPEN
+            this.onmessage = null;
+            this.onclose = null;
+            this.onerror = null;
+
+            const m = url && url.match(/\/host\/([a-zA-Z0-9_-]+)/);
+            if (m) {
+                this.doId = m[1];
+                signalingRooms.set(this.doId, this);
+            }
+        }
+        send(data) {}
+        close() {
+            this.readyState = 3;
+            if (this.doId && signalingRooms.get(this.doId) === this) {
+                signalingRooms.delete(this.doId);
+            }
+            if (this.onclose) this.onclose();
+        }
+    }
+    global.WebSocket = MockWebSocket;
+    global._signalingRooms = signalingRooms;
+
+    global.fetch = async function(url, options = {}) {
+        const m = url && url.match(/\/drop\/([a-zA-Z0-9_-]+)\//);
+        if (m) {
+            const doId = m[1];
+            const ws = signalingRooms.get(doId);
+            if (ws && ws.onmessage) {
+                const body = options.body;
+                setTimeout(() => {
+                    if (ws.onmessage) {
+                        ws.onmessage({ data: body });
+                    }
+                }, 5);
+            }
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({ success: true })
+            };
+        }
+        return {
+            ok: true,
+            status: 200,
+            json: async () => ({})
+        };
+    };
 
     // 3. Mock WebRTC signalling bus
     const connectionRegistry = new Map(); // id -> RTCPeerConnection
