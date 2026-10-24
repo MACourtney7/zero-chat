@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.10.0"
+version: "1.11.0"
 milestone: "ephemeral-ui-modernization"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-24T19:30:00Z"
+updated_at: "2026-10-24T23:15:00Z"
 ---
 ```
 
@@ -56,6 +56,17 @@ updated_at: "2026-10-24T19:30:00Z"
     - Leaving or destroying the chat (`resetToHome()`) restores `#btn-create-room` to the default chat-bubble-plus icon (`CREATE_CHAT_ICON_SVG`).
     - Temporary system messages (`.system-temporary`, which omit timestamps) are exempt from 90s TTL and do not age-fade or dissolve.
     - Zero whitespace gap on all ticking ellipsis messages: `.system-temporary`, `.transient-status`, and `.system-message:has(.ticking-dots)` define `gap: 0; margin-left: 0;` eliminating any gap before `.ticking-dots`.
+14. **Unified Header & Footer State Machine, Minimalist Badges, Clean Burn Button & Zero-Delay Recovery**:
+    - **Rule 1 (Leave Button Presence)**: Whenever the peer counter is visible in any room session (`inRoom` is true, displaying `"0"`, `"1"`, `"2"`...), `#header-leave-btn` MUST be visible. In Home view (`resetToHome()`), `#peer-count` displays the slashed-person icon and `#header-leave-btn` is hidden.
+    - **Rule 2 (0-Peers Bottom Plus Bar)**: If the peer counter is `0` (waiting for peer, limbo disconnect, or join failure), `#create-room-bar` MUST be visible in the Plus icon variant (`setCreateRoomStage1Plus()`, 20x20 `+` icon), `#message-form` is hidden, and `#header-add-btn` is hidden.
+    - **Rule 3 (>0 Peers Top Add Button)**: If the peer counter is `> 0`, `#header-add-btn` MUST be visible in the top bar, `#message-form` is visible and enabled, and `#create-room-bar` is hidden.
+    - **Rule 4 (Home Button Scope)**: `setCreateRoomStage1()` (chat bubble with plus) is strictly restricted to the Home view (`resetToHome()`). All 0-peer room states use `setCreateRoomStage1Plus()`.
+    - **Minimalist Top-Bar Badges & Brand Icon**: Background fills and borders (`background: transparent; border: none;`) are removed from `.brand-icon` (leaving only the cyan `0` glyph), `.peer-count-badge`, `#peer-count`, `.status-capsule-disconnected`, `#idle-status-capsule`, and `.peer-pill`. Interactive top-bar buttons (`#header-add-btn`, `#header-leave-btn`) retain dedicated interactive button styling.
+    - **Streamlined Welcome Splash & Default Blue Vector Icons**: Heading `"Zero accounts. Zero servers. Zero history."` is removed, subtitle is updated to `"Create -> Share -> Chat"`, and platform emojis (⚡, 🔒, 🛡️) are replaced with inline SVG vector icons styled uniformly in default blue (`color: var(--accent-blue); stroke: var(--accent-blue);`).
+    - **Clean Message Burn Button**: Circular radial-gradient background and glowing red box shadow are removed from `.btn-message-burn` (`background: transparent; box-shadow: none;`), rendering only the SVG flame icon against the bubble background color, shifting to `#fca5a5` with `scale(1.1)` on hover.
+    - **Immediate Connection Failure Recovery**: Zero 15–30s delay on dead-drop failure; `joinRoomFromHash` immediately closes the engine (`engine.close()`), displays `"Failed to establish connection"`, unhides `#header-leave-btn`, and immediately shows `#create-room-bar` in Stage 1 Plus mode.
+    - **Display Timestamp Removal Across All Messages**: Timestamps are completely removed from display across all system messages (`.system-timestamp`) and chat message bubbles (`.message-timestamp`) in both HTML and Rust WASM UI client.
+    - **"Joined chat" Message Integrity**: `"Joined chat"` is emitted strictly once upon joiner initial connection (`isJoining === true`), immediately toggling `isJoining = false`. Hosts never emit `"Joined chat"`. Subsequent connections emit `"Peer joined chat"` with duplicate suppression via `announcedJoinPeers`.
 
 ---
 
@@ -266,7 +277,8 @@ Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
     * Test 14: Zero input placeholder, staggered temporary notices, single ellipsis & slashed person icon (REQ-034.1 - REQ-034.4)
     * Test 15: Enhanced Burn Behavior - 90s TTL, 70s aging fade, per-message flame button, distributed BurnMessage signaling, quiet room invariant, and reset restoration (REQ-035.1 - REQ-035.5)
     * Test 16: Limbo State Recovery - in-room plus button, two-stage copy morphing, staggered notices, 95s TTL immunity, peer reconnection, and zero whitespace ticking dots (REQ-036.1 - REQ-036.7)
+    * Test 17: UI Architecture Refinement - Rules 1-4, minimalist badges, brand icon glyph, clean burn icon, blue vector splash icons, zero-delay failure recovery, timestamp removal, and joiner message integrity (REQ-037.1 - REQ-037.9)
 
-Total: 123 Rust tests + 16 Browser tests passed, 0 failed.
+Total: 123 Rust tests + 17 Browser tests passed, 0 failed.
 ```
 

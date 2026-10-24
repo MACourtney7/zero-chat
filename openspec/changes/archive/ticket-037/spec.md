@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-037"
 title: "UI Architecture Refinement: Unified Header & Footer State Rules, Minimalist Top-Bar Badges, Clean Burn Icon, Timestamp Removal, and Joiner Message Integrity"
-state: "IN_PROGRESS"
+state: "COMPLETED"
 created_at: "2026-10-24T20:30:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-037/main"
