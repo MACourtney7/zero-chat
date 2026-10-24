@@ -1106,10 +1106,18 @@ html, body {
 }
 
 .feature-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-cyan);
   font-size: 1.25rem;
   line-height: 1;
   padding-top: 2px;
   flex-shrink: 0;
+}
+.feature-icon svg {
+  display: block;
+  stroke: var(--accent-cyan);
 }
 
 .feature-content {
