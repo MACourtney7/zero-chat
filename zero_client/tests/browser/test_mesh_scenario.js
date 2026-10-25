@@ -2112,6 +2112,13 @@ async function runTests() {
             }
         }
 
+        // 3. Verify Favicon Badge has rounded circular outer border
+        const htmlContent = readIndexHtml();
+        if (htmlContent) {
+            assert(htmlContent.includes('<link rel="icon"') && (htmlContent.includes("circle cx='16' cy='16'") || htmlContent.includes("rx='15'")),
+                "Favicon badge in index.html must have rounded outer border");
+        }
+
         print("  PASS: Mobile Browser Web Share API & Dynamic Share Icon Integration verified cleanly.");
     }
 
