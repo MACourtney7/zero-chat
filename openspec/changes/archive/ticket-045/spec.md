@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-045"
 title: "Unified Mobile & Desktop Connectivity Resilience: Per-Peer Roles, Background Disconnect Grace Period & Smart ICE Gathering"
-state: "IN_PROGRESS"
+state: "COMPLETED"
 created_at: "2026-10-25T20:10:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-045/main"

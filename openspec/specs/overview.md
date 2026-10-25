@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.18.0"
+version: "1.19.0"
 milestone: "ephemeral-ui-modernization"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-25T18:10:00Z"
+updated_at: "2026-10-25T20:45:00Z"
 ---
 ```
 
@@ -114,6 +114,10 @@ updated_at: "2026-10-25T18:10:00Z"
     - **Burn Icon Optical Balance**: `.btn-message-burn` defines `top: -2px;`, elevating the bottom-heavy teardrop flame icon to align its visual center of mass with the left sender identity dot (`.peer-dot` / `.self-dot`).
     - **Vertical Space Reclamation**: Eliminates ~50–60px of dead space at the top and bottom of the viewport by tightening `.chat-layout` (`padding: 0 16px; gap: 6px;`), `.chat-header` (`padding: 4px 4px; padding-top: calc(8px + env(safe-area-inset-top, 0px));`), `.messages-container` (`padding: 4px 6px;`), `.chat-footer` (`padding: 4px 0;`), and `.message-form` / `.create-room-bar` (`padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));`).
     - **Full-Width Action Button Pill Modernization**: `#btn-create-room` and `.btn-action-full` transition from an outdated 8px opaque rectangle to a sleek glassmorphic pill (`border-radius: 9999px; height: 44px; padding: 0 24px;`) with translucent emerald glass styling, soft glow, and `backdrop-filter: blur(16px)`, harmonizing with `#send-button`, `#input-add-peer-btn`, and `#destroy-session-button`.
+21. **Unified Mobile & Desktop Connectivity Resilience, Per-Peer Roles, Background Disconnect Grace Period & Smart ICE Gathering**:
+    - **Deterministic Per-Peer Role Tracking & System Notice Invariant**: `peerRoles = new Map()` maps remote peer IDs to `"inviter" | "joiner" | "mesh"`. System notice `"Joined chat"` emits strictly when the local client is a joiner entering the room for the first time (`role === "joiner" && !hasAnnouncedInitialSelfJoin`); all subsequent peer connections emit `"Peer joined chat"` without repetition or role reversal. Guarded initial signaling: mesh reconciliation and incoming offer glare handling skip any `peerId` currently awaiting initial dead-drop response (`activeHostSignaling` / `activeInviteSignaling`).
+    - **Transient Background Freeze Grace Period & Self-Healing `departedPeers`**: Unannounced channel closures (`closed` / `disconnected`) wait for a 12-second grace period (`pendingDisconnectTimers`, extended to 20s if tab is hidden) before executing departure teardown. Tab returns (`visibilitychange` to `"visible"`) extend pending disconnect timers to `visible + 8s` and kick off non-destructive mesh reconciliation. Reconnection within the grace window cancels the timer, self-heals `departedPeers.delete(peerId)`, preserves existing message bubbles, updates `#peer-count`, and suppresses duplicate join notices. Explicit `PeerLeftAndBurn` signals immediately bypass the grace period, purging messages and emitting `"Peer left chat"` with zero delay.
+    - **Smart Non-Trickle ICE Gathering & Multi-Port STUN / TURN Configuration**: In `_waitForIceGatheringComplete(pc)`, candidate strings are inspected for `"typ srflx"` and `"typ relay"`. Detection of public/relay candidates starts an adaptive 400ms settle timer, resolving immediately to minimize invite creation latency while maintaining non-trickle candidate completeness. Includes a 5000ms fallback ceiling if public candidates are delayed. Default STUN endpoints span Google and Cloudflare across ports 19302 and 3478, and merges dynamic `window.ZERO_TURN_SERVERS` for symmetric cellular NAT / CGNAT relay fallback.
 
 ---
 
@@ -328,7 +332,8 @@ Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
     * Test 17: UI Architecture Refinement - Rules 1-4, minimalist badges, brand icon glyph, clean burn icon, blue vector splash icons, zero-delay failure recovery, timestamp removal, and joiner message integrity (REQ-037.1 - REQ-037.9)
     * Test 19: UI Architecture Refinements - Transparent Panels, Relocated Burn Button & Rounded Controls (ticket-042)
     * Test 20: Mobile Browser Web Share API, Desktop Share Bypass, Clean Share URL, Burn Offset & Compacted Layout (ticket-043, ticket-044)
+    * Test 21: Unified Connectivity Resilience - Per-Peer Roles, Grace Window & Smart ICE (REQ-045.1 - REQ-045.4)
 
-Total: 123 Rust tests + 20 Browser tests passed, 0 failed.
+Total: 125 Rust tests + 21 Browser tests passed, 0 failed.
 ```
 
