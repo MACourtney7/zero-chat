@@ -1623,6 +1623,10 @@ async function runTests() {
                 cssContent.includes(".keyboard-open") && cssContent.includes("padding-bottom: 8px;"),
                 "style.css: .keyboard-open must define padding-bottom: 8px"
             );
+            assert(
+                cssContent.includes(".message-bubble") && cssContent.includes("flex-shrink: 0;"),
+                "style.css: .message-bubble must define flex-shrink: 0;"
+            );
         }
 
         // 2. Visual Viewport Synchronization & Keyboard Adaptation
@@ -1682,7 +1686,7 @@ async function runTests() {
                 if (dropAttempts === 1) {
                     setTimeout(() => {
                         const transientEl = feed.querySelector(".transient-status");
-                        if (transientEl && (transientEl.textContent.includes("Waiting for host...") || transientEl.innerHTML.includes("Waiting for host..."))) {
+                        if (transientEl && (transientEl.textContent.includes("Waiting for host") || transientEl.innerHTML.includes("Waiting for host"))) {
                             observedTransientStatus = true;
                         }
                         if (typeof advanceTimersByTime === "function") {
@@ -1712,8 +1716,21 @@ async function runTests() {
         assert(dropAttempts >= 2,
             `Joiner must retry dead-drop after 404 response, made ${dropAttempts} attempts`);
         assert(observedTransientStatus === true,
-            "Joiner must display 'Waiting for host...' transient status during retry loop");
+            "Joiner must display 'Waiting for host' transient status during retry loop");
         rootGlobal.fetch = origFetch;
+
+        // Ellipsis de-duplication assertion: showTransientStatus strips trailing literal dots
+        showTransientStatus("Waiting for host...");
+        const transientEl = feed.querySelector(".transient-status");
+        assert(transientEl !== null, "showTransientStatus must render .transient-status element in feed");
+        const transientTextEl = transientEl.querySelector(".transient-text");
+        assert(transientTextEl !== null, ".transient-status must contain .transient-text element");
+        assert(transientTextEl.textContent === "Waiting for host",
+            `.transient-text textContent must strictly be 'Waiting for host' without trailing literal dots, got '${transientTextEl.textContent}'`);
+        const tickingDotsEls = transientEl.querySelectorAll(".ticking-dots");
+        assert(tickingDotsEls.length === 1,
+            `Must contain exactly single .ticking-dots element, got ${tickingDotsEls.length}`);
+        clearTransientStatus();
 
         // Host WebSocket Reconnect on visibilitychange
         resetToHome();
@@ -1833,6 +1850,14 @@ async function runTests() {
         assert(msgInputBlocks.some(b => b.includes("border-radius: 9999px")),
             "#message-input must define border-radius: 9999px");
 
+        // Verify .message-form / .input-dock styling
+        const messageFormBlocks = getRulesForSelector(".message-form");
+        assert(messageFormBlocks.length > 0, ".message-form CSS rule must exist");
+        assert(messageFormBlocks.some(b => b.includes("overflow: visible")),
+            ".message-form must define overflow: visible");
+        assert(messageFormBlocks.some(b => b.includes("padding-top: 4px")),
+            ".message-form must define padding-top: 4px");
+
         // Verify #destroy-session-button / .btn-header-burn styling
         const burnBtnBlocks = getRulesForSelector("#destroy-session-button");
         assert(burnBtnBlocks.length > 0, "#destroy-session-button or .btn-header-burn CSS rule must exist");
@@ -1840,10 +1865,14 @@ async function runTests() {
             "#destroy-session-button must define border-radius: 9999px");
         assert(burnBtnBlocks.some(b => b.includes("min-width: 80px")),
             "#destroy-session-button must define min-width: 80px");
-        assert(burnBtnBlocks.some(b => b.includes("height: 28px")),
-            "#destroy-session-button must define height: 28px");
-        assert(burnBtnBlocks.some(b => b.includes("background: rgba(239, 68, 68, 0.12)")),
-            "#destroy-session-button must define background: rgba(239, 68, 68, 0.12)");
+        assert(burnBtnBlocks.some(b => b.includes("height: 26px")),
+            "#destroy-session-button must define height: 26px");
+        assert(burnBtnBlocks.some(b => b.includes("background: rgba(244, 63, 94, 0.12)")),
+            "#destroy-session-button must define background: rgba(244, 63, 94, 0.12)");
+        assert(burnBtnBlocks.some(b => b.includes("border: 1px solid rgba(244, 63, 94, 0.32)")),
+            "#destroy-session-button must define border: 1px solid rgba(244, 63, 94, 0.32)");
+        assert(burnBtnBlocks.some(b => b.includes("color: #fda4af")),
+            "#destroy-session-button must define color: #fda4af");
 
         // Verify rounded bottom controls (#input-add-peer-btn and #send-button)
         const sendBtnBlocks = getRulesForSelector("#send-button");
@@ -1892,12 +1921,19 @@ async function runTests() {
             document.getElementById("brand-text");
         assert(brandText !== null, ".brand-text element must exist");
 
+        const leave = (typeof headerLeaveBtn !== "undefined" && headerLeaveBtn) ||
+            document.getElementById("header-leave-btn") ||
+            document.querySelector("#header-leave-btn");
+        assert(leave !== null, "#header-leave-btn must exist in the DOM");
+
         // Initial Home state
         resetToHome();
         assert(brandText.classList.contains("hidden") === false,
             "Initial Home state: .brand-text must be visible (!classList.contains('hidden'))");
         assert(burn.classList.contains("hidden") === true,
             "Initial Home state: #destroy-session-button must be hidden (classList.contains('hidden'))");
+        assert(leave.classList.contains("hidden") === true,
+            "Initial Home state: #header-leave-btn must be hidden (classList.contains('hidden'))");
 
         // Limbo room state (isInRoomSession = true, 0 peers)
         setIsInRoomSession(true);
@@ -1907,8 +1943,10 @@ async function runTests() {
         updatePeerCountDisplay();
         assert(brandText.classList.contains("hidden") === true,
             "Limbo room state: .brand-text must be hidden with 0 peers in session");
-        assert(burn.classList.contains("hidden") === true,
-            "Limbo room state: #destroy-session-button must be hidden with 0 peers");
+        assert(!leave.classList.contains("hidden"),
+            "Limbo room state: #header-leave-btn must remain visible (!classList.contains('hidden'))");
+        assert(!burn.classList.contains("hidden"),
+            "Limbo room state: #destroy-session-button must remain visible with 0 peers (!classList.contains('hidden'))");
 
         // Active chat state (openPeerCount = 2)
         const activeEngine = { openPeerCount: 2, close: () => {} };
@@ -1917,6 +1955,8 @@ async function runTests() {
         updatePeerCountDisplay();
         assert(brandText.classList.contains("hidden") === true,
             "Active chat state: .brand-text must remain hidden");
+        assert(!leave.classList.contains("hidden"),
+            "Active chat state: #header-leave-btn must remain visible");
         assert(burn.classList.contains("hidden") === false,
             "Active chat state: #destroy-session-button must be visible (>0 peers)");
 
@@ -1925,8 +1965,10 @@ async function runTests() {
         updatePeerCountDisplay();
         assert(brandText.classList.contains("hidden") === true,
             "Departure to Limbo: .brand-text must remain hidden while in session");
-        assert(burn.classList.contains("hidden") === true,
-            "Departure to Limbo: #destroy-session-button must be hidden when peer count drops to 0");
+        assert(!leave.classList.contains("hidden"),
+            "Departure to Limbo: #header-leave-btn must remain visible");
+        assert(!burn.classList.contains("hidden"),
+            "Departure to Limbo: #destroy-session-button must remain visible when peer count drops to 0");
 
         // Reset to Home
         resetToHome();
@@ -1934,8 +1976,150 @@ async function runTests() {
             "Reset to Home: .brand-text must be restored to visible");
         assert(burn.classList.contains("hidden") === true,
             "Reset to Home: #destroy-session-button must be hidden");
+        assert(leave.classList.contains("hidden") === true,
+            "Reset to Home: #header-leave-btn must be hidden");
 
         print("  PASS: UI Architecture Refinements: Transparent Panels, Relocated Burn Button & Rounded Controls verified cleanly.");
+    }
+
+    // --- Test 20: Mobile Browser Web Share API & Dynamic Share Icon Integration ---
+    print("\n--- Test 20: Mobile Browser Web Share API & Dynamic Share Icon Integration ---");
+    {
+        const origShare = navigator.share;
+
+        try {
+            // =====================================================================
+            // Case A: Web Share API Supported (navigator.share function present)
+            // =====================================================================
+            const shareInvocations = [];
+            navigator.share = async function(data) {
+                shareInvocations.push(data);
+            };
+
+            resetToHome();
+            setLocalPeerId("peer-share-test-host");
+
+            // 1. Initial click on #btn-create-room in Home View
+            await btnCreateRoom.click();
+
+            assert(shareInvocations.length === 1,
+                `Case A: navigator.share must be called once on initial room creation, got ${shareInvocations.length}`);
+            assert(shareInvocations[0].title === "zero-chat",
+                `Case A: navigator.share title must be 'zero-chat', got '${shareInvocations[0].title}'`);
+            assert(shareInvocations[0].text === "Join my encrypted zero-chat session:",
+                `Case A: navigator.share text must be 'Join my encrypted zero-chat session:', got '${shareInvocations[0].text}'`);
+            assert(typeof shareInvocations[0].url === "string" && shareInvocations[0].url.includes("#payload="),
+                `Case A: navigator.share url must contain '#payload=', got '${shareInvocations[0].url}'`);
+
+            assert(btnCreateRoom.classList.contains("btn-waiting"),
+                "Case A: #btn-create-room must have class 'btn-waiting' in Stage 2");
+            assert(btnCreateRoom.getAttribute("aria-label") === "Share invite link",
+                `Case A: #btn-create-room aria-label must be 'Share invite link', got '${btnCreateRoom.getAttribute("aria-label")}'`);
+            assert(btnCreateRoom.innerHTML.includes('<circle cx="18" cy="5"') || btnCreateRoom.innerHTML.includes(window.SHARE_ICON_SVG),
+                "Case A: #btn-create-room must display SHARE_ICON_SVG");
+
+            let tempNotices = feed.querySelectorAll(".system-temporary");
+            assert(tempNotices.length > 0,
+                "Case A: Temporary notices must be appended on room creation");
+            assert(tempNotices[0].textContent.includes("Invite link ready to share"),
+                `Case A: Notice must display 'Invite link ready to share', got: '${tempNotices[0].textContent}'`);
+
+            // 2. Click #btn-create-room again while in Stage 2 (waiting for peer)
+            await btnCreateRoom.click();
+
+            assert(shareInvocations.length === 2,
+                `Case A: navigator.share must be called again on subsequent click in Stage 2, got ${shareInvocations.length}`);
+            assert(shareInvocations[1].url === shareInvocations[0].url,
+                "Case A: Subsequent click must share the same invite URL");
+            assert(btnCreateRoom.classList.contains("btn-waiting"),
+                "Case A: #btn-create-room must remain in 'btn-waiting' state");
+            assert(btnCreateRoom.getAttribute("aria-label") === "Share invite link",
+                "Case A: #btn-create-room must maintain aria-label='Share invite link'");
+            assert(btnCreateRoom.innerHTML.includes('<circle cx="18" cy="5"'),
+                "Case A: #btn-create-room must maintain SHARE_ICON_SVG");
+
+            // 3. In an active chat session with peers, click #input-add-peer-btn
+            assert(engine !== null, "engine must be active for chat session");
+            engine.peers.set("peer-share-remote-1", { state: "open", dc: { readyState: "open" } });
+            updatePeerCountDisplay();
+
+            assert(!inputAddPeerBtn.classList.contains("hidden"),
+                "Case A: #input-add-peer-btn must be visible in active chat session");
+
+            await inputAddPeerBtn.click();
+
+            assert(shareInvocations.length === 3,
+                `Case A: navigator.share must be called when clicking #input-add-peer-btn, got ${shareInvocations.length}`);
+            assert(shareInvocations[2].title === "zero-chat",
+                `Case A: #input-add-peer-btn share title must be 'zero-chat', got '${shareInvocations[2].title}'`);
+            assert(shareInvocations[2].text === "Join my encrypted zero-chat session:",
+                "Case A: #input-add-peer-btn share text must match");
+            assert(typeof shareInvocations[2].url === "string" && shareInvocations[2].url.includes("#payload="),
+                "Case A: #input-add-peer-btn share url must contain '#payload='");
+
+            assert(inputAddPeerBtn.classList.contains("btn-waiting"),
+                "Case A: #input-add-peer-btn must have class 'btn-waiting' in Stage 2");
+            assert(inputAddPeerBtn.getAttribute("aria-label") === "Share invite link",
+                `Case A: #input-add-peer-btn aria-label must be 'Share invite link', got '${inputAddPeerBtn.getAttribute("aria-label")}'`);
+            assert(inputAddPeerBtn.innerHTML.includes('<circle cx="18" cy="5"') || inputAddPeerBtn.innerHTML.includes(window.SHARE_ICON_SVG),
+                "Case A: #input-add-peer-btn must display SHARE_ICON_SVG");
+
+            // =====================================================================
+            // Case B: Web Share API Not Supported (Fallback)
+            // =====================================================================
+            delete navigator.share;
+
+            resetToHome();
+            setLocalPeerId("peer-fallback-host");
+
+            // 1. Click #btn-create-room on Home View
+            await btnCreateRoom.click();
+
+            assert(btnCreateRoom.classList.contains("btn-waiting"),
+                "Case B: #btn-create-room must have class 'btn-waiting' in Stage 2 fallback");
+            assert(btnCreateRoom.getAttribute("aria-label") === "Copy invite link",
+                `Case B: #btn-create-room aria-label must be 'Copy invite link', got '${btnCreateRoom.getAttribute("aria-label")}'`);
+            assert(btnCreateRoom.innerHTML.includes("<rect") || btnCreateRoom.innerHTML.includes(window.COPY_ICON_SVG),
+                "Case B: #btn-create-room must display COPY_ICON_SVG");
+            assert(!btnCreateRoom.innerHTML.includes('<circle cx="18" cy="5"'),
+                "Case B: #btn-create-room must NOT display SHARE_ICON_SVG");
+
+            // 2. Active chat session: click #input-add-peer-btn
+            assert(engine !== null, "Case B: engine must be active");
+            engine.peers.set("peer-fallback-remote-1", { state: "open", dc: { readyState: "open" } });
+            updatePeerCountDisplay();
+
+            assert(!inputAddPeerBtn.classList.contains("hidden"),
+                "Case B: #input-add-peer-btn must be visible in active chat session");
+
+            await inputAddPeerBtn.click();
+
+            assert(inputAddPeerBtn.classList.contains("btn-waiting"),
+                "Case B: #input-add-peer-btn must have class 'btn-waiting' in Stage 2 fallback");
+            assert(inputAddPeerBtn.getAttribute("aria-label") === "Copy invite link",
+                `Case B: #input-add-peer-btn aria-label must be 'Copy invite link', got '${inputAddPeerBtn.getAttribute("aria-label")}'`);
+            assert(inputAddPeerBtn.innerHTML.includes("<rect") || inputAddPeerBtn.innerHTML.includes(window.COPY_ICON_SVG),
+                "Case B: #input-add-peer-btn must display COPY_ICON_SVG");
+            assert(!inputAddPeerBtn.innerHTML.includes('<circle cx="18" cy="5"'),
+                "Case B: #input-add-peer-btn must NOT display SHARE_ICON_SVG");
+
+            resetToHome();
+        } finally {
+            if (origShare !== undefined) {
+                navigator.share = origShare;
+            } else {
+                delete navigator.share;
+            }
+        }
+
+        // 3. Verify Favicon Badge has rounded circular outer border
+        const htmlContent = readIndexHtml();
+        if (htmlContent) {
+            assert(htmlContent.includes('<link rel="icon"') && (htmlContent.includes("circle cx='16' cy='16'") || htmlContent.includes("rx='15'")),
+                "Favicon badge in index.html must have rounded outer border");
+        }
+
+        print("  PASS: Mobile Browser Web Share API & Dynamic Share Icon Integration verified cleanly.");
     }
 
     print("\n===============================================================================");
