@@ -520,9 +520,9 @@ html, body {
 }
 
 .btn-action-peer.btn-waiting {
-  background: rgba(245, 158, 11, 0.15);
-  border-color: rgba(245, 158, 11, 0.4);
-  color: #fbbf24;
+  background: rgba(56, 189, 248, 0.28);
+  border-color: rgba(56, 189, 248, 0.65);
+  color: #38bdf8;
 }
 
 .btn-action-peer:disabled {

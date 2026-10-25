@@ -263,6 +263,8 @@
         let createRoomFeedbackTimer = null;
         let headerAddFeedbackTimer = null;
         let headerAddFeedbackEl = null;
+        let inChatInviteFeedbackTimer = null;
+        let inChatInviteFeedbackEl = null;
         const announcedJoinPeers = new Set();
         const departedPeers = new Set();
         const activeSessionPeers = new Set();
@@ -273,12 +275,16 @@
         const TIE_BREAKER_GRACE_MS = 4000;
         const MAX_HANDSHAKE_RETRIES = 5;
 
-        function setInputAddPeerBtnStage1() {
+        function resetInputAddPeerButton() {
             if (inputAddPeerBtn) {
                 inputAddPeerBtn.classList.remove("btn-waiting");
                 inputAddPeerBtn.innerHTML = ADD_PEER_ICON_SVG;
                 inputAddPeerBtn.setAttribute("aria-label", "Add peer");
             }
+        }
+
+        function setInputAddPeerBtnStage1() {
+            resetInputAddPeerButton();
         }
 
         function setInputAddPeerBtnStage2() {
@@ -287,6 +293,18 @@
                 inputAddPeerBtn.innerHTML = COPY_ICON_SVG;
                 inputAddPeerBtn.setAttribute("aria-label", "Copy invite link");
             }
+        }
+
+        function clearInChatInviteFeedback() {
+            if (inChatInviteFeedbackTimer) {
+                clearTimeout(inChatInviteFeedbackTimer);
+                inChatInviteFeedbackTimer = null;
+            }
+            if (inChatInviteFeedbackEl && inChatInviteFeedbackEl.parentNode) {
+                inChatInviteFeedbackEl.remove();
+            }
+            inChatInviteFeedbackEl = null;
+            resetInputAddPeerButton();
         }
 
         function updatePeerCountDisplay() {
@@ -1187,6 +1205,11 @@
                 headerAddFeedbackTimer = null;
             }
             headerAddFeedbackEl = null;
+            if (inChatInviteFeedbackTimer) {
+                clearTimeout(inChatInviteFeedbackTimer);
+                inChatInviteFeedbackTimer = null;
+            }
+            inChatInviteFeedbackEl = null;
             const temps = feed.querySelectorAll(".system-temporary");
             temps.forEach((el) => {
                 if (el._agingTimer) {
@@ -1274,6 +1297,41 @@
             }, 5000);
         }
 
+        function triggerInChatInviteFeedback() {
+            if (inChatInviteFeedbackTimer) {
+                clearTimeout(inChatInviteFeedbackTimer);
+                inChatInviteFeedbackTimer = null;
+            }
+
+            if (inChatInviteFeedbackEl && inChatInviteFeedbackEl.parentNode === feed) {
+                inChatInviteFeedbackEl.classList.remove("notice-pulse");
+                void inChatInviteFeedbackEl.offsetWidth;
+                inChatInviteFeedbackEl.classList.add("notice-pulse");
+            } else {
+                clearTransientStatus();
+                hideWelcomeSplash();
+                inChatInviteFeedbackEl = document.createElement("div");
+                inChatInviteFeedbackEl.className = "system-message system-temporary in-chat-invite-notice notice-pulse";
+
+                const textSpan = document.createElement("span");
+                textSpan.className = "system-text";
+                textSpan.textContent = "Invite link copied to clipboard";
+                inChatInviteFeedbackEl.appendChild(textSpan);
+
+                feed.appendChild(inChatInviteFeedbackEl);
+                feed.scrollTop = feed.scrollHeight;
+            }
+
+            inChatInviteFeedbackTimer = setTimeout(() => {
+                if (inChatInviteFeedbackEl && inChatInviteFeedbackEl.parentNode) {
+                    inChatInviteFeedbackEl.remove();
+                }
+                inChatInviteFeedbackEl = null;
+                inChatInviteFeedbackTimer = null;
+                resetInputAddPeerButton();
+            }, 5000);
+        }
+
         function appendSystemMessage(text) {
             clearTemporarySystemMessages();
             clearTransientStatus();
@@ -1317,7 +1375,7 @@
                 } catch (_) {}
                 pendingInviteWs = null;
             }
-            setInputAddPeerBtnStage1();
+            clearInChatInviteFeedback();
         }
 
         async function handleInRoomInvite(targetButton = null) {
@@ -1333,12 +1391,14 @@
                 }
                 if (targetButton === btnCreateRoom) {
                     setCreateRoomStage2();
+                    triggerCreateRoomNotices();
                 } else if (targetButton === inputAddPeerBtn) {
                     setInputAddPeerBtnStage2();
+                    triggerInChatInviteFeedback();
                 } else {
                     if (inputAddPeerBtn) setInputAddPeerBtnStage2();
+                    triggerInChatInviteFeedback();
                 }
-                triggerCreateRoomNotices();
                 return;
             }
 
@@ -1411,12 +1471,14 @@
 
                 if (targetButton === btnCreateRoom) {
                     setCreateRoomStage2();
+                    triggerCreateRoomNotices();
                 } else if (targetButton === inputAddPeerBtn) {
                     setInputAddPeerBtnStage2();
+                    triggerInChatInviteFeedback();
                 } else {
                     if (inputAddPeerBtn) setInputAddPeerBtnStage2();
+                    triggerInChatInviteFeedback();
                 }
-                triggerCreateRoomNotices();
             } catch (err) {
                 console.error("Failed to create pending invite:", err);
                 clearPendingInvite();
@@ -2569,6 +2631,7 @@
                 headerAddFeedbackTimer = null;
             }
             headerAddFeedbackEl = null;
+            clearInChatInviteFeedback();
             clearPendingInvite();
             peerColorMap.clear();
             seenMessageIds.clear();
@@ -2739,6 +2802,11 @@
         window.resetToHome = resetToHome;
         window.getHeaderAddFeedbackTimer = () => headerAddFeedbackTimer;
         window.getHeaderAddFeedbackEl = () => headerAddFeedbackEl;
+        window.resetInputAddPeerButton = resetInputAddPeerButton;
+        window.clearInChatInviteFeedback = clearInChatInviteFeedback;
+        window.triggerInChatInviteFeedback = triggerInChatInviteFeedback;
+        window.getInChatInviteFeedbackTimer = () => inChatInviteFeedbackTimer;
+        window.getInChatInviteFeedbackEl = () => inChatInviteFeedbackEl;
         window.setHasActiveSession = (v) => { hasActiveSession = v; };
         window.isInRoomSession = () => isInRoomSession;
         window.setIsInRoomSession = (v) => { isInRoomSession = v; updatePeerCountDisplay(); };

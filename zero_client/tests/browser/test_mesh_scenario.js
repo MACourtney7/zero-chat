@@ -920,22 +920,69 @@ async function runTests() {
         // Verify draft text is preserved
         assert(msgInput.value === "Draft unsent text", "Draft text in msgInput must be preserved");
 
-        // Verify temporary notices emitted in feed
+        // Verify CSS styling of .btn-action-peer.btn-waiting has no orange/amber rules (REQ-040.1)
+        function readCssFile() {
+            if (typeof read === "function") {
+                return read("zero_client/style.css");
+            } else if (typeof require !== "undefined") {
+                const fs = require("fs");
+                return fs.readFileSync("zero_client/style.css", "utf8");
+            }
+            return "";
+        }
+        const cssContent = readCssFile();
+        if (cssContent) {
+            const btnPeerWaitingMatch = cssContent.match(/\.btn-action-peer\.btn-waiting\s*\{([^}]+)\}/);
+            assert(btnPeerWaitingMatch !== null, ".btn-action-peer.btn-waiting CSS rule must exist");
+            const ruleBody = btnPeerWaitingMatch[1];
+            assert(!ruleBody.includes("#fbbf24") && !ruleBody.includes("245, 158, 11"),
+                ".btn-action-peer.btn-waiting must not contain amber/orange color definitions");
+            assert(ruleBody.includes("#38bdf8") && ruleBody.includes("56, 189, 248"),
+                ".btn-action-peer.btn-waiting must use blue/cyan styling (#38bdf8 / rgba(56, 189, 248, ...))");
+        }
+
+        // Verify temporary notice emitted in feed (REQ-040.2)
         let inputNotices = feed.querySelectorAll(".system-temporary");
-        assert(inputNotices.length === 1, "Immediate notice 1 must be present");
+        assert(inputNotices.length === 1, `Immediate notice 1 must be present, found ${inputNotices.length}`);
         assert(inputNotices[0].querySelector(".system-text").textContent === "Invite link copied to clipboard",
             "Notice 1 must be 'Invite link copied to clipboard'");
+        assert(inputNotices[0].classList.contains("in-chat-invite-notice"), "Notice must have in-chat-invite-notice class");
 
-        await delay(500);
+        // Verify "Waiting for peer..." is NEVER emitted in active chat
+        advanceTimersByTime(500);
+        await delay(50);
         inputNotices = feed.querySelectorAll(".system-temporary");
-        assert(inputNotices.length === 2, "Staggered notice 2 ('Waiting for peer') must be present after 500ms");
-        assert(inputNotices[1].querySelector(".system-text").textContent === "Waiting for peer",
-            "Notice 2 text must be 'Waiting for peer'");
+        assert(inputNotices.length === 1, "Only exactly 1 temporary notice must remain; 'Waiting for peer' must never be emitted");
+        const waitingForPeerFound = Array.from(inputNotices).some(el => el.textContent.includes("Waiting for peer"));
+        assert(!waitingForPeerFound, "'Waiting for peer' notice must not exist in active chat feed");
 
-        // Re-clicking preserves draft and restarts notices
+        // Re-clicking within 5000ms re-copies URL, preserves draft, restarts 5000ms timer (REQ-040.3)
         await handleInputAddPeerClick();
         assert(msgInput.value === "Draft unsent text", "Re-click must preserve draft text");
         assert(inputAddPeerBtn.classList.contains("btn-waiting") === true, "Re-click must keep .btn-waiting");
+        inputNotices = feed.querySelectorAll(".system-temporary");
+        assert(inputNotices.length === 1, "Re-click must not duplicate notice");
+
+        // Advance timers by 4900ms (within 5000ms from re-click): notice and button waiting remain
+        advanceTimersByTime(4900);
+        await delay(50);
+        assert(feed.querySelectorAll(".system-temporary").length === 1, "Notice must still be visible before 5000ms expires");
+        assert(inputAddPeerBtn.classList.contains("btn-waiting") === true, "Button must still have .btn-waiting before 5000ms expires");
+
+        // Advance 200ms more (5100ms total): notice auto-dismisses and button reverts to Stage 1 (REQ-040.3)
+        advanceTimersByTime(200);
+        await delay(50);
+        assert(feed.querySelectorAll(".system-temporary").length === 0, "Notice must auto-dismiss after 5000ms");
+        assert(!inputAddPeerBtn.classList.contains("btn-waiting"), "Button must revert to Stage 1 (no .btn-waiting)");
+        assert(inputAddPeerBtn.getAttribute("aria-label") === "Add peer", "Button must revert aria-label to 'Add peer'");
+        assert(inputAddPeerBtn.innerHTML.includes("line x1=\"19\"") || inputAddPeerBtn.innerHTML.includes("circle cx=\"9\""),
+            "Button must revert to user-plus SVG");
+
+        // Clicking again re-morphs to Stage 2 and re-emits notice
+        await handleInputAddPeerClick();
+        assert(inputAddPeerBtn.classList.contains("btn-waiting") === true, "Clicking after reversion morphs to Stage 2");
+        assert(inputAddPeerBtn.getAttribute("aria-label") === "Copy invite link", "Button must have aria-label 'Copy invite link'");
+        assert(feed.querySelectorAll(".system-temporary").length === 1, "Temporary notice emitted again");
 
         // 6. Reset to Home restores Stage 1
         resetToHome();
