@@ -210,6 +210,14 @@
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
             </svg>`.trim();
+        const SHARE_ICON_SVG = `
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="18" cy="5" r="3"></circle>
+                <circle cx="6" cy="12" r="3"></circle>
+                <circle cx="18" cy="19" r="3"></circle>
+                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+                <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+            </svg>`.trim();
         const ADD_PEER_ICON_SVG = `
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
@@ -327,9 +335,10 @@
 
         function setInputAddPeerBtnStage2() {
             if (inputAddPeerBtn) {
+                const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
                 inputAddPeerBtn.classList.add("btn-waiting");
-                inputAddPeerBtn.innerHTML = COPY_ICON_SVG;
-                inputAddPeerBtn.setAttribute("aria-label", "Copy invite link");
+                inputAddPeerBtn.innerHTML = canShare ? SHARE_ICON_SVG : COPY_ICON_SVG;
+                inputAddPeerBtn.setAttribute("aria-label", canShare ? "Share invite link" : "Copy invite link");
             }
         }
 
@@ -448,10 +457,11 @@
                 createRoomFeedbackTimer = null;
             }
             if (btnCreateRoom) {
+                const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
                 btnCreateRoom.disabled = false;
                 btnCreateRoom.className = "btn-action btn-action-full btn-waiting";
-                btnCreateRoom.setAttribute("aria-label", "Copy invite link");
-                btnCreateRoom.innerHTML = COPY_ICON_SVG;
+                btnCreateRoom.setAttribute("aria-label", canShare ? "Share invite link" : "Copy invite link");
+                btnCreateRoom.innerHTML = canShare ? SHARE_ICON_SVG : COPY_ICON_SVG;
             }
         }
 
@@ -1279,8 +1289,9 @@
             }
             clearTemporarySystemMessages();
 
+            const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
             // Stage 1 notice immediately:
-            appendTemporarySystemMessage("Invite link copied to clipboard");
+            appendTemporarySystemMessage(canShare ? "Invite link ready to share" : "Invite link copied to clipboard");
 
             // Stage 2 notice staggered after 450ms:
             staggerNoticeTimer = setTimeout(() => {
@@ -1368,10 +1379,15 @@
                 inChatInviteFeedbackTimer = null;
             }
 
+            const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
+            const noticeText = canShare ? "Invite link ready to share" : "Invite link copied to clipboard";
+
             if (inChatInviteFeedbackEl && inChatInviteFeedbackEl.parentNode === feed) {
                 inChatInviteFeedbackEl.classList.remove("notice-pulse");
                 void inChatInviteFeedbackEl.offsetWidth;
                 inChatInviteFeedbackEl.classList.add("notice-pulse");
+                const textSpan = inChatInviteFeedbackEl.querySelector(".system-text");
+                if (textSpan) textSpan.textContent = noticeText;
             } else {
                 clearTransientStatus();
                 hideWelcomeSplash();
@@ -1380,7 +1396,7 @@
 
                 const textSpan = document.createElement("span");
                 textSpan.className = "system-text";
-                textSpan.textContent = "Invite link copied to clipboard";
+                textSpan.textContent = noticeText;
                 inChatInviteFeedbackEl.appendChild(textSpan);
 
                 feed.appendChild(inChatInviteFeedbackEl);
@@ -1618,8 +1634,29 @@
             if (!engine || isBurned) return;
 
             if (pendingInviteUrl) {
+                const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
                 let copySuccess = false;
-                if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+                if (canShare) {
+                    try {
+                        await navigator.share({
+                            title: "zero-chat",
+                            text: "Join my encrypted zero-chat session:",
+                            url: pendingInviteUrl
+                        });
+                        copySuccess = true;
+                    } catch (e) {
+                        if (e && e.name === "AbortError") {
+                            copySuccess = true;
+                        } else {
+                            console.warn("Navigator share failed:", e);
+                        }
+                    }
+                    if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+                        try {
+                            await navigator.clipboard.writeText(pendingInviteUrl);
+                        } catch (_) {}
+                    }
+                } else if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
                     try {
                         await navigator.clipboard.writeText(pendingInviteUrl);
                         copySuccess = true;
@@ -1708,27 +1745,55 @@
 
                 // Attempt to fulfill ClipboardItem promise or fall back to writeText
                 let copySuccess = false;
-                if (resolveClipboardBlob) {
+                const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
+                if (canShare) {
                     try {
-                        resolveClipboardBlob(new Blob([inviteUrl], { type: "text/plain" }));
-                    } catch (_) {}
-                }
-                if (clipboardWritePromise) {
-                    try {
-                        await clipboardWritePromise;
-                        copySuccess = true;
-                    } catch (err) {
-                        copySuccess = false;
-                    }
-                }
-
-                if (!copySuccess && navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-                    try {
-                        await navigator.clipboard.writeText(inviteUrl);
+                        await navigator.share({
+                            title: "zero-chat",
+                            text: "Join my encrypted zero-chat session:",
+                            url: inviteUrl
+                        });
                         copySuccess = true;
                     } catch (e) {
-                        console.warn("Clipboard copy failed:", e);
-                        copySuccess = false;
+                        if (e && e.name === "AbortError") {
+                            copySuccess = true;
+                        } else {
+                            console.warn("Navigator share failed:", e);
+                        }
+                    }
+                    if (resolveClipboardBlob) {
+                        try {
+                            resolveClipboardBlob(new Blob([inviteUrl], { type: "text/plain" }));
+                        } catch (_) {}
+                    }
+                    if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+                        try {
+                            await navigator.clipboard.writeText(inviteUrl);
+                        } catch (_) {}
+                    }
+                } else {
+                    if (resolveClipboardBlob) {
+                        try {
+                            resolveClipboardBlob(new Blob([inviteUrl], { type: "text/plain" }));
+                        } catch (_) {}
+                    }
+                    if (clipboardWritePromise) {
+                        try {
+                            await clipboardWritePromise;
+                            copySuccess = true;
+                        } catch (err) {
+                            copySuccess = false;
+                        }
+                    }
+
+                    if (!copySuccess && navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+                        try {
+                            await navigator.clipboard.writeText(inviteUrl);
+                            copySuccess = true;
+                        } catch (e) {
+                            console.warn("Clipboard copy failed:", e);
+                            copySuccess = false;
+                        }
                     }
                 }
 
@@ -2623,8 +2688,29 @@
             }
             if (activeHostInviteUrl) {
                 // Subsequent click while waiting for a peer: re-copy link and re-trigger temporary notices (REQ-033.2, REQ-034.2, REQ-034.3)
+                const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
                 let copySuccess = false;
-                if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+                if (canShare) {
+                    try {
+                        await navigator.share({
+                            title: "zero-chat",
+                            text: "Join my encrypted zero-chat session:",
+                            url: activeHostInviteUrl
+                        });
+                        copySuccess = true;
+                    } catch (e) {
+                        if (e && e.name === "AbortError") {
+                            copySuccess = true;
+                        } else {
+                            console.warn("Navigator share failed:", e);
+                        }
+                    }
+                    if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+                        try {
+                            await navigator.clipboard.writeText(activeHostInviteUrl);
+                        } catch (_) {}
+                    }
+                } else if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
                     try {
                         await navigator.clipboard.writeText(activeHostInviteUrl);
                         copySuccess = true;
@@ -2716,27 +2802,55 @@
 
                 // Attempt to fulfill ClipboardItem promise or fall back to writeText
                 let copySuccess = false;
-                if (resolveClipboardBlob) {
+                const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
+                if (canShare) {
                     try {
-                        resolveClipboardBlob(new Blob([inviteUrl], { type: "text/plain" }));
-                    } catch (_) {}
-                }
-                if (clipboardWritePromise) {
-                    try {
-                        await clipboardWritePromise;
-                        copySuccess = true;
-                    } catch (err) {
-                        copySuccess = false;
-                    }
-                }
-
-                if (!copySuccess && navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-                    try {
-                        await navigator.clipboard.writeText(inviteUrl);
+                        await navigator.share({
+                            title: "zero-chat",
+                            text: "Join my encrypted zero-chat session:",
+                            url: inviteUrl
+                        });
                         copySuccess = true;
                     } catch (e) {
-                        console.warn("Clipboard copy failed:", e);
-                        copySuccess = false;
+                        if (e && e.name === "AbortError") {
+                            copySuccess = true;
+                        } else {
+                            console.warn("Navigator share failed:", e);
+                        }
+                    }
+                    if (resolveClipboardBlob) {
+                        try {
+                            resolveClipboardBlob(new Blob([inviteUrl], { type: "text/plain" }));
+                        } catch (_) {}
+                    }
+                    if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+                        try {
+                            await navigator.clipboard.writeText(inviteUrl);
+                        } catch (_) {}
+                    }
+                } else {
+                    if (resolveClipboardBlob) {
+                        try {
+                            resolveClipboardBlob(new Blob([inviteUrl], { type: "text/plain" }));
+                        } catch (_) {}
+                    }
+                    if (clipboardWritePromise) {
+                        try {
+                            await clipboardWritePromise;
+                            copySuccess = true;
+                        } catch (err) {
+                            copySuccess = false;
+                        }
+                    }
+
+                    if (!copySuccess && navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+                        try {
+                            await navigator.clipboard.writeText(inviteUrl);
+                            copySuccess = true;
+                        } catch (e) {
+                            console.warn("Clipboard copy failed:", e);
+                            copySuccess = false;
+                        }
                     }
                 }
 
@@ -3180,6 +3294,8 @@
         window.setCreateRoomStage1Plus = setCreateRoomStage1Plus;
         window.setCreateRoomStage2 = setCreateRoomStage2;
         window.ADD_PEER_ICON_SVG = ADD_PEER_ICON_SVG;
+        window.SHARE_ICON_SVG = SHARE_ICON_SVG;
+        window.COPY_ICON_SVG = COPY_ICON_SVG;
         window.handleCreateRoomClick = handleCreateRoomClick;
         window.appendTemporarySystemMessage = appendTemporarySystemMessage;
         window.clearTemporarySystemMessages = clearTemporarySystemMessages;
