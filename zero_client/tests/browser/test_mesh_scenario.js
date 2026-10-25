@@ -2223,6 +2223,199 @@ async function runTests() {
         print("  PASS: Mobile Browser Web Share API & Dynamic Share Icon Integration verified cleanly.");
     }
 
+    // =========================================================================
+    // TEST 21: Unified Connectivity Resilience: Per-Peer Roles, Grace Window & Smart ICE (ticket-045)
+    // =========================================================================
+    {
+        print("\n--- Test 21: Unified Connectivity Resilience: Per-Peer Roles, Grace Window & Smart ICE (ticket-045) ---");
+
+        // --- Part A: REQ-045.1 Deterministic Per-Peer Role Tracking & System Notice Invariant ---
+        resetToHome();
+        assert(window.peerRoles.size === 0, "peerRoles must be empty on reset");
+        assert(window.announcedJoinPeers.size === 0, "announcedJoinPeers must be empty on reset");
+        assert(window.getHasAnnouncedInitialSelfJoin() === false, "hasAnnouncedInitialSelfJoin must be false on reset");
+
+        // 1. Host creates room
+        setLocalPeerId("peer-t21-host");
+        await createRoomAsHost();
+        const hostInviteUrl = getActiveHostInviteUrl();
+        assert(hostInviteUrl !== null, "Host invite URL must be generated");
+
+        const hostMatch = hostInviteUrl.match(/payload=([^&]+)/);
+        const hostPayload = JSON.parse(atob(hostMatch[1].replace(/-/g, "+").replace(/_/g, "/")));
+        const assignedJoinerId = hostPayload.assigned_peer_id;
+
+        assert(window.peerRoles.get(assignedJoinerId) === "inviter",
+            `Host must record assigned peer ${assignedJoinerId} as 'inviter', got: ${window.peerRoles.get(assignedJoinerId)}`);
+
+        // 2. In-Room invite adds another peer with role 'inviter'
+        // Simulate open channel for host
+        window.engine._attachDataChannel(assignedJoinerId, { readyState: "open", send: () => {}, close: () => {} });
+        window.engine._setPeerState(assignedJoinerId, "open");
+        const joinNotices = feed.querySelectorAll(".system-message");
+        assert(joinNotices.length === 1, `Host feed must contain 1 system notice, got ${joinNotices.length}`);
+        assert(joinNotices[0].textContent.includes("Peer joined chat"),
+            `Host feed must display 'Peer joined chat' on inviter connection, got: ${joinNotices[0].textContent}`);
+        assert(window.announcedJoinPeers.has(assignedJoinerId), "Host must record joiner in announcedJoinPeers");
+
+        // 3. Test Joiner perspective
+        resetToHome();
+        feed.innerHTML = "";
+        setLocalPeerId("peer-t21-guest");
+
+        const guestEngine = new ZeroWebRtcEngine("peer-t21-guest");
+        setEngine(guestEngine);
+        initEngineListeners();
+
+        // Joiner records host as 'joiner'
+        const hostPeerId = hostPayload.host_peer_id;
+        window.peerRoles.set(hostPeerId, "joiner");
+        assert(window.peerRoles.get(hostPeerId) === "joiner", "Joiner must record host as 'joiner'");
+
+        // Joiner channel snaps open
+        guestEngine._attachDataChannel(hostPeerId, { readyState: "open", send: () => {}, close: () => {} });
+        guestEngine._setPeerState(hostPeerId, "open");
+
+        const guestNotices = feed.querySelectorAll(".system-message");
+        assert(guestNotices.length === 1, `Joiner feed must contain 1 system notice, got ${guestNotices.length}`);
+        assert(guestNotices[0].textContent.includes("Joined chat"),
+            `Joiner feed must display 'Joined chat' (never 'Peer joined chat') on initial connection, got: ${guestNotices[0].textContent}`);
+        assert(window.getHasAnnouncedInitialSelfJoin() === true,
+            "Joiner must set hasAnnouncedInitialSelfJoin = true");
+
+        // 4. Mesh peer introduction on Joiner's side
+        const meshPeerId = "peer-t21-mesh-3";
+        const peerJoinedMsg = {
+            frame_id: "msg-mesh-join",
+            ttl: 3,
+            signal: {
+                PeerJoined: {
+                    peer_id: meshPeerId,
+                    public_key: new Array(32).fill(0)
+                }
+            }
+        };
+        // Trigger PeerJoined signal
+        window.engine.onMessageCb(JSON.stringify(peerJoinedMsg), hostPeerId);
+        assert(window.peerRoles.get(meshPeerId) === "mesh",
+            `Mesh intro must record role as 'mesh', got: ${window.peerRoles.get(meshPeerId)}`);
+
+        // When mesh peer opens, Joiner should see "Peer joined chat"
+        guestEngine._attachDataChannel(meshPeerId, { readyState: "open", send: () => {}, close: () => {} });
+        guestEngine._setPeerState(meshPeerId, "open");
+        const updatedGuestNotices = feed.querySelectorAll(".system-message");
+        assert(updatedGuestNotices.length === 2, `Joiner feed must now have 2 notices, got ${updatedGuestNotices.length}`);
+        assert(updatedGuestNotices[1].textContent.includes("Peer joined chat"),
+            `Mesh peer connection must display 'Peer joined chat', got: ${updatedGuestNotices[1].textContent}`);
+
+        // --- Part B: REQ-045.2 Transient Disconnect Grace Period & Immediate Burn Departure ---
+        // 1. Peer sends message
+        const remoteBubble = document.createElement("div");
+        remoteBubble.className = "message-bubble";
+        remoteBubble.setAttribute("data-peer-id", meshPeerId);
+        remoteBubble.innerHTML = `<span class="message-text">Hello from mesh peer</span>`;
+        feed.appendChild(remoteBubble);
+        assert(feed.querySelector(`.message-bubble[data-peer-id="${meshPeerId}"]`) !== null,
+            "Remote bubble must exist in feed");
+
+        // 2. Unannounced transient drop of meshPeerId
+        window.engine._setPeerState(meshPeerId, "closed");
+        assert(window.pendingDisconnectTimers.has(meshPeerId),
+            "Unannounced disconnect must register in pendingDisconnectTimers");
+        assert(!departedPeers.has(meshPeerId),
+            "Peer must NOT be marked departed during grace period");
+        assert(feed.querySelector(`.message-bubble[data-peer-id="${meshPeerId}"]`) !== null,
+            "Message bubbles must NOT be purged during grace period");
+
+        // 3. Visibility change extension
+        document.visibilityState = "visible";
+        document.dispatchEvent(new Event("visibilitychange"));
+        assert(window.pendingDisconnectTimers.has(meshPeerId),
+            "Timer must remain active and refreshed after visibilitychange to visible");
+
+        // 4. Reconnection within grace window
+        window.engine._setPeerState(meshPeerId, "open");
+        assert(!window.pendingDisconnectTimers.has(meshPeerId),
+            "Reconnection must cancel pending disconnect timer");
+        assert(!departedPeers.has(meshPeerId),
+            "Reconnected peer must not be in departedPeers");
+        assert(feed.querySelector(`.message-bubble[data-peer-id="${meshPeerId}"]`) !== null,
+            "Message bubble must remain intact after reconnection");
+        const noticesAfterReconn = feed.querySelectorAll(".system-message");
+        assert(noticesAfterReconn.length === 2,
+            `Reconnection must NOT append duplicate join notices (remains 2), got ${noticesAfterReconn.length}`);
+
+        // 5. Immediate departure on explicit PeerLeftAndBurn
+        // Disconnect again to start timer
+        window.engine._setPeerState(meshPeerId, "closed");
+        assert(window.pendingDisconnectTimers.has(meshPeerId),
+            "Second unannounced disconnect starts grace timer");
+
+        const burnLeaveMsg = {
+            frame_id: "burn-leave-mesh",
+            ttl: 3,
+            signal: {
+                PeerLeftAndBurn: {
+                    peer_id: meshPeerId
+                }
+            }
+        };
+        await window.engine.onMessageCb(JSON.stringify(burnLeaveMsg), hostPeerId);
+        assert(!window.pendingDisconnectTimers.has(meshPeerId),
+            "PeerLeftAndBurn must immediately cancel pending disconnect timer");
+        assert(departedPeers.has(meshPeerId),
+            "PeerLeftAndBurn must immediately mark peer departed");
+        assert(feed.querySelector(`.message-bubble[data-peer-id="${meshPeerId}"]`) === null,
+            "PeerLeftAndBurn must immediately purge remote bubbles");
+        const finalNotices = feed.querySelectorAll(".system-message");
+        assert(finalNotices[finalNotices.length - 1].textContent.includes("Peer left chat"),
+            "PeerLeftAndBurn must append 'Peer left chat'");
+
+        // --- Part C: REQ-045.3 Smart Non-Trickle ICE Gathering & Multi-Port STUN/TURN Config ---
+        // 1. Redundant STUN server configuration
+        const engTest = new ZeroWebRtcEngine("peer-ice-test");
+        const servers = engTest.rtcConfig.iceServers;
+        assert(Array.isArray(servers) && servers.length >= 5,
+            `rtcConfig.iceServers must contain at least 5 default STUN endpoints, got ${servers.length}`);
+        const urlsJoined = servers.map(s => s.urls).join(" ");
+        assert(urlsJoined.includes(":3478") && urlsJoined.includes(":19302"),
+            "ICE servers must cover both port 3478 and port 19302");
+
+        // 2. Configurable TURN via window.ZERO_TURN_SERVERS
+        window.ZERO_TURN_SERVERS = [
+            { urls: "turn:turn.example.com:3478", username: "u", credential: "p" }
+        ];
+        const turnEng = new ZeroWebRtcEngine("peer-turn-test");
+        const turnServers = turnEng.rtcConfig.iceServers;
+        assert(turnServers.some(s => s.urls === "turn:turn.example.com:3478"),
+            "Engine must include extra servers from window.ZERO_TURN_SERVERS");
+        window.ZERO_TURN_SERVERS = null;
+
+        // 3. Smart candidate detection and 400ms settle timer
+        const mockPc = new RTCPeerConnection();
+        mockPc.iceGatheringState = "gathering";
+
+        let waitFinished = false;
+        const waitPromise = engTest._waitForIceGatheringComplete(mockPc).then(() => {
+            waitFinished = true;
+        });
+
+        // Fire a srflx candidate
+        mockPc.dispatchEvent({
+            type: "icecandidate",
+            candidate: {
+                candidate: "candidate:1 1 UDP 2122260223 192.168.1.100 50000 typ srflx raddr 1.2.3.4 rport 50000"
+            }
+        });
+
+        assert(waitFinished === false, "Wait should not finish synchronously upon srflx candidate");
+        await delay(450); // Settle timer is 400ms
+        assert(waitFinished === true, "Wait must resolve cleanly after 400ms settle timer without waiting for 5000ms max timeout");
+
+        resetToHome();
+        print("  PASS: Unified Connectivity Resilience: Per-Peer Roles, Grace Window & Smart ICE verified cleanly.");
+    }
+
     print("\n===============================================================================");
     print("ALL BROWSER HEADLESS MESH TESTS PASSED SUCCESSFULLY!");
     print("===============================================================================");
