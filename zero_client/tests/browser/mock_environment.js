@@ -203,6 +203,7 @@
             set textContent(val) {
                 this._textContent = String(val);
                 this._innerHTML = String(val);
+                this.children = [];
             },
             _innerHTML: "",
             get innerHTML() {
@@ -212,12 +213,27 @@
                 this._innerHTML = String(val);
                 this._textContent = "";
                 this.children = [];
+                if (!val.includes("<")) {
+                    this._textContent = String(val);
+                    return;
+                }
                 if (val && val.includes("<")) {
                     const tagRegex = /<(\/)?([a-zA-Z0-9_-]+)([^>]*?)(\/)?>/g;
                     const stack = [this];
                     const voidTags = new Set(["input", "img", "br", "hr", "meta", "link"]);
                     let m;
+                    let lastIdx = 0;
                     while ((m = tagRegex.exec(val)) !== null) {
+                        const textChunk = val.substring(lastIdx, m.index);
+                        if (textChunk && stack.length > 1) {
+                            const top = stack[stack.length - 1];
+                            if (top.children.length === 0) {
+                                top._textContent = (top._textContent || "") + textChunk;
+                            }
+                            top._innerHTML = (top._innerHTML || "") + textChunk;
+                        }
+                        lastIdx = tagRegex.lastIndex;
+
                         const isClosing = m[1] === "/";
                         const tName = m[2];
                         const attrs = m[3] || "";
@@ -257,6 +273,12 @@
                                 stack.push(ch);
                             }
                         }
+                    }
+                    const trailingText = val.substring(lastIdx);
+                    if (trailingText && stack.length > 1) {
+                        const top = stack[stack.length - 1];
+                        top._textContent = (top._textContent || "") + trailingText;
+                        top._innerHTML = (top._innerHTML || "") + trailingText;
                     }
                 }
             },
@@ -333,6 +355,8 @@
                             }
                             return ch.getAttribute(attrName) === attrVal;
                         }
+                    } else if (sel.startsWith("#")) {
+                        return ch.id === sel.slice(1);
                     } else if (sel.startsWith(".message-bubble:not(.message-outgoing)")) {
                         return ch.classList.contains("message-bubble") && !ch.classList.contains("message-outgoing");
                     } else if (sel.startsWith(".")) {
