@@ -23,7 +23,7 @@ The application UI currently exhibits several visual inconsistencies and sub-opt
 ### User Intent & Core Principles
 - **Atmospheric Transparency**: Remove the background color, borders, and box-shadows of `.chat-header`, `.welcome-splash`, and `.chat-footer` / `#create-room-bar` so the background gradient flows seamlessly through the interface.
 - **Brand Minimalism in Active Chat**: Display the domain title (`zero-chat.pages.dev`) and subtitle (`SECURE P2P CHAT`) strictly in the Home view. In active chat, show only the cyan `0` brand glyph on the top-left, freeing up horizontal header space.
-- **Header-Integrated Burn Button**: Move the burn chat button (`#destroy-session-button`) into the top-right header row (`.header-controls`) as the rightmost button. Give it a significantly wider oval shape that matches the top-bar button style and takes advantage of the freed-up header space, eliminating the `#burn-room-bar` row entirely.
+- **Header-Integrated Burn Button**: Move the burn chat button (`#destroy-session-button`) into the top-right header row (`.header-controls`) as the leftmost button of that row (positioned to the left of the peer count badge, status indicator, and leave button). Give it a significantly wider oval shape that matches the top-bar button style and takes advantage of the freed-up header space, eliminating the `#burn-room-bar` row entirely.
 - **Rounded Bottom Bar Buttons & Top-Bar Styling**: Make bottom bar buttons (`#input-add-peer-btn` and `#send-button`) rounded (pill/circle `border-radius: 9999px`) and style them using the top-bar button translucent glass language.
 - **Inverted Dock & Input Styling**: Make the bottom bar dock background completely transparent; style `#message-input` with the previous bottom bar panel background (`rgba(18, 24, 38, 0.7)`), `backdrop-filter: blur(16px)`, rounded pill border-radius, and subtle border.
 
@@ -86,7 +86,7 @@ The application UI currently exhibits several visual inconsistencies and sub-opt
 
 ### REQ-042.5: Relocate Burn Button to Top-Right Header as a Wide Oval Button
 - In `zero_client/index.html`:
-  - Move the burn button (`#destroy-session-button`) inside `.header-controls` as the rightmost element.
+  - Move the burn button (`#destroy-session-button`) inside `.header-controls` as the leftmost element of that row (positioned before `#peer-count`, `#idle-status-capsule`, `#peer-list`, and `#header-leave-btn`).
   - Delete or omit `#burn-room-bar`, eliminating the extra vertical row underneath the header.
 - In `zero_client/style.css`:
   - Style `#destroy-session-button.btn-header-burn`:
@@ -155,7 +155,7 @@ The application UI currently exhibits several visual inconsistencies and sub-opt
     - Splash screen `.welcome-splash` transparent styling.
     - Footer `.chat-footer` transparent styling.
     - Active chat hides `.brand-text`, home view displays `.brand-text`.
-    - `#destroy-session-button` located in `.header-controls` on the far right.
+    - `#destroy-session-button` located in `.header-controls` as the leftmost element.
     - Rounded buttons and pill input styling.
   - All 123 Rust workspace tests pass (`cargo test --workspace`).
   - Dual WASM checks pass (`zero_client` and `zero_network`).
