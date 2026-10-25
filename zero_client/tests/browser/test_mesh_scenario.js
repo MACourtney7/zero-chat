@@ -334,13 +334,13 @@ async function runTests() {
         const countEl = document.getElementById("peer-count");
 
         updatePeerCountDisplay();
-        assert(countEl.textContent === "0", "Peer count element must display '0' when 0 open channels, got: " + countEl.textContent);
+        assert(countEl.innerHTML.includes("peer-slashed-user-icon"), "Peer count element must display slashed user icon when 0 open channels, got: " + countEl.innerHTML);
 
         // Add dummy entry to activeSessionPeers to verify it doesn't mask 0 channels
         activeSessionPeers.add("phantom-peer-1");
         activeSessionPeers.add("phantom-peer-2");
         updatePeerCountDisplay();
-        assert(countEl.textContent === "0", "activeSessionPeers must NOT inflate #peer-count when openPeerCount is 0, got: " + countEl.textContent);
+        assert(countEl.innerHTML.includes("peer-slashed-user-icon"), "activeSessionPeers must NOT inflate #peer-count when openPeerCount is 0, got: " + countEl.innerHTML);
 
         print("  PASS: REQ-031.5: Counter strictly mirrors active open channels.");
     }
@@ -890,45 +890,60 @@ async function runTests() {
         assert(permanentMessages[0].querySelector(".system-text").textContent === "Peer joined chat",
             "Permanent message text must be 'Peer joined chat'");
 
-        // 5. Header [+] button 5-second self-clearing notice (REQ-033.3, V-033.5)
+        // 5. In-room Add Peer button left of message input (REQ-039.4)
         setHasActiveSession(true);
-        const headerBtnBefore = headerAddBtn.className;
-        const headerHtmlBefore = headerAddBtn.innerHTML;
+        setIsInRoomSession(true);
+        const testEngineT13 = new ZeroWebRtcEngine("peer-host-t13");
+        engine = testEngineT13;
+        window.engine = testEngineT13;
+        // Mock 1 connected peer to enter active chat
+        testEngineT13.peers.set("peer-dummy", { state: "open", dc: { readyState: "open" } });
+        updatePeerCountDisplay();
 
-        await handleHeaderAddPeerClick();
+        assert(headerAddBtn.classList.contains("hidden") === true, "Header [+] button must be hidden");
+        assert(inputAddPeerBtn.classList.contains("hidden") === false, "inputAddPeerBtn must be visible in active chat");
+        assert(!inputAddPeerBtn.classList.contains("btn-waiting"), "inputAddPeerBtn initially not in btn-waiting");
+        assert(inputAddPeerBtn.getAttribute("aria-label") === "Add peer", "inputAddPeerBtn aria-label must be 'Add peer'");
+        assert(inputAddPeerBtn.innerHTML.includes("line x1=\"19\"") || inputAddPeerBtn.innerHTML.includes("circle cx=\"9\""),
+            "inputAddPeerBtn must contain user-plus SVG");
 
-        // Verify [+] button itself is completely untouched
-        assert(headerAddBtn.className === headerBtnBefore, "Header [+] button classes must NOT change");
-        assert(headerAddBtn.innerHTML === headerHtmlBefore, "Header [+] button innerHTML must NOT change");
+        // Set draft text in input to verify preservation
+        msgInput.value = "Draft unsent text";
 
-        // Verify temporary notice appeared in feed with .notice-pulse and no timestamp
-        const headerNotices = feed.querySelectorAll(".header-add-notice");
-        assert(headerNotices.length === 1, "Feed must contain 1 header-add-notice temporary element");
-        const noticeEl = headerNotices[0];
-        assert(noticeEl.classList.contains("system-temporary"), "Header notice must have .system-temporary class");
-        assert(noticeEl.classList.contains("notice-pulse"), "Header notice must have .notice-pulse class");
-        assert(noticeEl.querySelector(".system-timestamp") === null, "Header notice must NOT contain timestamp");
-        assert(noticeEl.querySelector(".system-text").textContent === "Invite link copied to clipboard",
-            "Header notice text must be 'Invite link copied to clipboard'");
-        assert(getHeaderAddFeedbackTimer() !== null, "5-second timer must be active");
+        await handleInputAddPeerClick();
 
-        // Re-click within 5s window restarts timer and re-triggers pulse without duplicating notice
-        await delay(50);
-        await handleHeaderAddPeerClick();
+        // Verify button morphs to Stage 2 (.btn-waiting, copy icon)
+        assert(inputAddPeerBtn.classList.contains("btn-waiting") === true, "inputAddPeerBtn must have .btn-waiting class");
+        assert(inputAddPeerBtn.getAttribute("aria-label") === "Copy invite link", "inputAddPeerBtn aria-label must be 'Copy invite link'");
+        assert(inputAddPeerBtn.innerHTML.includes("<rect"), "inputAddPeerBtn must display copy icon SVG");
 
-        const headerNoticesAfterReclick = feed.querySelectorAll(".header-add-notice");
-        assert(headerNoticesAfterReclick.length === 1, "Re-clicking [+] must NOT duplicate the notice element");
-        assert(headerNoticesAfterReclick[0].classList.contains("notice-pulse"), "Notice must re-trigger .notice-pulse");
-        assert(getHeaderAddFeedbackTimer() !== null, "5-second timer must be restarted");
+        // Verify draft text is preserved
+        assert(msgInput.value === "Draft unsent text", "Draft text in msgInput must be preserved");
 
-        // Wait for 5s timer to expire and verify notice self-clears
-        await delay(5100);
-        const expiredNotices = feed.querySelectorAll(".header-add-notice");
-        assert(expiredNotices.length === 0, "Header temporary notice must self-clear after 5,000ms");
-        assert(getHeaderAddFeedbackTimer() === null, "Header timer must be cleared");
+        // Verify temporary notices emitted in feed
+        let inputNotices = feed.querySelectorAll(".system-temporary");
+        assert(inputNotices.length === 1, "Immediate notice 1 must be present");
+        assert(inputNotices[0].querySelector(".system-text").textContent === "Invite link copied to clipboard",
+            "Notice 1 must be 'Invite link copied to clipboard'");
+
+        await delay(500);
+        inputNotices = feed.querySelectorAll(".system-temporary");
+        assert(inputNotices.length === 2, "Staggered notice 2 ('Waiting for peer') must be present after 500ms");
+        assert(inputNotices[1].querySelector(".system-text").textContent === "Waiting for peer",
+            "Notice 2 text must be 'Waiting for peer'");
+
+        // Re-clicking preserves draft and restarts notices
+        await handleInputAddPeerClick();
+        assert(msgInput.value === "Draft unsent text", "Re-click must preserve draft text");
+        assert(inputAddPeerBtn.classList.contains("btn-waiting") === true, "Re-click must keep .btn-waiting");
 
         // 6. Reset to Home restores Stage 1
         resetToHome();
+        assert(peerCountEl.classList.contains("hidden") === true, "Home view: peerCountEl must be hidden");
+        assert(idleStatusCapsule.classList.contains("hidden") === true, "Home view: idleStatusCapsule must be hidden");
+        assert(peerListEl.classList.contains("hidden") === true, "Home view: peerListEl must be hidden");
+        assert(headerLeaveBtn.classList.contains("hidden") === true, "Home view: headerLeaveBtn must be hidden");
+        assert(headerAddBtn.classList.contains("hidden") === true, "Home view: headerAddBtn must be hidden");
         assert(btnCreateRoom.classList.contains("btn-emerald"), "After reset: button must return to btn-emerald");
         assert(!btnCreateRoom.classList.contains("btn-waiting"), "After reset: button must NOT have btn-waiting");
         assert(btnCreateRoom.getAttribute("aria-label") === "Create Chat", "After reset: aria-label must be 'Create Chat'");
@@ -940,20 +955,34 @@ async function runTests() {
     // Test 14: REQ-034.1 - REQ-034.4: Staggered delivery, ellipsis fix, slashed person icon, empty placeholder
     print("\n[Test 14] REQ-034.1 - REQ-034.4: Slashed person icon, empty placeholder, staggered notices & ellipsis fix...");
     {
-        // 1. Assert #peer-count in home view contains slashed person icon SVG
+        // 1. Assert #peer-count in home view is hidden
         resetToHome();
         const peerCountEl = document.getElementById("peer-count");
         assert(peerCountEl !== null, "#peer-count element must exist");
-        assert(peerCountEl.innerHTML.includes("peer-slashed-user-icon") && peerCountEl.innerHTML.includes("<svg"),
-            "Home View: #peer-count must contain slashed person icon SVG");
+        assert(peerCountEl.classList.contains("hidden") === true,
+            "Home View: #peer-count must be hidden");
+        assert(idleStatusCapsule.classList.contains("hidden") === true,
+            "Home View: #idle-status-capsule must be hidden");
+        assert(peerListEl.classList.contains("hidden") === true,
+            "Home View: #peer-list must be hidden");
+        assert(headerLeaveBtn.classList.contains("hidden") === true,
+            "Home View: #header-leave-btn must be hidden");
         assert(msgInput.placeholder === "", "Home View: msgInput placeholder must be empty string");
 
-        // 2. Trigger create room: assert #peer-count transitions to '0'
+        // 2. Trigger create room: assert #peer-count transitions to slashed person icon (0 peers in room)
         setLocalPeerId("peer-ui-t14");
         await createRoomAsHost();
 
-        assert(peerCountEl.textContent === "0",
-            `Room View (empty session): #peer-count must transition to '0', got '${peerCountEl.textContent}'`);
+        assert(peerCountEl.classList.contains("hidden") === false,
+            "Room View (empty session): #peer-count must be visible");
+        assert(peerCountEl.innerHTML.includes("peer-slashed-user-icon"),
+            "Room View (empty session): #peer-count must display slashed person icon");
+        assert(idleStatusCapsule.classList.contains("hidden") === false,
+            "Room View (empty session): #idle-status-capsule must be visible");
+        assert(peerListEl.classList.contains("hidden") === true,
+            "Room View (empty session): #peer-list must be hidden");
+        assert(headerLeaveBtn.classList.contains("hidden") === false,
+            "Room View (empty session): #header-leave-btn must be visible");
 
         // Assert Notice 1 appended immediately
         let tempMessages = feed.querySelectorAll(".system-temporary");
@@ -1012,12 +1041,21 @@ async function runTests() {
         handlePeerDeparture("departing-peer-t14");
         assert(msgInput.disabled === true, "msgInput must be disabled on peer departure");
         assert(msgInput.placeholder === "", `msgInput placeholder must be empty on peer departure, got '${msgInput.placeholder}'`);
-        assert(peerCountEl.textContent === "0", "#peer-count must remain '0' in room view when peer departs");
+        assert(peerCountEl.classList.contains("hidden") === false, "#peer-count must be visible on peer departure");
+        assert(peerCountEl.innerHTML.includes("peer-slashed-user-icon"), "#peer-count must display slashed user icon in room view when peer departs");
+        assert(idleStatusCapsule.classList.contains("hidden") === false, "#idle-status-capsule must be visible on peer departure");
+        assert(peerListEl.classList.contains("hidden") === true, "#peer-list must be hidden on peer departure");
 
         // 6. Simulate resetToHome()
         resetToHome();
-        assert(peerCountEl.innerHTML.includes("peer-slashed-user-icon") && peerCountEl.innerHTML.includes("<svg"),
-            "resetToHome() must restore slashed person icon SVG to #peer-count");
+        assert(peerCountEl.classList.contains("hidden") === true,
+            "resetToHome() must hide #peer-count");
+        assert(idleStatusCapsule.classList.contains("hidden") === true,
+            "resetToHome() must hide #idle-status-capsule");
+        assert(peerListEl.classList.contains("hidden") === true,
+            "resetToHome() must hide #peer-list");
+        assert(headerLeaveBtn.classList.contains("hidden") === true,
+            "resetToHome() must hide #header-leave-btn");
         assert(msgInput.placeholder === "", "msgInput placeholder must remain empty after resetToHome()");
 
         print("  PASS: REQ-034.1 - REQ-034.4: Slashed person icon, empty placeholder, staggered notices & ellipsis fix verified.");
@@ -1218,7 +1256,13 @@ async function runTests() {
         assert(msgInput.disabled === false, "msgInput must be enabled when peer connects");
         assert(sendBtn.disabled === false, "sendBtn must be enabled when peer connects");
         assert(createRoomBar.classList.contains("hidden") === true, "createRoomBar must be hidden when peer connects");
-        assert(headerAddBtn.classList.contains("hidden") === false, "headerAddBtn must be visible when peer connects");
+        assert(headerAddBtn.classList.contains("hidden") === true, "headerAddBtn must be hidden");
+        assert(inputAddPeerBtn.classList.contains("hidden") === false, "inputAddPeerBtn must be visible when peer connects");
+        assert(inputAddPeerBtn.innerHTML.includes("line x1=\"19\"") || inputAddPeerBtn.innerHTML.includes("circle cx=\"9\""),
+            "inputAddPeerBtn must contain user-plus SVG");
+        assert(peerListEl.classList.contains("hidden") === false, "peerListEl (padlock) must be visible when peer connects");
+        assert(idleStatusCapsule.classList.contains("hidden") === true, "idleStatusCapsule must be hidden when peer connects");
+        assert(peerCountEl.textContent === "1", "peerCountEl must be '1' when peer connects");
 
         // 3. Client B disconnects -> Client A detects openPeerCount === 0 (limbo state)
         joinerBEngine.close();
@@ -1236,10 +1280,18 @@ async function runTests() {
             "Limbo state: #btn-create-room must not have btn-waiting class");
         assert(btnCreateRoom.getAttribute("aria-label") === "Add peer",
             `Limbo state: #btn-create-room aria-label must be 'Add peer', got '${btnCreateRoom.getAttribute("aria-label")}'`);
-        assert(btnCreateRoom.innerHTML.includes(ADD_PEER_ICON_SVG) || (btnCreateRoom.innerHTML.includes("<line x1=\"12\" y1=\"5\"") && btnCreateRoom.innerHTML.includes("stroke-width=\"2.5\"")),
-            "Limbo state: #btn-create-room must contain ADD_PEER_ICON_SVG (+) icon");
+        assert(btnCreateRoom.innerHTML.includes(ADD_PEER_ICON_SVG) || (btnCreateRoom.innerHTML.includes("line x1=\"19\"") && btnCreateRoom.innerHTML.includes("circle cx=\"9\"")),
+            "Limbo state: #btn-create-room must contain user-plus icon");
         assert(headerAddBtn.classList.contains("hidden") === true,
             "Limbo state: #header-add-btn must be hidden");
+        assert(peerCountEl.classList.contains("hidden") === false,
+            "Limbo state: #peer-count must be visible");
+        assert(peerCountEl.innerHTML.includes("peer-slashed-user-icon"),
+            "Limbo state: #peer-count must display slashed user icon");
+        assert(idleStatusCapsule.classList.contains("hidden") === false,
+            "Limbo state: #idle-status-capsule must be visible");
+        assert(peerListEl.classList.contains("hidden") === true,
+            "Limbo state: #peer-list must be hidden");
 
         // 5. Client A clicks #btn-create-room (REQ-036.2 & REQ-036.3)
         _lastCopiedText = null;
@@ -1356,14 +1408,30 @@ async function runTests() {
             "After Client C connects: #send-button must be enabled");
         assert(feed.querySelectorAll(".system-temporary").length === 0,
             "After Client C connects: temporary system notices must be cleared");
-        assert(headerAddBtn.classList.contains("hidden") === false,
-            "After Client C connects: #header-add-btn must be visible");
+        assert(headerAddBtn.classList.contains("hidden") === true,
+            "After Client C connects: #header-add-btn must be hidden");
+        assert(inputAddPeerBtn.classList.contains("hidden") === false,
+            "After Client C connects: #input-add-peer-btn must be visible");
+        assert(peerListEl.classList.contains("hidden") === false,
+            "After Client C connects: #peer-list must be visible");
+        assert(idleStatusCapsule.classList.contains("hidden") === true,
+            "After Client C connects: #idle-status-capsule must be hidden");
+        assert(peerCountEl.textContent === "1",
+            "After Client C connects: #peer-count must be '1'");
 
         // 9. Reset / leave chat restores default Stage 1 (REQ-036.4)
         joinerCEngine.close();
         hostEngine.close();
         resetToHome();
 
+        assert(peerCountEl.classList.contains("hidden") === true,
+            "Home View: #peer-count must be hidden");
+        assert(idleStatusCapsule.classList.contains("hidden") === true,
+            "Home View: #idle-status-capsule must be hidden");
+        assert(peerListEl.classList.contains("hidden") === true,
+            "Home View: #peer-list must be hidden");
+        assert(headerLeaveBtn.classList.contains("hidden") === true,
+            "Home View: #header-leave-btn must be hidden");
         assert(btnCreateRoom.classList.contains("btn-emerald") === true,
             "Home View: #btn-create-room must restore to btn-emerald");
         assert(!btnCreateRoom.classList.contains("btn-waiting"),
@@ -1401,8 +1469,10 @@ async function runTests() {
             assert(cssContent.includes(".feature-icon"), "Must define .feature-icon");
         }
 
-        // 2. Home view: peer count displays slashed-user, leave button hidden, bottom button has create-chat icon
-        assert(peerCountEl.innerHTML.includes("<svg"), "Home: peer count must display slashed user SVG");
+        // 2. Home view: peer count hidden, leave button hidden, bottom button has create-chat icon
+        assert(peerCountEl.classList.contains("hidden") === true, "Home: #peer-count must be hidden");
+        assert(idleStatusCapsule.classList.contains("hidden") === true, "Home: #idle-status-capsule must be hidden");
+        assert(peerListEl.classList.contains("hidden") === true, "Home: #peer-list must be hidden");
         assert(headerLeaveBtn.classList.contains("hidden") === true, "Home: #header-leave-btn must be hidden");
         assert(headerAddBtn.classList.contains("hidden") === true, "Home: #header-add-btn must be hidden");
         assert(createRoomBar.classList.contains("hidden") === false, "Home: #create-room-bar must be visible");
@@ -1421,32 +1491,50 @@ async function runTests() {
             assert(fi.querySelector("svg") !== null, "Feature icon must contain SVG, not emoji");
         });
 
-        // 4. In-room 0 peers (Host waiting): peer count "0", leave button visible, bottom button plus icon
+        // 4. In-room 0 peers (Host waiting): peer count slashed person icon, blue dot visible, padlock hidden, leave button visible
         await createRoomAsHost();
-        assert(peerCountEl.textContent === "0", "Host waiting: peer count must be '0'");
+        assert(peerCountEl.classList.contains("hidden") === false, "Host waiting: #peer-count must be visible");
+        assert(peerCountEl.innerHTML.includes("peer-slashed-user-icon"), "Host waiting: #peer-count must display slashed user SVG");
+        assert(idleStatusCapsule.classList.contains("hidden") === false, "Host waiting: #idle-status-capsule (blue dot) must be visible");
+        assert(peerListEl.classList.contains("hidden") === true, "Host waiting: #peer-list (padlock) must be hidden");
         assert(headerLeaveBtn.classList.contains("hidden") === false, "Host waiting: #header-leave-btn must be visible");
         assert(headerAddBtn.classList.contains("hidden") === true, "Host waiting: #header-add-btn must be hidden");
         assert(messageForm.classList.contains("hidden") === true, "Host waiting: #message-form must be hidden");
         assert(createRoomBar.classList.contains("hidden") === false, "Host waiting: #create-room-bar must be visible");
+        assert(btnCreateRoom.classList.contains("btn-waiting") === true, "Host waiting: #btn-create-room must be Stage 2 copy button");
 
         // 5. Leave button resets to home
         headerLeaveBtn.click();
-        assert(peerCountEl.innerHTML.includes("<svg"), "After leave: peer count must restore to slashed user SVG");
+        assert(peerCountEl.classList.contains("hidden") === true, "After leave: #peer-count must be hidden");
+        assert(idleStatusCapsule.classList.contains("hidden") === true, "After leave: #idle-status-capsule must be hidden");
+        assert(peerListEl.classList.contains("hidden") === true, "After leave: #peer-list must be hidden");
         assert(headerLeaveBtn.classList.contains("hidden") === true, "After leave: #header-leave-btn must be hidden");
 
-        // 6. Join failure immediate recovery: displays "Failed to establish connection", leave button visible, plus icon visible
+        // 6. Join failure immediate recovery: displays "Failed to establish connection", leave button visible, slashed person icon & blue dot visible, plus icon visible
         await joinRoomFromHash("#payload=invalid_nonexistent_payload_for_testing");
         assert(headerLeaveBtn.classList.contains("hidden") === false,
             "Failed connection: #header-leave-btn must be visible");
+        assert(peerCountEl.classList.contains("hidden") === false,
+            "Failed connection: #peer-count must be visible");
+        assert(peerCountEl.innerHTML.includes("peer-slashed-user-icon"),
+            "Failed connection: #peer-count must display slashed person icon");
+        assert(idleStatusCapsule.classList.contains("hidden") === false,
+            "Failed connection: #idle-status-capsule (blue dot) must be visible");
+        assert(peerListEl.classList.contains("hidden") === true,
+            "Failed connection: #peer-list (padlock) must be hidden");
         assert(createRoomBar.classList.contains("hidden") === false,
             "Failed connection: #create-room-bar must be immediately visible without delay");
         assert(btnCreateRoom.classList.contains("btn-emerald") === true,
             "Failed connection: #btn-create-room must be btn-emerald");
         assert(btnCreateRoom.getAttribute("aria-label") === "Add peer" || btnCreateRoom.innerHTML.includes("line"),
-            "Failed connection: #btn-create-room must display plus icon");
+            "Failed connection: #btn-create-room must display user-plus icon");
 
         // 7. Reset to home
         resetToHome();
+        assert(peerCountEl.classList.contains("hidden") === true, "Home: #peer-count must be hidden");
+        assert(idleStatusCapsule.classList.contains("hidden") === true, "Home: #idle-status-capsule must be hidden");
+        assert(peerListEl.classList.contains("hidden") === true, "Home: #peer-list must be hidden");
+        assert(headerLeaveBtn.classList.contains("hidden") === true, "Home: #header-leave-btn must be hidden");
         print("  PASS: REQ-037.1 - REQ-037.9 verified cleanly.");
     }
 

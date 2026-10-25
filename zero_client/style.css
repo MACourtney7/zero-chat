@@ -494,6 +494,42 @@ html, body {
   flex-shrink: 0;
 }
 
+.btn-action-peer {
+  width: 44px;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  color: var(--accent-cyan);
+  border-radius: 8px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+.btn-action-peer:hover:not(:disabled) {
+  background: rgba(56, 189, 248, 0.22);
+  border-color: rgba(56, 189, 248, 0.5);
+  transform: translateY(-1px);
+}
+
+.btn-action-peer:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.btn-action-peer.btn-waiting {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(245, 158, 11, 0.4);
+  color: #fbbf24;
+}
+
+.btn-action-peer:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* Full Width Action and Burn Controls */
 .burn-room-bar {
   width: 100%;
