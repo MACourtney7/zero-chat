@@ -3196,9 +3196,16 @@
         window.getActiveHostSignaling = () => activeHostSignaling;
         window.getActiveInviteSignaling = () => activeInviteSignaling;
         window.getHostWs = () => hostWs;
+        window.getOpportunisticLeaveSent = () => opportunisticLeaveSent;
+        window.setOpportunisticLeaveSent = (v) => { opportunisticLeaveSent = v; };
         window.triggerHonestCopyNotice = triggerHonestCopyNotice;
         window.triggerInChatHonestCopyNotice = triggerInChatHonestCopyNotice;
         try {
+            Object.defineProperty(window, "opportunisticLeaveSent", {
+                get: () => opportunisticLeaveSent,
+                set: (v) => { opportunisticLeaveSent = v; },
+                configurable: true
+            });
             Object.defineProperty(window, "activeHostSignaling", {
                 get: () => activeHostSignaling,
                 set: (v) => { activeHostSignaling = v; },
