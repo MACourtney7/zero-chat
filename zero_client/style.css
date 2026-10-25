@@ -98,9 +98,7 @@ html, body {
 #chat-feed,
 #messages-container,
 #message-list,
-.chat-layout,
-.message-form,
-.input-dock {
+.chat-layout {
   box-sizing: border-box;
   width: 100%;
   max-width: 100%;
@@ -621,12 +619,12 @@ html, body {
 #destroy-session-button.btn-header-burn {
   width: auto;
   min-width: 80px;
-  height: 28px;
+  height: 26px;
   padding: 0 14px;
   border-radius: 9999px;
-  background: rgba(239, 68, 68, 0.12);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  color: var(--accent-rose);
+  background: rgba(244, 63, 94, 0.12);
+  border: 1px solid rgba(244, 63, 94, 0.32);
+  color: #fda4af;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -643,10 +641,10 @@ html, body {
 
 #destroy-session-button:hover,
 #destroy-session-button.btn-header-burn:hover {
-  background: rgba(239, 68, 68, 0.24);
-  border-color: rgba(239, 68, 68, 0.6);
+  background: rgba(244, 63, 94, 0.24);
+  border-color: rgba(244, 63, 94, 0.6);
   color: #ffffff;
-  box-shadow: 0 0 10px rgba(239, 68, 68, 0.35);
+  box-shadow: 0 0 10px rgba(244, 63, 94, 0.35);
   transform: translateY(-1px);
 }
 
@@ -878,6 +876,9 @@ html, body {
   min-width: 135px;
   min-height: 44px;
   max-width: 82%;
+  flex-shrink: 0;
+  flex: 0 0 auto;
+  height: auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1160,9 +1161,13 @@ html, body {
 
 .message-form,
 .input-dock {
+  width: 100%;
+  max-width: 100%;
+  overflow: visible;
   display: flex;
   gap: 10px;
   align-items: center;
+  padding-top: 4px;
   padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   background: transparent !important;
   border: none !important;
