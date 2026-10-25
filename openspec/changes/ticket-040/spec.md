@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-040"
 title: "In-Chat Add Peer Button: 2-Stage Blue/Cyan Styling and 5s Temporary Notice Timeout"
-state: "PLANNING"
+state: "IN_PROGRESS"
 created_at: "2026-10-25T10:38:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-040/main"
