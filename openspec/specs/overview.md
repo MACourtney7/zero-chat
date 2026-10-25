@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.14.0"
+version: "1.15.0"
 milestone: "ephemeral-ui-modernization"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-25T10:55:00Z"
+updated_at: "2026-10-25T14:25:00Z"
 ---
 ```
 
@@ -87,6 +87,15 @@ updated_at: "2026-10-25T10:55:00Z"
       - When the 5000ms timeout expires, `#input-add-peer-btn` cleanly reverts from Stage 2 (copy icon) back to Stage 1 (`+[person_icon]`).
       - Peer connections or room teardowns cancel active timers, remove feedback elements, and reset the button to Stage 1.
       - Message draft text in `#message-input` is never modified or cleared during invite actions.
+17. **Mobile Browser Support & Resilience (Viewport, Safe Areas, Focus & Reconnection)**:
+    - **Fixed Scroll Lock & Visual Viewport Synchronization**: `html, body` enforces `position: fixed; inset: 0; width: 100%; height: var(--app-height, 100dvh); overflow: hidden; overscroll-behavior: none; -webkit-text-size-adjust: 100%;`. `#app` dynamically synchronizes with `window.visualViewport` via `--app-height` and `--app-offset-top`, locking elastic scroll drift and maintaining feed scroll pinned to the bottom during virtual keyboard animation.
+    - **Safe-Area Inset Handling**: `.chat-header` integrates `calc(12px + env(safe-area-inset-top, 0px))` to prevent collision with the iOS status bar. Dock padding adapts to `env(safe-area-inset-bottom)`, collapsing to `8px` when `.keyboard-open` is active.
+    - **16px Font Size Invariant & Overflow Protection**: `#message-input` and `.message-input` enforce `font-size: 16px; min-width: 0; flex: 1 1 auto;`, permanently preventing iOS Safari's mandatory ~114% focus zoom. Containers enforce `box-sizing: border-box; overflow-x: hidden;` preventing horizontal clipping on narrow viewports (375px–390px).
+    - **Touch Focus Retention on Send**: `#send-button` binds `pointerdown` with `e.preventDefault()`, and `doSendMessage()` explicitly retains focus on `#message-input`, allowing continuous mobile typing without keyboard dismissal.
+    - **Mobile Clipboard User-Gesture Compliance & Honest Fallback**: Uses `ClipboardItem` with deferred `Promise` in the user click stack. On permission failure (`NotAllowedError`), false copy claims are eliminated; the button morphs to Stage 2 (`.btn-waiting`, `COPY_ICON_SVG`) and displays honest notice `"Invite ready — tap Copy to copy link"`, copying synchronously upon subsequent tap with 100% reliability.
+    - **Host WebSocket Suspension & Auto-Reconnection**: Active signaling context (`activeHostSignaling`, `activeInviteSignaling`) is retained in memory. `visibilitychange` listener (`visibilityState === "visible"`) auto-reconnects closed host WebSockets while peer channels are pending open.
+    - **Joiner 404 Retry Loop**: In `joinRoomFromHash`, if `POST /drop/...` receives HTTP 404 (host backgrounded in messaging app), it retries every 1500ms up to 10 attempts (~15s) while displaying transient status `"Waiting for host..."`.
+    - **ICE Gathering Latency & Bfcache Safety**: `_waitForIceGatheringComplete` timeout extended to 4500ms for cellular STUN latency. `pagehide` listener guarded with `!event.persisted`, preventing app switching into bfcache from falsely incinerating active room sessions.
 
 ---
 
@@ -299,7 +308,8 @@ Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
     * Test 15: Enhanced Burn Behavior - 90s TTL, 70s aging fade, per-message flame button, distributed BurnMessage signaling, quiet room invariant, and reset restoration (REQ-035.1 - REQ-035.5)
     * Test 16: Limbo State Recovery - in-room plus button, two-stage copy morphing, staggered notices, 95s TTL immunity, peer reconnection, and zero whitespace ticking dots (REQ-036.1 - REQ-036.7)
     * Test 17: UI Architecture Refinement - Rules 1-4, minimalist badges, brand icon glyph, clean burn icon, blue vector splash icons, zero-delay failure recovery, timestamp removal, and joiner message integrity (REQ-037.1 - REQ-037.9)
+    * Test 18: Mobile Browser Support & Resilience - Viewport scroll lock, safe-area insets, 16px font-size, keyboard resize, pointerdown focus retention, joiner 404 retry loop, host WebSocket auto-reconnect, bfcache safety, and honest copy fallback (REQ-041.1 - REQ-041.8)
 
-Total: 123 Rust tests + 17 Browser tests passed, 0 failed.
+Total: 123 Rust tests + 18 Browser tests passed, 0 failed.
 ```
 
