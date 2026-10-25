@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.12.0"
+version: "1.13.0"
 milestone: "ephemeral-ui-modernization"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-24T23:40:00Z"
+updated_at: "2026-10-25T10:20:00Z"
 ---
 ```
 
@@ -71,6 +71,11 @@ updated_at: "2026-10-24T23:40:00Z"
     - `.message-header` serves as the unified top-row flex container (`display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 22px;`) within `.message-bubble`.
     - Houses the left-aligned identity dot (`.peer-dot` / `.self-dot`) and the right-aligned flame burn button (`.btn-message-burn`, `position: relative; margin-left: auto; width: 22px; height: 22px;`).
     - Eliminates arbitrary absolute offsets; both the 7px circular dot and the 22px flame button (13px SVG) are anchored along the exact same horizontal centerline (`11px`), providing pixel-perfect vertical alignment and symmetry across both outgoing and incoming messages.
+16. **Top-Bar Cleanliness, Zero-Peer Slashed Badge & Inlined Bottom-Left Invite Button**:
+    - **Clean Home View Top Bar**: In Home view (`!inRoom` / `resetToHome()`), the top bar renders strictly the brand logo (`<span class="brand-icon">0</span>`) and domain name on the left. All right-side controls and status badges (`#peer-count`, `#idle-status-capsule`, `#peer-list`, and `#header-leave-btn`) are completely hidden.
+    - **Zero-Peer Slashed Badge Invariant**: When in an active room session with 0 connected peers (`inRoom && openPeerCount === 0`, e.g. host waiting, limbo disconnect, or join failure), `#peer-count` renders `SLASHED_PERSON_ICON_SVG` (`[no_peers_badge]`) instead of numeric `"0"`. When peers > 0, `#peer-count` renders numeric count strings (`"1"`, `"2"`...).
+    - **Zero-Peer Blue Dot & Padlock Unification**: In all 0-peer room states (both host waiting and limbo disconnect), the top bar right controls strictly display `[no_peers_badge] [blue dot] [leave]`. The padlock icon (`#peer-list`) is strictly hidden when peer count is 0 and is displayed only during active encrypted sessions with >0 peers (where the blue dot is hidden).
+    - **Bottom-Left Inlined Add Peer Button (`#input-add-peer-btn`)**: The top-bar `+` button (`#header-add-btn`) is permanently omitted. Inside `#message-form`, `#input-add-peer-btn` is placed on the left side of `#message-input` with the `+[person_icon]` vector icon, styled symmetrically with `#send-button` (44px × 42px). Clicking it generates an in-room invite, copies to clipboard, transitions to `.btn-waiting` (copy icon), and triggers temporary feedback notices without altering or clearing draft input text in `#message-input`, establishing the bottom-left anchor for future nested attachment flows.
 
 ---
 
@@ -165,7 +170,8 @@ zero_chat/
 - Header controls feature fixed bounding alignment with an adaptive split badge architecture:
   - **Disconnected State**: Standalone peer counter badge (`#peer-count`, displaying `0`) on the left and a double-width blue-dot idle capsule (`#idle-status-capsule`, 58px x 26px with centered static cyan/blue dot and non-pulsing animation) on the right.
   - **Connected State**: The idle capsule cleanly splits into the middle connection status pill (`#peer-list` / `#status-badge`) and the right circular 26px red exit button (`#header-leave-btn`), ensuring zero horizontal layout shifting across states.
-  - **Header Add-Peer Button (`#header-add-btn`)**: Placed in `.header-controls` directly to the left of `#peer-count`. Styled with glassmorphic border and 14x14 plus SVG icon. Revealed during active room connections; hidden when disconnected or when peer count reaches 0. Clicking generates a single invite offer and silently copies the link to the clipboard without rendering any tooltips. If an invite is already pending, subsequent clicks re-copy the valid link without spawning duplicate WebRTC connections or cloud sessions. The pending invite clears upon peer connection.
+  - **Header Add-Peer Button (`#header-add-btn`)**: Permanently omitted from the top-bar header in favor of `#input-add-peer-btn` in the footer.
+  - **Inlined Bottom-Left Add-Peer Button (`#input-add-peer-btn`)**: Nested inside `#message-form` directly left of `#message-input`. Styled with cyan accent and symmetrical 44px × 42px dimensions. Clicking generates a single invite offer and silently copies the link to the clipboard, transitioning to `.btn-waiting` with copy icon without touching or clearing drafted text in `#message-input`. If an invite is already pending, subsequent clicks re-copy the valid link without spawning duplicate WebRTC connections or cloud sessions. The pending invite clears upon peer connection. Establishes the anchor for future nested attachment flows.
 - Clean in-feed transient status messaging: Connection progress displays `"Establishing secure connection"` with an animated CSS ticking ellipsis (`.`, `..`, `...`) without timestamps, cleanly replaced in-place when permanent system messages are appended (`Joined chat`, `Peer joined chat`, or `Failed to establish connection`).
 - Direct chat creation logging: Room creation immediately outputs `"Secure chat created"` with timestamp.
 - Minimalist welcome splash with centered brand headline (`Zero accounts. Zero servers. Zero history.`), 3-step action flow (`Create Chat -> Share Link -> Talk P2P`), and 3 invariant feature cards (`Direct P2P Connection` with description `"Private channels with no intermediate relays or storage servers."`, `Secure Communications`, `Ephemeral Sessions`) displayed strictly when the chat is empty; session burn and leave return the user cleanly to this home view.

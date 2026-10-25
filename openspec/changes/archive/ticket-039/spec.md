@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-039"
 title: "UI Tweaks: Add Peer Icon, Bottom-Left Invite Button, Top-Bar Home Cleanliness, Zero-Peer Slashed Badge & Blue Dot Unification"
-state: "IN_PROGRESS"
+state: "COMPLETED"
 created_at: "2026-10-25T08:45:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-039/main"
