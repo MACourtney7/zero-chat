@@ -20,6 +20,7 @@ Following the delivery of `ticket-043`, four UI behaviors and layout discrepanci
 2. **Mobile Share Sheet "Copy" Action Prepends Text to URL**: In `ticket-043`, `navigator.share` was invoked with `{ title, text, url }`, where `text` was `"Join my encrypted zero-chat session:"`. On iOS (Safari) and Android (Chrome), tapping the "Copy" action inside the native OS share sheet concatenates the text and the URL into a single clipboard string: `"Join my encrypted zero-chat session: https://zero-chat.pages.dev/#payload=..."`. When users attempt to paste this into their mobile browser's address bar to follow the invite, the browser treats the prepended English words as a search query rather than navigating to the hash-fragment URL, preventing session join.
 3. **In-Chat Bubble Flame Burn Icon Optical Misalignment**: Within `.message-header`, the left identity dot (`.peer-dot` / `.self-dot`) is a 7px circle centered at $y = 11\text{px}$. The right flame burn icon (`.btn-message-burn`) has a teardrop geometry with 80% of its visual mass in the lower bulb ($y \approx 13.5\text{px}$). Because of this bottom-heavy shape, the flame icon visually sits ~2px lower than the identity dot. Elevating the button by 2px (`top: -2px;`) restores perfect horizontal optical balance.
 4. **Excessive Compounding Vertical Spacing at Top and Bottom of Viewport**: When card borders, solid panel backgrounds, and backdrop filters were removed from `.chat-header` and `.chat-footer` in `ticket-042`, the compounding internal and external paddings were left untouched. `.chat-layout` enforced `padding: 16px; gap: 12px;`, `.chat-header` added `padding: 12px 20px;`, `.messages-container` added `padding: 12px 6px;`, and `.chat-footer` + `.message-form` added `padding: 12px 16px;` + `padding-bottom: calc(12px + safe-area)`. This produces ~48px of empty void above the chat stream and ~40px of dead space below the bottom buttons, causing the bottom action buttons and header controls to float awkwardly with excessive wasted vertical height on both desktop and mobile viewports.
+5. **Full-Width Action Button Theme Mismatch**: `#btn-create-room` currently uses an outdated `border-radius: 8px` boxy rectangle with an opaque gradient (`linear-gradient(135deg, #10b981, #059669)`), contrasting sharply with the glassmorphic pill design system (`border-radius: 9999px`) used by `#destroy-session-button`, `#header-leave-btn`, `#input-add-peer-btn`, and `#send-button`. Aligning it to a sleek pill with translucent emerald glass styling and glowing borders restores complete aesthetic coherence across the application.
 
 ---
 
@@ -93,13 +94,24 @@ Following the delivery of `ticket-043`, four UI behaviors and layout discrepanci
     - Update bottom padding: `padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));`.
   - Reclaims ~50–60px of vertical viewport height across both desktop and mobile, anchoring controls comfortably near edges while strictly preserving safe-area insets.
 
-### REQ-044.5: Automated Test & Verification Gates
+### REQ-044.5: Full-Width Action Button Theme & Geometry Alignment (`#btn-create-room`)
+- In `zero_client/style.css`:
+  - Update `.btn-action-full` and `#btn-create-room`:
+    - Geometry: `border-radius: 9999px; height: 44px; padding: 0 24px;` (sleek rounded pill matching `#message-input` and `#send-button`).
+    - Emerald Glassmorphic Styling:
+      - Default Stage 1: `background: rgba(16, 185, 129, 0.14) !important; border: 1px solid rgba(16, 185, 129, 0.35) !important; color: #34d399 !important; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: 0 0 12px rgba(16, 185, 129, 0.15);`
+      - Hover Stage 1: `background: rgba(16, 185, 129, 0.25) !important; border-color: rgba(16, 185, 129, 0.6) !important; color: #ffffff !important; box-shadow: 0 0 20px rgba(16, 185, 129, 0.35); transform: translateY(-1px);`
+      - Stage 2 (`.btn-waiting`): `background: rgba(16, 185, 129, 0.22) !important; border: 1px solid rgba(52, 211, 153, 0.45) !important; color: #6ee7b7 !important; box-shadow: 0 0 14px rgba(16, 185, 129, 0.2);`
+      - Active: `transform: translateY(0);`
+
+### REQ-044.6: Automated Test & Verification Gates
 - In `zero_client/tests/browser/test_mesh_scenario.js`:
   - Update Test 20 to assert:
     - Desktop simulation (`isMobileBrowser() === false`): `#btn-create-room` and `#input-add-peer-btn` do NOT invoke `navigator.share`, copy clean URL to clipboard, display `COPY_ICON_SVG`, and set `aria-label="Copy invite link"`.
     - Mobile simulation (`isMobileBrowser() === true`): `#btn-create-room` and `#input-add-peer-btn` invoke `navigator.share` with strictly `{ title, url }` and `undefined` text.
     - `.btn-message-burn` defines `top: -2px;` in `style.css`.
     - Compacted vertical padding defined on `.chat-layout`, `.chat-header`, and `.chat-footer`.
+    - `#btn-create-room` defines `border-radius: 9999px;` in `style.css`.
   - All 20 browser tests pass (`bash zero_client/tests/browser/run_test.sh`).
   - All 123 Rust workspace tests pass (`cargo test --workspace`).
   - Dual WASM compilation checks pass (`zero_client` and `zero_network`).
@@ -112,8 +124,8 @@ Following the delivery of `ticket-043`, four UI behaviors and layout discrepanci
 | Module / File | Scope of Changes |
 |---|---|
 | `zero_client/index.html` | Implement `isMobileBrowser()`; scope `canShare` to mobile platforms; remove `text` field from `navigator.share` payload to ensure clean URL copying from OS share sheets. |
-| `zero_client/style.css` | Add `top: -2px;` to `.btn-message-burn`; compact vertical padding and gaps on `.chat-layout`, `.chat-header`, `.messages-container`, `.chat-footer`, and `.message-form` / `.create-room-bar`. |
-| `zero_client/tests/browser/test_mesh_scenario.js` | Update Test 20 to verify desktop share bypass, clean URL share payload (no `text` attribute), `.btn-message-burn` optical offset, and compacted vertical layout styles. |
+| `zero_client/style.css` | Add `top: -2px;` to `.btn-message-burn`; compact vertical padding and gaps on `.chat-layout`, `.chat-header`, `.messages-container`, `.chat-footer`, and `.message-form` / `.create-room-bar`; modernize `#btn-create-room` to glassmorphism pill (`border-radius: 9999px`, height 44px, emerald glass styling). |
+| `zero_client/tests/browser/test_mesh_scenario.js` | Update Test 20 to verify desktop share bypass, clean URL share payload (no `text` attribute), `.btn-message-burn` optical offset, compacted vertical layout styles, and button pill geometry. |
 | `openspec/specs/overview.md` | Reconcile canonical spec with Invariant 19 updates upon completion. |
 
 ---
