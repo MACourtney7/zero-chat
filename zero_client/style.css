@@ -85,8 +85,8 @@ html, body {
   height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 16px;
-  gap: 12px;
+  padding: 0 16px;
+  gap: 6px;
   box-sizing: border-box;
   overflow: hidden;
 }
@@ -117,8 +117,9 @@ html, body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 20px;
-  padding-top: calc(12px + env(safe-area-inset-top, 0px));
+  padding: 4px 4px;
+  padding-top: calc(8px + env(safe-area-inset-top, 0px));
+  padding-bottom: 4px;
   flex-shrink: 0;
   background: transparent !important;
   border: none !important;
@@ -662,6 +663,7 @@ html, body {
 .create-room-bar {
   width: 100%;
   display: flex;
+  padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
@@ -672,14 +674,15 @@ html, body {
 .btn-action-full,
 #btn-create-room {
   width: 100%;
+  height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 12px 20px;
+  padding: 0 24px;
   font-size: 0.9rem;
   font-weight: 600;
   gap: 8px;
-  border-radius: 8px;
+  border-radius: 9999px;
   cursor: pointer;
   transition: all 0.2s ease;
   user-select: none;
@@ -693,17 +696,25 @@ html, body {
 }
 
 .btn-emerald {
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
-  border: 1px solid rgba(16, 185, 129, 0.4) !important;
-  color: #ffffff !important;
-  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.28);
-  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, background 0.2s ease, border-color 0.2s ease;
+  background: rgba(16, 185, 129, 0.14) !important;
+  border: 1px solid rgba(16, 185, 129, 0.35) !important;
+  color: #34d399 !important;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.15);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
 .btn-emerald:hover:not(:disabled) {
-  background: linear-gradient(135deg, #34d399 0%, #059669 100%) !important;
-  box-shadow: 0 6px 20px rgba(16, 185, 129, 0.42);
+  background: rgba(16, 185, 129, 0.25) !important;
+  border-color: rgba(16, 185, 129, 0.6) !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.35);
   transform: translateY(-1px);
+}
+
+.btn-emerald:active:not(:disabled) {
+  transform: translateY(0);
 }
 
 #btn-create-room.btn-copied {
@@ -715,17 +726,20 @@ html, body {
 }
 
 #btn-create-room.btn-waiting {
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.18) 0%, rgba(5, 150, 105, 0.3) 100%) !important;
-  border: 1px solid rgba(52, 211, 153, 0.35) !important;
-  color: #a7f3d0 !important;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2) !important;
+  background: rgba(16, 185, 129, 0.22) !important;
+  border: 1px solid rgba(52, 211, 153, 0.45) !important;
+  color: #6ee7b7 !important;
+  box-shadow: 0 0 14px rgba(16, 185, 129, 0.2) !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   font-size: 0.85rem;
 }
 
 #btn-create-room.btn-waiting:hover:not(:disabled) {
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.28) 0%, rgba(5, 150, 105, 0.42) 100%) !important;
-  border-color: rgba(52, 211, 153, 0.55) !important;
+  background: rgba(16, 185, 129, 0.32) !important;
+  border-color: rgba(52, 211, 153, 0.7) !important;
   color: #ffffff !important;
+  box-shadow: 0 0 22px rgba(16, 185, 129, 0.4) !important;
   transform: translateY(-1px);
 }
 
@@ -796,7 +810,7 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 12px 6px;
+  padding: 4px 6px;
 }
 
 .messages-container::-webkit-scrollbar {
@@ -893,6 +907,7 @@ html, body {
 
 .btn-message-burn {
   position: relative;
+  top: -2px;
   margin-left: auto;
   width: 22px;
   height: 22px;
@@ -1150,7 +1165,7 @@ html, body {
 
 /* Input Bar / Footer */
 .chat-footer {
-  padding: 12px 16px;
+  padding: 4px 0;
   flex-shrink: 0;
   background: transparent !important;
   border: none !important;
@@ -1168,7 +1183,7 @@ html, body {
   gap: 10px;
   align-items: center;
   padding-top: 4px;
-  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
