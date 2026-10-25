@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-041"
 title: "Mobile Browser Support & Resilience: Viewport, Safe-Area Insets, Focus Retention, and Reconnection"
-state: "PLANNING"
+state: "IN_PROGRESS"
 created_at: "2026-10-25T13:55:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-041/main"
