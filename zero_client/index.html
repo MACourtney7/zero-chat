@@ -43,17 +43,6 @@
             width: 100%;
             display: flex;
         }
-        .burn-room-bar {
-            width: 100%;
-            margin-bottom: 8px;
-        }
-        .btn-burn-full {
-            width: 100%;
-            padding: 10px 16px;
-            font-size: 0.85rem;
-            font-weight: 600;
-            text-align: center;
-        }
         #header-add-btn {
             display: inline-flex;
             align-items: center;
@@ -90,12 +79,17 @@
             <header class="chat-header glass-panel">
                 <div class="header-brand">
                     <span class="brand-icon">0</span>
-                    <div class="brand-text">
+                    <div class="brand-text" id="brand-text">
                         <h1 class="brand-title">zero-chat.pages.dev</h1>
                         <span class="brand-tagline">SECURE P2P CHAT</span>
                     </div>
                 </div>
                 <div class="header-controls">
+                    <button id="destroy-session-button" class="btn btn-burn btn-header-burn hidden" type="button" aria-label="Burn Chat">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"></path>
+                        </svg>
+                    </button>
                     <button id="header-add-btn" class="btn btn-icon hidden" type="button" aria-label="Add peer" style="display: none !important;">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                             <line x1="12" y1="5" x2="12" y2="19"></line>
@@ -122,15 +116,6 @@
                     </button>
                 </div>
             </header>
-
-            <!-- Full-width Burn Room control underneath header (active chat only) -->
-            <div id="burn-room-bar" class="burn-room-bar hidden">
-                <button id="destroy-session-button" class="btn btn-burn btn-burn-full btn-icon" type="button" aria-label="Burn Chat">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"></path>
-                    </svg>
-                </button>
-            </div>
 
             <main id="messages-container" class="messages-container">
                 <div id="welcome-splash" class="welcome-splash">
@@ -241,7 +226,17 @@
                 <line x1="2" y1="2" x2="22" y2="22"></line>
             </svg>`.trim();
 
+        if (typeof document !== "undefined" && !document.querySelector) {
+            document.querySelector = (sel) => {
+                if (sel === ".brand-text" || sel === "#brand-text") {
+                    return document.getElementById("brand-text");
+                }
+                return null;
+            };
+        }
+
         // DOM elements
+        const brandTextEl = document.querySelector(".brand-text");
         const headerAddBtn = document.getElementById("header-add-btn");
         const peerCountEl = document.getElementById("peer-count");
         const idleStatusCapsule = document.getElementById("idle-status-capsule");
@@ -254,7 +249,6 @@
         const inputAddPeerBtn = document.getElementById("input-add-peer-btn");
         const msgInput = document.getElementById("message-input");
         const sendBtn = document.getElementById("send-button");
-        const burnRoomBar = document.getElementById("burn-room-bar");
         const burnBtn = document.getElementById("destroy-session-button");
 
         let isInRoomSession = false;
@@ -349,9 +343,12 @@
 
         function updatePeerCountDisplay() {
             if (!peerCountEl) return;
-            const inRoom = isInRoomSession || (engine !== null && !isBurned);
+            const activeEngine = engine || (typeof window !== "undefined" && window.engine ? window.engine : null);
+            const inRoom = isInRoomSession || (Boolean(activeEngine) && !isBurned);
             if (!inRoom) {
-                // Home View: hide all right-side controls
+                // Home View: hide all right-side controls, show brand text
+                if (brandTextEl) brandTextEl.classList.remove("hidden");
+                if (burnBtn) burnBtn.classList.add("hidden");
                 peerCountEl.classList.add("hidden");
                 if (idleStatusCapsule) idleStatusCapsule.classList.add("hidden");
                 if (peerListEl) {
@@ -362,12 +359,14 @@
                 if (headerAddBtn) headerAddBtn.classList.add("hidden");
                 if (messageForm) messageForm.classList.add("hidden");
             } else {
-                const count = engine ? engine.openPeerCount : 0;
+                if (brandTextEl) brandTextEl.classList.add("hidden");
+                const count = activeEngine ? activeEngine.openPeerCount : 0;
                 peerCountEl.classList.remove("hidden");
                 if (headerLeaveBtn) headerLeaveBtn.classList.remove("hidden");
 
                 if (count === 0) {
-                    // 0 Peers: show slashed person icon & blue dot, hide padlock
+                    // 0 Peers: show slashed person icon & blue dot, hide padlock & burn button
+                    if (burnBtn) burnBtn.classList.add("hidden");
                     peerCountEl.innerHTML = SLASHED_PERSON_ICON_SVG;
                     if (idleStatusCapsule) idleStatusCapsule.classList.remove("hidden");
                     if (peerListEl) {
@@ -381,7 +380,8 @@
                         setCreateRoomStage1Plus();
                     }
                 } else {
-                    // >0 Peers: show numeric count & padlock, hide blue dot
+                    // >0 Peers: show numeric count, padlock, and burn button, hide blue dot
+                    if (burnBtn) burnBtn.classList.remove("hidden");
                     peerCountEl.textContent = String(count);
                     if (idleStatusCapsule) idleStatusCapsule.classList.add("hidden");
                     if (peerListEl) {
@@ -1993,8 +1993,8 @@
                     if (idleStatusCapsule) {
                         idleStatusCapsule.classList.remove("hidden");
                     }
-                    if (burnRoomBar) {
-                        burnRoomBar.classList.remove("hidden");
+                    if (burnBtn) {
+                        burnBtn.classList.add("hidden");
                     }
                     if (messageForm) {
                         messageForm.classList.add("hidden");
@@ -2054,7 +2054,7 @@
                     }
                     if (headerAddBtn) headerAddBtn.classList.add("hidden");
                     if (headerLeaveBtn) headerLeaveBtn.classList.remove("hidden");
-                    if (burnRoomBar) burnRoomBar.classList.remove("hidden");
+                    if (burnBtn && engine && engine.openPeerCount > 0) burnBtn.classList.remove("hidden");
                     if (createRoomBar) createRoomBar.classList.add("hidden");
                     if (messageForm) messageForm.classList.remove("hidden");
                     if (inputAddPeerBtn) {
@@ -2129,7 +2129,7 @@
                         }
                         if (headerAddBtn) headerAddBtn.classList.add("hidden");
                         if (headerLeaveBtn) headerLeaveBtn.classList.add("hidden");
-                        if (burnRoomBar) burnRoomBar.classList.add("hidden");
+                        if (burnBtn) burnBtn.classList.add("hidden");
                         if (messageForm) messageForm.classList.add("hidden");
                         if (createRoomBar) {
                             createRoomBar.classList.remove("hidden");
@@ -3042,9 +3042,10 @@
                 peerListEl.classList.add("hidden");
                 peerListEl.innerHTML = "";
             }
+            if (brandTextEl) brandTextEl.classList.remove("hidden");
+            if (burnBtn) burnBtn.classList.add("hidden");
             if (headerAddBtn) headerAddBtn.classList.add("hidden");
             if (headerLeaveBtn) headerLeaveBtn.classList.add("hidden");
-            if (burnRoomBar) burnRoomBar.classList.add("hidden");
             if (messageForm) messageForm.classList.add("hidden");
             if (createRoomBar) {
                 createRoomBar.classList.remove("hidden");
@@ -3150,6 +3151,8 @@
         window.createRoomAsHost = createRoomAsHost;
         window.joinRoomFromHash = joinRoomFromHash;
         window.headerAddBtn = headerAddBtn;
+        window.burnBtn = burnBtn;
+        window.brandTextEl = brandTextEl;
         window.inputAddPeerBtn = inputAddPeerBtn;
         window.idleStatusCapsule = idleStatusCapsule;
         window.peerListEl = peerListEl;
@@ -3181,6 +3184,7 @@
         window.setHasActiveSession = (v) => { hasActiveSession = v; };
         window.isInRoomSession = () => isInRoomSession;
         window.setIsInRoomSession = (v) => { isInRoomSession = v; updatePeerCountDisplay(); };
+        window.setEngine = (e) => { engine = e; window.engine = e; };
         window.SLASHED_PERSON_ICON_SVG = SLASHED_PERSON_ICON_SVG;
         window.triggerCreateRoomNotices = triggerCreateRoomNotices;
         window.getStaggerNoticeTimer = () => staggerNoticeTimer;
