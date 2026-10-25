@@ -20,6 +20,7 @@ Following the visual modernization in `ticket-042`, five specific UI glitches an
 3. **Burn Button Hidden in Limbo State**: In `ticket-042`, `#destroy-session-button` was hidden when `openPeerCount === 0`. However, the user requires that whenever `#header-leave-btn` is visible (any in-room session), `#destroy-session-button` must also remain visible, enabling users to incinerate a room session even when in a 0-peer limbo state.
 4. **Chat Bubble Text Spilling Out on Mobile Keyboard Open**: On mobile viewports (e.g. iOS Safari), opening the virtual keyboard compresses the vertical space of `.messages-container`. Because `.message-bubble` lacks `flex-shrink: 0`, flexbox forcibly compresses each bubble down to its `min-height: 44px`. Because `overflow` is visible, the message text (`.message-text`) spills out below the bubble background onto the dark page background.
 5. **Redundant Static Ellipses in Ticking System Messages**: Transient system status displays like `"Waiting for host..."` include three literal trailing dots in the input string, while the `.ticking-dots` element adds an additional 1 to 3 animated dots, producing an erroneous `"Waiting for host......"` (6 dots). All ellipsis messages must strictly display their dynamic ticking ellipsis with zero static dots.
+6. **Mobile Browser Web Share API & Dynamic Share Icon**: On mobile browsers, sending invite links via the system share sheet (`navigator.share`) is significantly faster and more intuitive than manual copy-paste. When `navigator.share` is supported, clicking the bottom `#input-add-peer-btn` or the full-width `#btn-create-room` must trigger the native share sheet with the invite link, and the Stage 2 waiting button must dynamically morph to a Share icon (`SHARE_ICON_SVG`) and `aria-label="Share invite link"`, with re-clicking re-opening the share sheet. On desktop or unsupported platforms, the button gracefully falls back to clipboard copying with the Copy icon (`COPY_ICON_SVG`).
 
 ---
 
@@ -71,14 +72,44 @@ Following the visual modernization in `ticket-042`, five specific UI glitches an
     - If `isWaitingDots` is true, defensively strip any trailing dots from `text`.
   - All status/temporary messages render strictly with dynamic animated ticking dots and 0 redundant static dots.
 
-### REQ-043.6: Automated Headless Browser & Workspace Test Verification
+### REQ-043.6: Mobile Browser Web Share API Integration and Stage 2 Dynamic Share Icon
+- In `zero_client/index.html`:
+  - Define `SHARE_ICON_SVG`:
+    ```javascript
+    const SHARE_ICON_SVG = `
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="18" cy="5" r="3"></circle>
+            <circle cx="6" cy="12" r="3"></circle>
+            <circle cx="18" cy="19" r="3"></circle>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+        </svg>`.trim();
+    ```
+  - Feature detection:
+    `const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";`
+  - When `canShare` is true:
+    - On clicking `#btn-create-room` (in `createRoomAsHost()` or `handleInRoomInvite()`), or `#input-add-peer-btn` (in `handleInRoomInvite()`):
+      - Invoke `navigator.share({ title: "zero-chat", text: "Join my encrypted zero-chat session:", url: inviteUrl })` (silently swallowing `AbortError` if user dismisses native share dialog).
+      - Maintain background clipboard write (`navigator.clipboard.writeText`) as a fallback so the invite link is also in clipboard.
+      - In Stage 2 (`setCreateRoomStage2()` and `setInputAddPeerBtnStage2()`):
+        - Set button innerHTML to `SHARE_ICON_SVG` instead of `COPY_ICON_SVG`.
+        - Set `aria-label` to `"Share invite link"` instead of `"Copy invite link"`.
+      - On subsequent clicks while in Stage 2 (waiting for peer):
+        - Re-invoke `navigator.share(...)` and background clipboard write.
+  - When `canShare` is false (desktop browsers or browsers without Web Share support):
+    - Maintain existing behavior: clipboard copy, `COPY_ICON_SVG`, and `aria-label="Copy invite link"`.
+
+### REQ-043.7: Automated Headless Browser & Workspace Test Verification
 - In `zero_client/tests/browser/test_mesh_scenario.js`:
   - Update Test 18 and Test 19 to assert:
     - `.message-bubble` has `flex-shrink: 0`.
     - `#destroy-session-button` theme matches `rgba(244, 63, 94, ...)` and `#fda4af`.
     - `#destroy-session-button` remains visible during 0-peer limbo room state when `#header-leave-btn` is visible.
     - `showTransientStatus` strips trailing dots and never produces 6 dots.
-  - All 19 browser test suites pass (`bash zero_client/tests/browser/run_test.sh`).
+  - Add Test 20 (or expand Test 18/19) to assert:
+    - When `navigator.share` is present: `#btn-create-room` and `#input-add-peer-btn` invoke `navigator.share`, display `SHARE_ICON_SVG` in Stage 2, set `aria-label="Share invite link"`, and subsequent clicks re-invoke `navigator.share`.
+    - When `navigator.share` is absent: `#btn-create-room` and `#input-add-peer-btn` copy to clipboard, display `COPY_ICON_SVG` in Stage 2, and set `aria-label="Copy invite link"`.
+  - All browser test suites pass (`bash zero_client/tests/browser/run_test.sh`).
   - All 123 Rust workspace tests pass (`cargo test --workspace`).
   - Dual WASM compilation checks pass (`zero_client` and `zero_network`).
 
@@ -89,8 +120,8 @@ Following the visual modernization in `ticket-042`, five specific UI glitches an
 | Module / File | Scope of Changes |
 |---|---|
 | `zero_client/style.css` | Fix bottom button hover glow clipping (`overflow: visible`, padding); align burn button color palette/height with leave button (`rgba(244, 63, 94, ...)`, 26px); add `flex-shrink: 0` to `.message-bubble`. |
-| `zero_client/index.html` | Ensure `#destroy-session-button` is visible whenever `#header-leave-btn` is visible (including limbo); clean static dots from `showTransientStatus` and defensively strip trailing dots before adding `.ticking-dots`. |
-| `zero_client/tests/browser/test_mesh_scenario.js` | Update test assertions for limbo burn button visibility, burn button color palette, bubble flex containment, and ellipsis de-duplication. |
+| `zero_client/index.html` | Ensure `#destroy-session-button` is visible whenever `#header-leave-btn` is visible (including limbo); clean static dots from `showTransientStatus`; integrate Web Share API (`navigator.share`) on mobile browsers for `#btn-create-room` and `#input-add-peer-btn`, morphing Stage 2 to dynamic `SHARE_ICON_SVG` and `aria-label="Share invite link"`. |
+| `zero_client/tests/browser/test_mesh_scenario.js` | Update test assertions for limbo burn button visibility, burn button color palette, bubble flex containment, ellipsis de-duplication, and Web Share API / Share icon behavior. |
 | `openspec/specs/overview.md` | Reconcile canonical spec with Invariant 18 & 19 updates upon completion. |
 
 ---
