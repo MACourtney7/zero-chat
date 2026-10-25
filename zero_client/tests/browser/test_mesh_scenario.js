@@ -1623,6 +1623,10 @@ async function runTests() {
                 cssContent.includes(".keyboard-open") && cssContent.includes("padding-bottom: 8px;"),
                 "style.css: .keyboard-open must define padding-bottom: 8px"
             );
+            assert(
+                cssContent.includes(".message-bubble") && cssContent.includes("flex-shrink: 0;"),
+                "style.css: .message-bubble must define flex-shrink: 0;"
+            );
         }
 
         // 2. Visual Viewport Synchronization & Keyboard Adaptation
@@ -1682,7 +1686,7 @@ async function runTests() {
                 if (dropAttempts === 1) {
                     setTimeout(() => {
                         const transientEl = feed.querySelector(".transient-status");
-                        if (transientEl && (transientEl.textContent.includes("Waiting for host...") || transientEl.innerHTML.includes("Waiting for host..."))) {
+                        if (transientEl && (transientEl.textContent.includes("Waiting for host") || transientEl.innerHTML.includes("Waiting for host"))) {
                             observedTransientStatus = true;
                         }
                         if (typeof advanceTimersByTime === "function") {
@@ -1712,8 +1716,21 @@ async function runTests() {
         assert(dropAttempts >= 2,
             `Joiner must retry dead-drop after 404 response, made ${dropAttempts} attempts`);
         assert(observedTransientStatus === true,
-            "Joiner must display 'Waiting for host...' transient status during retry loop");
+            "Joiner must display 'Waiting for host' transient status during retry loop");
         rootGlobal.fetch = origFetch;
+
+        // Ellipsis de-duplication assertion: showTransientStatus strips trailing literal dots
+        showTransientStatus("Waiting for host...");
+        const transientEl = feed.querySelector(".transient-status");
+        assert(transientEl !== null, "showTransientStatus must render .transient-status element in feed");
+        const transientTextEl = transientEl.querySelector(".transient-text");
+        assert(transientTextEl !== null, ".transient-status must contain .transient-text element");
+        assert(transientTextEl.textContent === "Waiting for host",
+            `.transient-text textContent must strictly be 'Waiting for host' without trailing literal dots, got '${transientTextEl.textContent}'`);
+        const tickingDotsEls = transientEl.querySelectorAll(".ticking-dots");
+        assert(tickingDotsEls.length === 1,
+            `Must contain exactly single .ticking-dots element, got ${tickingDotsEls.length}`);
+        clearTransientStatus();
 
         // Host WebSocket Reconnect on visibilitychange
         resetToHome();
@@ -1833,6 +1850,14 @@ async function runTests() {
         assert(msgInputBlocks.some(b => b.includes("border-radius: 9999px")),
             "#message-input must define border-radius: 9999px");
 
+        // Verify .message-form / .input-dock styling
+        const messageFormBlocks = getRulesForSelector(".message-form");
+        assert(messageFormBlocks.length > 0, ".message-form CSS rule must exist");
+        assert(messageFormBlocks.some(b => b.includes("overflow: visible")),
+            ".message-form must define overflow: visible");
+        assert(messageFormBlocks.some(b => b.includes("padding-top: 4px")),
+            ".message-form must define padding-top: 4px");
+
         // Verify #destroy-session-button / .btn-header-burn styling
         const burnBtnBlocks = getRulesForSelector("#destroy-session-button");
         assert(burnBtnBlocks.length > 0, "#destroy-session-button or .btn-header-burn CSS rule must exist");
@@ -1840,10 +1865,14 @@ async function runTests() {
             "#destroy-session-button must define border-radius: 9999px");
         assert(burnBtnBlocks.some(b => b.includes("min-width: 80px")),
             "#destroy-session-button must define min-width: 80px");
-        assert(burnBtnBlocks.some(b => b.includes("height: 28px")),
-            "#destroy-session-button must define height: 28px");
-        assert(burnBtnBlocks.some(b => b.includes("background: rgba(239, 68, 68, 0.12)")),
-            "#destroy-session-button must define background: rgba(239, 68, 68, 0.12)");
+        assert(burnBtnBlocks.some(b => b.includes("height: 26px")),
+            "#destroy-session-button must define height: 26px");
+        assert(burnBtnBlocks.some(b => b.includes("background: rgba(244, 63, 94, 0.12)")),
+            "#destroy-session-button must define background: rgba(244, 63, 94, 0.12)");
+        assert(burnBtnBlocks.some(b => b.includes("border: 1px solid rgba(244, 63, 94, 0.32)")),
+            "#destroy-session-button must define border: 1px solid rgba(244, 63, 94, 0.32)");
+        assert(burnBtnBlocks.some(b => b.includes("color: #fda4af")),
+            "#destroy-session-button must define color: #fda4af");
 
         // Verify rounded bottom controls (#input-add-peer-btn and #send-button)
         const sendBtnBlocks = getRulesForSelector("#send-button");
@@ -1892,12 +1921,19 @@ async function runTests() {
             document.getElementById("brand-text");
         assert(brandText !== null, ".brand-text element must exist");
 
+        const leave = (typeof headerLeaveBtn !== "undefined" && headerLeaveBtn) ||
+            document.getElementById("header-leave-btn") ||
+            document.querySelector("#header-leave-btn");
+        assert(leave !== null, "#header-leave-btn must exist in the DOM");
+
         // Initial Home state
         resetToHome();
         assert(brandText.classList.contains("hidden") === false,
             "Initial Home state: .brand-text must be visible (!classList.contains('hidden'))");
         assert(burn.classList.contains("hidden") === true,
             "Initial Home state: #destroy-session-button must be hidden (classList.contains('hidden'))");
+        assert(leave.classList.contains("hidden") === true,
+            "Initial Home state: #header-leave-btn must be hidden (classList.contains('hidden'))");
 
         // Limbo room state (isInRoomSession = true, 0 peers)
         setIsInRoomSession(true);
@@ -1907,8 +1943,10 @@ async function runTests() {
         updatePeerCountDisplay();
         assert(brandText.classList.contains("hidden") === true,
             "Limbo room state: .brand-text must be hidden with 0 peers in session");
-        assert(burn.classList.contains("hidden") === true,
-            "Limbo room state: #destroy-session-button must be hidden with 0 peers");
+        assert(!leave.classList.contains("hidden"),
+            "Limbo room state: #header-leave-btn must remain visible (!classList.contains('hidden'))");
+        assert(!burn.classList.contains("hidden"),
+            "Limbo room state: #destroy-session-button must remain visible with 0 peers (!classList.contains('hidden'))");
 
         // Active chat state (openPeerCount = 2)
         const activeEngine = { openPeerCount: 2, close: () => {} };
@@ -1917,6 +1955,8 @@ async function runTests() {
         updatePeerCountDisplay();
         assert(brandText.classList.contains("hidden") === true,
             "Active chat state: .brand-text must remain hidden");
+        assert(!leave.classList.contains("hidden"),
+            "Active chat state: #header-leave-btn must remain visible");
         assert(burn.classList.contains("hidden") === false,
             "Active chat state: #destroy-session-button must be visible (>0 peers)");
 
@@ -1925,8 +1965,10 @@ async function runTests() {
         updatePeerCountDisplay();
         assert(brandText.classList.contains("hidden") === true,
             "Departure to Limbo: .brand-text must remain hidden while in session");
-        assert(burn.classList.contains("hidden") === true,
-            "Departure to Limbo: #destroy-session-button must be hidden when peer count drops to 0");
+        assert(!leave.classList.contains("hidden"),
+            "Departure to Limbo: #header-leave-btn must remain visible");
+        assert(!burn.classList.contains("hidden"),
+            "Departure to Limbo: #destroy-session-button must remain visible when peer count drops to 0");
 
         // Reset to Home
         resetToHome();
@@ -1934,6 +1976,8 @@ async function runTests() {
             "Reset to Home: .brand-text must be restored to visible");
         assert(burn.classList.contains("hidden") === true,
             "Reset to Home: #destroy-session-button must be hidden");
+        assert(leave.classList.contains("hidden") === true,
+            "Reset to Home: #header-leave-btn must be hidden");
 
         print("  PASS: UI Architecture Refinements: Transparent Panels, Relocated Burn Button & Rounded Controls verified cleanly.");
     }
