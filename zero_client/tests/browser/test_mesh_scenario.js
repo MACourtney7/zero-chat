@@ -932,7 +932,7 @@ async function runTests() {
         }
         const cssContent = readCssFile();
         if (cssContent) {
-            const btnPeerWaitingMatch = cssContent.match(/\.btn-action-peer\.btn-waiting\s*\{([^}]+)\}/);
+            const btnPeerWaitingMatch = cssContent.match(/(?:\.btn-action-peer\.btn-waiting|#input-add-peer-btn\.btn-waiting)[^{]*\{([^}]+)\}/) || cssContent.match(/\.btn-action-peer\.btn-waiting\s*\{([^}]+)\}/);
             assert(btnPeerWaitingMatch !== null, ".btn-action-peer.btn-waiting CSS rule must exist");
             const ruleBody = btnPeerWaitingMatch[1];
             assert(!ruleBody.includes("#fbbf24") && !ruleBody.includes("245, 158, 11"),
@@ -1760,6 +1760,182 @@ async function runTests() {
         navigator.clipboard.writeText = origWriteText;
         resetToHome();
         print("  PASS: REQ-041.1 - REQ-041.8 verified cleanly.");
+    }
+
+    // --- Test 19: UI Architecture Refinements: Transparent Panels, Relocated Burn Button & Rounded Controls (ticket-042) ---
+    print("\n--- Test 19: UI Architecture Refinements: Transparent Panels, Relocated Burn Button & Rounded Controls (ticket-042) ---");
+    {
+        // 1. CSS Transparent Panels & Rounded Controls Assertions
+        function readCssFile() {
+            if (typeof read === "function") {
+                return read("zero_client/style.css");
+            } else if (typeof require !== "undefined") {
+                const fs = require("fs");
+                return fs.readFileSync("zero_client/style.css", "utf8");
+            }
+            return "";
+        }
+        function readIndexHtml() {
+            if (typeof read === "function") {
+                return read("zero_client/index.html");
+            } else if (typeof require !== "undefined") {
+                const fs = require("fs");
+                return fs.readFileSync("zero_client/index.html", "utf8");
+            }
+            return "";
+        }
+
+        const cssContent = readCssFile();
+        assert(cssContent.length > 0, "style.css must be readable and non-empty");
+
+        function getRulesForSelector(sel) {
+            const blocks = [];
+            const ruleRegex = /([^{]+)\{([^}]+)\}/g;
+            let rm;
+            while ((rm = ruleRegex.exec(cssContent)) !== null) {
+                const selectors = rm[1].split(",").map(s => s.trim());
+                if (selectors.some(s => s === sel || s.endsWith(sel) || s.includes(sel))) {
+                    blocks.push(rm[2]);
+                }
+            }
+            return blocks;
+        }
+
+        // Verify .chat-header transparent styling
+        const chatHeaderBlocks = getRulesForSelector(".chat-header");
+        assert(chatHeaderBlocks.length > 0, ".chat-header CSS rule must exist");
+        assert(chatHeaderBlocks.some(b => b.includes("background: transparent !important")),
+            ".chat-header must define background: transparent !important");
+        assert(chatHeaderBlocks.some(b => b.includes("border: none !important")),
+            ".chat-header must define border: none !important");
+
+        // Verify .welcome-splash transparent styling
+        const welcomeSplashBlocks = getRulesForSelector(".welcome-splash");
+        assert(welcomeSplashBlocks.length > 0, ".welcome-splash CSS rule must exist");
+        assert(welcomeSplashBlocks.some(b => b.includes("background: transparent !important")),
+            ".welcome-splash must define background: transparent !important");
+        assert(welcomeSplashBlocks.some(b => b.includes("border: none !important")),
+            ".welcome-splash must define border: none !important");
+
+        // Verify .chat-footer transparent styling
+        const chatFooterBlocks = getRulesForSelector(".chat-footer");
+        assert(chatFooterBlocks.length > 0, ".chat-footer CSS rule must exist");
+        assert(chatFooterBlocks.some(b => b.includes("background: transparent !important")),
+            ".chat-footer must define background: transparent !important");
+        assert(chatFooterBlocks.some(b => b.includes("border: none !important")),
+            ".chat-footer must define border: none !important");
+
+        // Verify #message-input / .message-input styling
+        const msgInputBlocks = getRulesForSelector("#message-input");
+        assert(msgInputBlocks.length > 0, "#message-input or .message-input CSS rule must exist");
+        assert(msgInputBlocks.some(b => b.includes("background: rgba(18, 24, 38, 0.7)")),
+            "#message-input must define background: rgba(18, 24, 38, 0.7)");
+        assert(msgInputBlocks.some(b => b.includes("border-radius: 9999px")),
+            "#message-input must define border-radius: 9999px");
+
+        // Verify #destroy-session-button / .btn-header-burn styling
+        const burnBtnBlocks = getRulesForSelector("#destroy-session-button");
+        assert(burnBtnBlocks.length > 0, "#destroy-session-button or .btn-header-burn CSS rule must exist");
+        assert(burnBtnBlocks.some(b => b.includes("border-radius: 9999px")),
+            "#destroy-session-button must define border-radius: 9999px");
+        assert(burnBtnBlocks.some(b => b.includes("min-width: 80px")),
+            "#destroy-session-button must define min-width: 80px");
+        assert(burnBtnBlocks.some(b => b.includes("height: 28px")),
+            "#destroy-session-button must define height: 28px");
+        assert(burnBtnBlocks.some(b => b.includes("background: rgba(239, 68, 68, 0.12)")),
+            "#destroy-session-button must define background: rgba(239, 68, 68, 0.12)");
+
+        // Verify rounded bottom controls (#input-add-peer-btn and #send-button)
+        const sendBtnBlocks = getRulesForSelector("#send-button");
+        assert(sendBtnBlocks.length > 0 && sendBtnBlocks.some(b => b.includes("border-radius: 9999px")),
+            "#send-button must define border-radius: 9999px");
+        const addPeerBlocks = getRulesForSelector("#input-add-peer-btn");
+        assert(addPeerBlocks.length > 0 && addPeerBlocks.some(b => b.includes("border-radius: 9999px")),
+            "#input-add-peer-btn must define border-radius: 9999px");
+
+        // 2. DOM Layout & Positioning Assertions
+        const controls = (typeof headerControls !== "undefined" && headerControls) ||
+            document.querySelector(".header-controls") ||
+            document.getElementById("header-controls");
+        assert(controls !== null, ".header-controls element must exist in the DOM");
+
+        const burn = (typeof burnBtn !== "undefined" && burnBtn) ||
+            document.getElementById("destroy-session-button") ||
+            document.querySelector("#destroy-session-button");
+        assert(burn !== null, "#destroy-session-button must exist in the DOM");
+
+        // Verify #destroy-session-button is inside .header-controls
+        assert(burn.parentNode === controls || controls.contains(burn),
+            "#destroy-session-button must be located inside .header-controls");
+
+        // Verify #destroy-session-button is the leftmost child
+        assert(controls.firstElementChild === burn,
+            "#destroy-session-button must be the leftmost first child element of .header-controls");
+
+        // Verify #burn-room-bar does not exist in the DOM
+        assert(document.getElementById("burn-room-bar") === null,
+            "#burn-room-bar must not exist in the DOM via getElementById");
+        assert(document.querySelector("#burn-room-bar") === null,
+            "#burn-room-bar must not exist in the DOM via querySelector");
+
+        const indexHtml = readIndexHtml();
+        if (indexHtml) {
+            assert(!indexHtml.includes('id="burn-room-bar"'),
+                "index.html must not contain #burn-room-bar container");
+            assert(indexHtml.includes('id="destroy-session-button"'),
+                "index.html must contain #destroy-session-button");
+        }
+
+        // 3. State Machine Visibility Toggles
+        const brandText = (typeof brandTextEl !== "undefined" && brandTextEl) ||
+            document.querySelector(".brand-text") ||
+            document.getElementById("brand-text");
+        assert(brandText !== null, ".brand-text element must exist");
+
+        // Initial Home state
+        resetToHome();
+        assert(brandText.classList.contains("hidden") === false,
+            "Initial Home state: .brand-text must be visible (!classList.contains('hidden'))");
+        assert(burn.classList.contains("hidden") === true,
+            "Initial Home state: #destroy-session-button must be hidden (classList.contains('hidden'))");
+
+        // Limbo room state (isInRoomSession = true, 0 peers)
+        setIsInRoomSession(true);
+        const limboEngine = { openPeerCount: 0, close: () => {} };
+        engine = limboEngine;
+        window.engine = limboEngine;
+        updatePeerCountDisplay();
+        assert(brandText.classList.contains("hidden") === true,
+            "Limbo room state: .brand-text must be hidden with 0 peers in session");
+        assert(burn.classList.contains("hidden") === true,
+            "Limbo room state: #destroy-session-button must be hidden with 0 peers");
+
+        // Active chat state (openPeerCount = 2)
+        const activeEngine = { openPeerCount: 2, close: () => {} };
+        engine = activeEngine;
+        window.engine = activeEngine;
+        updatePeerCountDisplay();
+        assert(brandText.classList.contains("hidden") === true,
+            "Active chat state: .brand-text must remain hidden");
+        assert(burn.classList.contains("hidden") === false,
+            "Active chat state: #destroy-session-button must be visible (>0 peers)");
+
+        // Departure to Limbo (engine.openPeerCount = 0)
+        activeEngine.openPeerCount = 0;
+        updatePeerCountDisplay();
+        assert(brandText.classList.contains("hidden") === true,
+            "Departure to Limbo: .brand-text must remain hidden while in session");
+        assert(burn.classList.contains("hidden") === true,
+            "Departure to Limbo: #destroy-session-button must be hidden when peer count drops to 0");
+
+        // Reset to Home
+        resetToHome();
+        assert(brandText.classList.contains("hidden") === false,
+            "Reset to Home: .brand-text must be restored to visible");
+        assert(burn.classList.contains("hidden") === true,
+            "Reset to Home: #destroy-session-button must be hidden");
+
+        print("  PASS: UI Architecture Refinements: Transparent Panels, Relocated Burn Button & Rounded Controls verified cleanly.");
     }
 
     print("\n===============================================================================");

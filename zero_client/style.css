@@ -575,7 +575,12 @@ html, body {
   transform: translateY(0);
 }
 
-.btn-action-peer.btn-waiting,
+.btn-action-peer.btn-waiting {
+  background: rgba(56, 189, 248, 0.28);
+  border-color: rgba(56, 189, 248, 0.65);
+  color: #38bdf8;
+}
+
 #input-add-peer-btn.btn-waiting {
   background: rgba(56, 189, 248, 0.28);
   border-color: rgba(56, 189, 248, 0.65);
