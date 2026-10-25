@@ -847,12 +847,23 @@
             this.onconnectionstatechange = null;
             this.oniceconnectionstatechange = null;
             this.ondatachannel = null;
+            this._listeners = new Map();
             this.addEventListener = function(event, cb) {
+                if (!this._listeners.has(event)) this._listeners.set(event, []);
+                this._listeners.get(event).push(cb);
                 if (event === "icegatheringstatechange") {
                     this._onIceGather = cb;
                 }
             };
-            this.removeEventListener = function() {};
+            this.removeEventListener = function(event, cb) {
+                if (this._listeners && this._listeners.has(event)) {
+                    this._listeners.set(event, this._listeners.get(event).filter(x => x !== cb));
+                }
+            };
+            this.dispatchEvent = function(ev) {
+                const list = (this._listeners && this._listeners.get(ev.type)) || [];
+                for (const cb of list) cb(ev);
+            };
 
             connectionRegistry.set(this.id, this);
         }

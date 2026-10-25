@@ -275,7 +275,11 @@
         let headerAddFeedbackEl = null;
         let inChatInviteFeedbackTimer = null;
         let inChatInviteFeedbackEl = null;
+        const peerRoles = new Map(); // peerId -> "inviter" | "joiner" | "mesh"
         const announcedJoinPeers = new Set();
+        let hasAnnouncedInitialSelfJoin = false;
+        const pendingDisconnectTimers = new Map(); // peerId -> { timer, expiry }
+        const DISCONNECT_GRACE_MS = 12000;
         const departedPeers = new Set();
         const activeSessionPeers = new Set();
         const knownSessionMembers = new Set();
@@ -519,11 +523,19 @@
         // WebRTC Engine (Browser native WebRTC with multi-peer connection pool)
         class ZeroWebRtcEngine {
             constructor(peerId = null) {
+                const defaultIceServers = [
+                    { urls: "stun:stun.cloudflare.com:3478" },
+                    { urls: "stun:stun.l.google.com:19302" },
+                    { urls: "stun:stun1.l.google.com:19302" },
+                    { urls: "stun:stun2.l.google.com:19302" },
+                    { urls: "stun:stun.l.google.com:3478" }
+                ];
+                let extraServers = [];
+                if (typeof window !== "undefined" && Array.isArray(window.ZERO_TURN_SERVERS)) {
+                    extraServers = window.ZERO_TURN_SERVERS;
+                }
                 this.rtcConfig = {
-                    iceServers: [
-                        { urls: "stun:stun.cloudflare.com:3478" },
-                        { urls: "stun:stun.l.google.com:19302" }
-                    ]
+                    iceServers: [...defaultIceServers, ...extraServers]
                 };
                 this.localPeerId = peerId || localPeerId;
                 // Map<peerId, { pc: RTCPeerConnection, dc: RTCDataChannel, state: string, peerId: string }>
@@ -661,33 +673,43 @@
             _waitForIceGatheringComplete(pc) {
                 if (!pc || pc.iceGatheringState === "complete") return Promise.resolve();
                 return new Promise((resolve) => {
-                    let timer = null;
+                    let maxTimeoutTimer = null;
+                    let settleTimer = null;
+                    let hasPublicCandidate = false;
+
                     const cleanup = () => {
-                        if (timer) {
-                            clearTimeout(timer);
-                            timer = null;
-                        }
+                        if (maxTimeoutTimer) clearTimeout(maxTimeoutTimer);
+                        if (settleTimer) clearTimeout(settleTimer);
                         pc.removeEventListener("icegatheringstatechange", check);
                         pc.removeEventListener("icecandidate", onCandidate);
                     };
-                    const check = () => {
-                        if (pc.iceGatheringState === "complete") {
-                            cleanup();
-                            resolve();
-                        }
-                    };
-                    const onCandidate = (ev) => {
-                        if (ev.candidate === null) {
-                            cleanup();
-                            resolve();
-                        }
-                    };
-                    pc.addEventListener("icegatheringstatechange", check);
-                    pc.addEventListener("icecandidate", onCandidate);
-                    timer = setTimeout(() => {
+
+                    const finish = () => {
                         cleanup();
                         resolve();
-                    }, 4500); // 4.5s fallback limit for mobile cellular latency
+                    };
+
+                    const check = () => {
+                        if (pc.iceGatheringState === "complete") finish();
+                    };
+
+                    const onCandidate = (ev) => {
+                        if (ev.candidate === null) {
+                            finish();
+                            return;
+                        }
+                        const candStr = ev.candidate.candidate || "";
+                        if (candStr.includes("typ srflx") || candStr.includes("typ relay")) {
+                            hasPublicCandidate = true;
+                            if (!settleTimer) {
+                                settleTimer = setTimeout(finish, 400); // 400ms settle timer
+                            }
+                        }
+                    };
+
+                    pc.addEventListener("icegatheringstatechange", check);
+                    pc.addEventListener("icecandidate", onCandidate);
+                    maxTimeoutTimer = setTimeout(finish, 5000);
                 });
             }
 
@@ -997,6 +1019,9 @@
 
         async function initiateRelayHandshake(relayPeerId, targetPeerId) {
             if (!engine) return;
+            if (!peerRoles.has(targetPeerId)) {
+                peerRoles.set(targetPeerId, "mesh");
+            }
             const now = Date.now();
             let st = memberHandshakeState.get(targetPeerId);
             if (!st) {
@@ -1612,6 +1637,21 @@
                 ? document.visibilityState === "visible"
                 : true;
             if (isVisible) {
+                if (typeof pendingDisconnectTimers !== "undefined") {
+                    for (const [pId, tObj] of pendingDisconnectTimers.entries()) {
+                        if (tObj && tObj.timer) {
+                            clearTimeout(tObj.timer);
+                        }
+                        tObj.expiry = Date.now() + 8000;
+                        tObj.timer = setTimeout(() => {
+                            pendingDisconnectTimers.delete(pId);
+                            handlePeerDeparture(pId, true);
+                        }, 8000);
+                    }
+                }
+                if (engine && typeof reconcileMesh === "function") {
+                    reconcileMesh();
+                }
                 if (activeHostSignaling) {
                     const peerState = engine && engine.peers.has(activeHostSignaling.assignedPeerId)
                         ? engine.peers.get(activeHostSignaling.assignedPeerId).state
@@ -1728,6 +1768,7 @@
             try {
                 const assignedPeerId = "peer-" + Math.random().toString(36).slice(2, 8);
                 pendingInvitePeerId = assignedPeerId;
+                peerRoles.set(assignedPeerId, "inviter");
 
                 const offerSdp = await engine.create_peer_offer(assignedPeerId);
 
@@ -1877,6 +1918,10 @@
             const stalledPeers = [];
             for (const [pId, p] of engine.peers.entries()) {
                 const realId = p.peerId || pId;
+                if ((activeHostSignaling && activeHostSignaling.assignedPeerId === realId) ||
+                    (activeInviteSignaling && activeInviteSignaling.assignedPeerId === realId)) {
+                    continue;
+                }
                 const isConnecting = p && (p.state === "connecting" || (p.dc && p.dc.readyState === "connecting"));
                 if (isConnecting) {
                     const st = memberHandshakeState.get(realId);
@@ -1909,8 +1954,8 @@
             }
 
             if (openPeers.length === 0) {
-                if (!anyConnecting) {
-                    // All peers departed and no connecting peers remain: trigger disconnected/home transition
+                if (!anyConnecting && pendingDisconnectTimers.size === 0) {
+                    // All peers departed, no connecting peers remain, and no pending disconnect grace timers: trigger disconnected/home transition
                     // without duplicate "Peer left chat" (respect departedPeers)
                     for (const stalledId of stalledPeers) {
                         departedPeers.add(stalledId);
@@ -1923,6 +1968,10 @@
             // 3. Reconcile known session members against open or connecting channels
             for (const remotePeerId of Array.from(knownSessionMembers)) {
                 if (remotePeerId === myPeerId) continue;
+                if ((activeHostSignaling && activeHostSignaling.assignedPeerId === remotePeerId) ||
+                    (activeInviteSignaling && activeInviteSignaling.assignedPeerId === remotePeerId)) {
+                    continue;
+                }
 
                 const peer = engine.peers.get(remotePeerId);
                 const isOpen = peer && peer.state === "open" && peer.dc && peer.dc.readyState === "open";
@@ -2105,6 +2154,25 @@
             }
         }
 
+        function schedulePeerDisconnect(peerId) {
+            if (!hasActiveSession || isBurned) return;
+            if (!peerId || departedPeers.has(peerId)) return;
+            if (pendingDisconnectTimers.has(peerId)) return;
+
+            let grace = DISCONNECT_GRACE_MS;
+            if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+                grace = 20000; // extended when hidden
+            }
+            const timerObj = {
+                expiry: Date.now() + grace,
+                timer: setTimeout(() => {
+                    pendingDisconnectTimers.delete(peerId);
+                    handlePeerDeparture(peerId, true);
+                }, grace)
+            };
+            pendingDisconnectTimers.set(peerId, timerObj);
+        }
+
         function initEngineListeners() {
             engine.onStateChangeCb = (st, peerId) => {
                 if (st === "open") {
@@ -2129,6 +2197,10 @@
                     updateStatus("open", "P2P Established");
                     if (idleStatusCapsule) idleStatusCapsule.classList.add("hidden");
                     if (peerId) {
+                        if (pendingDisconnectTimers.has(peerId)) {
+                            clearTimeout(pendingDisconnectTimers.get(peerId).timer);
+                            pendingDisconnectTimers.delete(peerId);
+                        }
                         departedPeers.delete(peerId);
                         activeSessionPeers.add(peerId);
                         knownSessionMembers.add(peerId);
@@ -2169,21 +2241,36 @@
                         joinWatchdogTimer = null;
                     }
 
-                    if (isJoining) {
-                        appendSystemMessage("Joined chat");
-                        if (peerId) announcedJoinPeers.add(peerId);
-                        isJoining = false;
+                    if (peerId) {
+                        if (!announcedJoinPeers.has(peerId)) {
+                            announcedJoinPeers.add(peerId);
+                            const role = peerRoles.get(peerId);
+                            if (role === "joiner" && !hasAnnouncedInitialSelfJoin) {
+                                hasAnnouncedInitialSelfJoin = true;
+                                appendSystemMessage("Joined chat");
+                            } else if (!role && isJoining && !hasAnnouncedInitialSelfJoin) {
+                                hasAnnouncedInitialSelfJoin = true;
+                                appendSystemMessage("Joined chat");
+                            } else {
+                                appendSystemMessage("Peer joined chat");
+                            }
+                        }
                     } else {
-                        if (!peerId || !announcedJoinPeers.has(peerId)) {
+                        if (!hasAnnouncedInitialSelfJoin && isJoining) {
+                            hasAnnouncedInitialSelfJoin = true;
+                            appendSystemMessage("Joined chat");
+                        } else {
                             appendSystemMessage("Peer joined chat");
-                            if (peerId) announcedJoinPeers.add(peerId);
                         }
                     }
-                } else if (st === "closed") {
+                    isJoining = false;
+                } else if (st === "closed" || st === "disconnected") {
                     updateStatus("closed", "Disconnected");
                     if (headerAddBtn) headerAddBtn.classList.add("hidden");
                     if (hasActiveSession && !isBurned) {
-                        if (!peerDepartureHandled) {
+                        if (peerId && !departedPeers.has(peerId)) {
+                            schedulePeerDisconnect(peerId);
+                        } else if (!peerDepartureHandled) {
                             handlePeerDeparture(peerId);
                         }
                     } else if (isInRoomSession) {
@@ -2239,6 +2326,10 @@
 
             engine.onPeerStateChangeCb = (peerId, peerState) => {
                 if (peerState === "open") {
+                    if (pendingDisconnectTimers.has(peerId)) {
+                        clearTimeout(pendingDisconnectTimers.get(peerId).timer);
+                        pendingDisconnectTimers.delete(peerId);
+                    }
                     departedPeers.delete(peerId); // Clear departed flag on legitimate reconnect / open (REQ-031.5)
                     activeSessionPeers.add(peerId);
                     knownSessionMembers.add(peerId);
@@ -2272,9 +2363,18 @@
                     if (sendBtn) {
                         sendBtn.disabled = false;
                     }
-                    if (!announcedJoinPeers.has(peerId) && hasActiveSession) {
-                        appendSystemMessage("Peer joined chat");
+                    if (peerId && !announcedJoinPeers.has(peerId)) {
                         announcedJoinPeers.add(peerId);
+                        const role = peerRoles.get(peerId);
+                        if (role === "joiner" && !hasAnnouncedInitialSelfJoin) {
+                            hasAnnouncedInitialSelfJoin = true;
+                            appendSystemMessage("Joined chat");
+                        } else if (!role && isJoining && !hasAnnouncedInitialSelfJoin) {
+                            hasAnnouncedInitialSelfJoin = true;
+                            appendSystemMessage("Joined chat");
+                        } else {
+                            appendSystemMessage("Peer joined chat");
+                        }
                     }
 
                     // Universal Peer Introduction (REQ-029.3 / REQ-031.2)
@@ -2316,9 +2416,9 @@
                             }
                         }
                     }
-                } else if (peerState === "closed") {
+                } else if (peerState === "closed" || peerState === "disconnected") {
                     if (hasActiveSession && !isBurned) {
-                        handlePeerDeparture(peerId);
+                        schedulePeerDisconnect(peerId);
                     }
                 }
             };
@@ -2349,6 +2449,11 @@
                         data.peer_id ||
                         incomingPeerId;
 
+                    if (pendingDisconnectTimers.has(leavingPeerId)) {
+                        clearTimeout(pendingDisconnectTimers.get(leavingPeerId).timer);
+                        pendingDisconnectTimers.delete(leavingPeerId);
+                    }
+
                     // Forward leave signal to other open peers if needed (REQ-029.4)
                     if (activeEng && activeEng.peers) {
                         const fwdTtl = (data.ttl !== undefined ? data.ttl : 3) - 1;
@@ -2375,7 +2480,7 @@
                     }
 
                     // 1. Invoke handlePeerDeparture first to record leavingPeerId in departedPeers and purge messages:
-                    handlePeerDeparture(leavingPeerId);
+                    handlePeerDeparture(leavingPeerId, true);
 
                     // 2. Then quietly close the peer without triggering duplicate departure:
                     if (leavingPeerId && activeEng && activeEng.peers && activeEng.peers.has(leavingPeerId)) {
@@ -2429,6 +2534,9 @@
                                     offerSdp = sealed_offer;
                                 }
 
+                                if (!peerRoles.has(from_peer_id)) {
+                                    peerRoles.set(from_peer_id, "mesh");
+                                }
                                 activeSessionPeers.add(from_peer_id);
                                 knownSessionMembers.add(from_peer_id);
                                 updatePeerCountDisplay();
@@ -2436,6 +2544,11 @@
                                 // If already open, do not disrupt existing connection (REQ-031.2)
                                 const existingPeer = activeEng.peers.get(from_peer_id);
                                 if (existingPeer && existingPeer.state === "open" && existingPeer.dc && existingPeer.dc.readyState === "open") {
+                                    return;
+                                }
+
+                                if ((activeHostSignaling && activeHostSignaling.assignedPeerId === from_peer_id) ||
+                                    (activeInviteSignaling && activeInviteSignaling.assignedPeerId === from_peer_id)) {
                                     return;
                                 }
 
@@ -2542,6 +2655,9 @@
                                     answerSdp = sealed_answer;
                                 }
 
+                                if (!peerRoles.has(from_peer_id)) {
+                                    peerRoles.set(from_peer_id, "mesh");
+                                }
                                 activeSessionPeers.add(from_peer_id);
                                 knownSessionMembers.add(from_peer_id);
                                 updatePeerCountDisplay();
@@ -2563,6 +2679,13 @@
                         const myPeerId = (activeEng && activeEng.localPeerId) || localPeerId;
 
                         if (remotePeerId && remotePeerId !== myPeerId) {
+                            if (!peerRoles.has(remotePeerId)) {
+                                peerRoles.set(remotePeerId, "mesh");
+                            }
+                            if ((activeHostSignaling && activeHostSignaling.assignedPeerId === remotePeerId) ||
+                                (activeInviteSignaling && activeInviteSignaling.assignedPeerId === remotePeerId)) {
+                                return;
+                            }
                             activeSessionPeers.add(remotePeerId);
                             knownSessionMembers.add(remotePeerId);
                             updatePeerCountDisplay();
@@ -2781,6 +2904,7 @@
                 initEngineListeners();
 
                 const assignedPeerId = "peer-" + Math.random().toString(36).slice(2, 8);
+                peerRoles.set(assignedPeerId, "inviter");
                 const offerSdp = await engine.create_peer_offer(assignedPeerId);
 
                 // Generate random room DO ID and 32-byte host secret
@@ -2971,6 +3095,7 @@
                 initEngineListeners();
 
                 const hostPeerId = invite.host_peer_id || "peer-host";
+                peerRoles.set(hostPeerId, "joiner");
                 const answerSdp = await engine.accept_offer_and_create_answer(invite.sdp_offer.sdp, hostPeerId);
 
                 const dropPayload = {
@@ -3136,7 +3261,13 @@
             seenMessageIds.clear();
             seenMessageOrder.length = 0;
             pendingOffers.clear();
+            for (const [_, tObj] of pendingDisconnectTimers) {
+                if (tObj && tObj.timer) clearTimeout(tObj.timer);
+            }
+            pendingDisconnectTimers.clear();
+            peerRoles.clear();
             announcedJoinPeers.clear();
+            hasAnnouncedInitialSelfJoin = false;
             departedPeers.clear();
             activeSessionPeers.clear();
             knownSessionMembers.clear();
@@ -3344,6 +3475,12 @@
         window.triggerHonestCopyNotice = triggerHonestCopyNotice;
         window.triggerInChatHonestCopyNotice = triggerInChatHonestCopyNotice;
         window.isMobileBrowser = isMobileBrowser;
+        window.peerRoles = peerRoles;
+        window.announcedJoinPeers = announcedJoinPeers;
+        window.getHasAnnouncedInitialSelfJoin = () => hasAnnouncedInitialSelfJoin;
+        window.setHasAnnouncedInitialSelfJoin = (v) => { hasAnnouncedInitialSelfJoin = v; };
+        window.pendingDisconnectTimers = pendingDisconnectTimers;
+        window.DISCONNECT_GRACE_MS = DISCONNECT_GRACE_MS;
         try {
             Object.defineProperty(window, "opportunisticLeaveSent", {
                 get: () => opportunisticLeaveSent,
