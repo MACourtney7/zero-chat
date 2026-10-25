@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.16.0"
+version: "1.17.0"
 milestone: "ephemeral-ui-modernization"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-25T15:35:00Z"
+updated_at: "2026-10-25T17:15:00Z"
 ---
 ```
 
@@ -77,14 +77,14 @@ updated_at: "2026-10-25T15:35:00Z"
     - **Zero-Peer Blue Dot & Padlock Unification**: In all 0-peer room states (both host waiting and limbo disconnect), the top bar right controls strictly display `[no_peers_badge] [blue dot] [leave]`. The padlock icon (`#peer-list`) is strictly hidden when peer count is 0 and is displayed only during active encrypted sessions with >0 peers (where the blue dot is hidden).
     - **Bottom-Left Inlined Add Peer Button (`#input-add-peer-btn`) & 2-Stage Blue/Cyan Styling**: The top-bar `+` button (`#header-add-btn`) is permanently omitted. Inside `#message-form`, `#input-add-peer-btn` is placed on the left side of `#message-input` with the `+[person_icon]` vector icon, styled symmetrically with `#send-button` (44px × 42px). Amber/orange styling is completely eliminated from the active chat view.
       - **Stage 1 (Default / Idle)**: Translucent cyan (`background: rgba(56, 189, 248, 0.12); border-color: rgba(56, 189, 248, 0.3); color: var(--accent-cyan);`) displaying `ADD_PEER_ICON_SVG`.
-      - **Stage 2 (Active / Copied)**: Deeper blue/cyan accent (`background: rgba(56, 189, 248, 0.28); border-color: rgba(56, 189, 248, 0.65); color: #38bdf8;`) displaying `COPY_ICON_SVG`.
+      - **Stage 2 (Active / Copied / Shared)**: Deeper blue/cyan accent (`background: rgba(56, 189, 248, 0.28); border-color: rgba(56, 189, 248, 0.65); color: #38bdf8;`) displaying `SHARE_ICON_SVG` (when Web Share API is available) or `COPY_ICON_SVG` (desktop/fallback).
     - **5-Second Notice Timeout & Elimination of "Waiting for peer..." in Chat View**:
-      - Clicking `#input-add-peer-btn` triggers `triggerInChatInviteFeedback()`, copying the invite URL to clipboard, pulsing `.notice-pulse`, and displaying a single temporary notice `"Invite link copied to clipboard"` (`.in-chat-invite-notice`).
+      - Clicking `#input-add-peer-btn` triggers `triggerInChatInviteFeedback()`, copying the invite URL to clipboard, pulsing `.notice-pulse`, and displaying a single temporary notice `"Invite link ready to share"` (or `"Invite link copied to clipboard"`).
       - Distracting `"Waiting for peer..."` notices are completely suppressed in active chat.
       - The notice auto-dismisses and removes itself from the DOM after exactly 5000ms (`setTimeout(..., 5000)`).
-      - Re-clicking within 5000ms re-copies the URL, re-pulses the notice, and resets the 5000ms timer.
+      - Re-clicking within 5000ms re-copies the URL / re-triggers share, re-pulses the notice, and resets the 5000ms timer.
     - **Synchronized Button State Reversion**:
-      - When the 5000ms timeout expires, `#input-add-peer-btn` cleanly reverts from Stage 2 (copy icon) back to Stage 1 (`+[person_icon]`).
+      - When the 5000ms timeout expires, `#input-add-peer-btn` cleanly reverts from Stage 2 (share/copy icon) back to Stage 1 (`+[person_icon]`).
       - Peer connections or room teardowns cancel active timers, remove feedback elements, and reset the button to Stage 1.
       - Message draft text in `#message-input` is never modified or cleared during invite actions.
 17. **Mobile Browser Support & Resilience (Viewport, Safe Areas, Focus & Reconnection)**:
@@ -94,14 +94,20 @@ updated_at: "2026-10-25T15:35:00Z"
     - **Touch Focus Retention on Send**: `#send-button` binds `pointerdown` with `e.preventDefault()`, and `doSendMessage()` explicitly retains focus on `#message-input`, allowing continuous mobile typing without keyboard dismissal.
     - **Mobile Clipboard User-Gesture Compliance & Honest Fallback**: Uses `ClipboardItem` with deferred `Promise` in the user click stack. On permission failure (`NotAllowedError`), false copy claims are eliminated; the button morphs to Stage 2 (`.btn-waiting`, `COPY_ICON_SVG`) and displays honest notice `"Invite ready — tap Copy to copy link"`, copying synchronously upon subsequent tap with 100% reliability.
     - **Host WebSocket Suspension & Auto-Reconnection**: Active signaling context (`activeHostSignaling`, `activeInviteSignaling`) is retained in memory. `visibilitychange` listener (`visibilityState === "visible"`) auto-reconnects closed host WebSockets while peer channels are pending open.
-    - **Joiner 404 Retry Loop**: In `joinRoomFromHash`, if `POST /drop/...` receives HTTP 404 (host backgrounded in messaging app), it retries every 1500ms up to 10 attempts (~15s) while displaying transient status `"Waiting for host..."`.
+    - **Joiner 404 Retry Loop**: In `joinRoomFromHash`, if `POST /drop/...` receives HTTP 404 (host backgrounded in messaging app), it retries every 1500ms up to 10 attempts (~15s) while displaying transient status `"Waiting for host"`.
     - **ICE Gathering Latency & Bfcache Safety**: `_waitForIceGatheringComplete` timeout extended to 4500ms for cellular STUN latency. `pagehide` listener guarded with `!event.persisted`, preventing app switching into bfcache from falsely incinerating active room sessions.
 18. **Atmospheric Transparency, Relocated Header Burn Button & Rounded Glass Controls**:
     - **Atmospheric Transparency**: `.chat-header`, `.welcome-splash`, and `.chat-footer` / `#create-room-bar` strip opaque panel backgrounds, hard borders, box-shadows, and backdrop filters (`background: transparent !important; border: none !important; box-shadow: none !important; backdrop-filter: none !important;`), allowing the dark ambient gradient to flow seamlessly through the application layout.
     - **Header Brand Minimalism**: In Home View (`!inRoom`), `.brand-text` (`zero-chat.pages.dev` and `SECURE P2P CHAT`) is displayed alongside the cyan `0` brand glyph. In active room sessions (`inRoom`), `.brand-text` is hidden (`classList.add("hidden")`), preserving only the `0` glyph on the top-left and freeing up horizontal header width. Full brand text is restored upon `resetToHome()`.
-    - **Relocated Header Burn Button (Leftmost in Header Controls)**: The obsolete full-width `#burn-room-bar` underneath the header is completely excised, reclaiming vertical screen space for the message feed. `#destroy-session-button` is integrated into `.header-controls` as the leftmost/first child element, styled as a wide oval pill (`border-radius: 9999px; min-width: 80px; height: 28px; padding: 0 14px;`) with translucent red styling (`background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.3); color: var(--accent-rose);`), smooth rose micro-glow hover transitions (`box-shadow: 0 0 10px rgba(239, 68, 68, 0.35)`), and clean 16x16 flame icon. Managed by `updatePeerCountDisplay()`: hidden in Home and 0-peer Limbo states, visible in active chat (>0 peers).
+    - **Relocated Header Burn Button (Leftmost in Header Controls)**: The obsolete full-width `#burn-room-bar` underneath the header is completely excised, reclaiming vertical screen space for the message feed. `#destroy-session-button` is integrated into `.header-controls` as the leftmost/first child element, styled as a wide oval pill (`border-radius: 9999px; min-width: 80px; height: 26px; padding: 0 14px;`) with rose-500 styling matching `#header-leave-btn` (`background: rgba(244, 63, 94, 0.12); border: 1px solid rgba(244, 63, 94, 0.32); color: #fda4af;`), smooth rose micro-glow hover transitions (`box-shadow: 0 0 10px rgba(244, 63, 94, 0.35)`), and clean 16x16 flame icon. Managed by `updatePeerCountDisplay()`: hidden in Home view, and visible in all in-room sessions (both active chat and 0-peer limbo) alongside `#header-leave-btn`.
     - **Rounded Bottom Bar Buttons**: `#input-add-peer-btn` and `#send-button` enforce fully rounded pill geometry (`border-radius: 9999px; width: 42px; height: 42px;`), adopting the top-bar translucent glass aesthetic with micro-glow hover states and disabled opacity.
     - **Inverted Dock & Input Styling**: Bottom bar dock container is completely transparent; `#message-input` adopts the previous panel background (`rgba(18, 24, 38, 0.7)`), `backdrop-filter: blur(16px)`, `border: 1px solid rgba(255, 255, 255, 0.12)`, `border-radius: 9999px`, and `padding: 10px 18px`.
+19. **UI Glow Clearance, Bubble Flex Containment, Web Share API & Rounded Favicon Badge**:
+    - **Bottom Button Hover Glow Clearance**: `.message-form` and `.input-dock` define `overflow: visible;` and `padding-top: 4px;` providing vertical headroom so `#send-button:hover` and `#input-add-peer-btn:hover` box-shadows bloom uniformly in 360° without clipping against dock boundaries.
+    - **Mobile Bubble Flex Containment**: `.message-bubble` specifies `flex-shrink: 0; flex: 0 0 auto; height: auto;`. When `.messages-container` compresses vertically on mobile virtual keyboard deployment, bubbles retain their intrinsic content height, preventing message text from spilling outside the bubble container.
+    - **Ellipsis De-duplication**: Transient status and temporary system messages defensively strip trailing literal dots before appending `.ticking-dots`, ensuring zero static/animated dot duplication.
+    - **Mobile Browser Web Share API Integration**: On mobile browsers supporting `navigator.share`, clicking `#btn-create-room` or `#input-add-peer-btn` invokes the native OS share sheet with the invite link, dynamically transforming Stage 2 buttons to `SHARE_ICON_SVG` with `aria-label="Share invite link"`, with subsequent clicks re-opening the share sheet. Gracefully falls back to clipboard copying (`COPY_ICON_SVG`) on unsupported platforms.
+    - **Favicon Outer Border Rounding**: `<link rel="icon">` uses circular geometry (`circle cx='16' cy='16' r='15'`) matching the app-wide pill/circular design language (`border-radius: 9999px`).
 
 ---
 
