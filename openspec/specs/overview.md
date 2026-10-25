@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.17.0"
+version: "1.18.0"
 milestone: "ephemeral-ui-modernization"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-25T17:15:00Z"
+updated_at: "2026-10-25T18:10:00Z"
 ---
 ```
 
@@ -108,6 +108,12 @@ updated_at: "2026-10-25T17:15:00Z"
     - **Ellipsis De-duplication**: Transient status and temporary system messages defensively strip trailing literal dots before appending `.ticking-dots`, ensuring zero static/animated dot duplication.
     - **Mobile Browser Web Share API Integration**: On mobile browsers supporting `navigator.share`, clicking `#btn-create-room` or `#input-add-peer-btn` invokes the native OS share sheet with the invite link, dynamically transforming Stage 2 buttons to `SHARE_ICON_SVG` with `aria-label="Share invite link"`, with subsequent clicks re-opening the share sheet. Gracefully falls back to clipboard copying (`COPY_ICON_SVG`) on unsupported platforms.
     - **Favicon Outer Border Rounding**: `<link rel="icon">` uses circular geometry (`circle cx='16' cy='16' r='15'`) matching the app-wide pill/circular design language (`border-radius: 9999px`).
+20. **Platform-Scored Desktop Share Bypass, Clean Mobile Share URL, Burn Icon Optical Alignment, Vertical Space Reclamation & Pill Action Button Modernization**:
+    - **Desktop Web Share Bypass**: The Web Share API (`navigator.share`) is strictly scoped to mobile devices (`isMobileBrowser()`). On all desktop platforms (macOS, Windows, Linux), invite triggers directly copy the invite URL to clipboard via `navigator.clipboard.writeText`, completely bypassing desktop OS share popovers (AirDrop/Mail/Notes), displaying `COPY_ICON_SVG` with `aria-label="Copy invite link"` and temporary notice `"Invite link copied to clipboard"`.
+    - **Clean Mobile Share URL**: When invoking `navigator.share` on mobile devices, the payload strictly omits the `text` attribute (`{ title: "zero-chat", url: inviteUrl }`). This guarantees that native mobile OS share sheets ("Copy" action on iOS/Android) place strictly the bare URL onto the clipboard without prepended text (`"Join my encrypted zero-chat session:"`), enabling immediate navigation in browser address bars.
+    - **Burn Icon Optical Balance**: `.btn-message-burn` defines `top: -2px;`, elevating the bottom-heavy teardrop flame icon to align its visual center of mass with the left sender identity dot (`.peer-dot` / `.self-dot`).
+    - **Vertical Space Reclamation**: Eliminates ~50–60px of dead space at the top and bottom of the viewport by tightening `.chat-layout` (`padding: 0 16px; gap: 6px;`), `.chat-header` (`padding: 4px 4px; padding-top: calc(8px + env(safe-area-inset-top, 0px));`), `.messages-container` (`padding: 4px 6px;`), `.chat-footer` (`padding: 4px 0;`), and `.message-form` / `.create-room-bar` (`padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));`).
+    - **Full-Width Action Button Pill Modernization**: `#btn-create-room` and `.btn-action-full` transition from an outdated 8px opaque rectangle to a sleek glassmorphic pill (`border-radius: 9999px; height: 44px; padding: 0 24px;`) with translucent emerald glass styling, soft glow, and `backdrop-filter: blur(16px)`, harmonizing with `#send-button`, `#input-add-peer-btn`, and `#destroy-session-button`.
 
 ---
 
@@ -320,8 +326,9 @@ Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
     * Test 15: Enhanced Burn Behavior - 90s TTL, 70s aging fade, per-message flame button, distributed BurnMessage signaling, quiet room invariant, and reset restoration (REQ-035.1 - REQ-035.5)
     * Test 16: Limbo State Recovery - in-room plus button, two-stage copy morphing, staggered notices, 95s TTL immunity, peer reconnection, and zero whitespace ticking dots (REQ-036.1 - REQ-036.7)
     * Test 17: UI Architecture Refinement - Rules 1-4, minimalist badges, brand icon glyph, clean burn icon, blue vector splash icons, zero-delay failure recovery, timestamp removal, and joiner message integrity (REQ-037.1 - REQ-037.9)
-    * Test 18: Mobile Browser Support & Resilience - Viewport scroll lock, safe-area insets, 16px font-size, keyboard resize, pointerdown focus retention, joiner 404 retry loop, host WebSocket auto-reconnect, bfcache safety, and honest copy fallback (REQ-041.1 - REQ-041.8)
+    * Test 19: UI Architecture Refinements - Transparent Panels, Relocated Burn Button & Rounded Controls (ticket-042)
+    * Test 20: Mobile Browser Web Share API, Desktop Share Bypass, Clean Share URL, Burn Offset & Compacted Layout (ticket-043, ticket-044)
 
-Total: 123 Rust tests + 18 Browser tests passed, 0 failed.
+Total: 123 Rust tests + 20 Browser tests passed, 0 failed.
 ```
 
