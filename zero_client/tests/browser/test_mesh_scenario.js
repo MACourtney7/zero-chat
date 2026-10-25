@@ -2208,6 +2208,11 @@ async function runTests() {
         assert(cssContent.includes(".chat-footer") && cssContent.includes("padding: 4px 0;"),
             "Case C: .chat-footer must define 'padding: 4px 0;' in style.css");
 
+        assert((cssContent.includes(".btn-action-full") || cssContent.includes("#btn-create-room")) &&
+               cssContent.includes("border-radius: 9999px;") &&
+               cssContent.includes("height: 44px;"),
+            "Case C: .btn-action-full or #btn-create-room must define 'border-radius: 9999px;' and 'height: 44px;' in style.css (REQ-044.5)");
+
         // Favicon Badge has rounded circular outer border
         const htmlContent = readIndexHtml();
         if (htmlContent) {

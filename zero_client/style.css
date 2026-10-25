@@ -674,14 +674,15 @@ html, body {
 .btn-action-full,
 #btn-create-room {
   width: 100%;
+  height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 12px 20px;
+  padding: 0 24px;
   font-size: 0.9rem;
   font-weight: 600;
   gap: 8px;
-  border-radius: 8px;
+  border-radius: 9999px;
   cursor: pointer;
   transition: all 0.2s ease;
   user-select: none;
@@ -695,17 +696,25 @@ html, body {
 }
 
 .btn-emerald {
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
-  border: 1px solid rgba(16, 185, 129, 0.4) !important;
-  color: #ffffff !important;
-  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.28);
-  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, background 0.2s ease, border-color 0.2s ease;
+  background: rgba(16, 185, 129, 0.14) !important;
+  border: 1px solid rgba(16, 185, 129, 0.35) !important;
+  color: #34d399 !important;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.15);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
 .btn-emerald:hover:not(:disabled) {
-  background: linear-gradient(135deg, #34d399 0%, #059669 100%) !important;
-  box-shadow: 0 6px 20px rgba(16, 185, 129, 0.42);
+  background: rgba(16, 185, 129, 0.25) !important;
+  border-color: rgba(16, 185, 129, 0.6) !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.35);
   transform: translateY(-1px);
+}
+
+.btn-emerald:active:not(:disabled) {
+  transform: translateY(0);
 }
 
 #btn-create-room.btn-copied {
@@ -717,17 +726,20 @@ html, body {
 }
 
 #btn-create-room.btn-waiting {
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.18) 0%, rgba(5, 150, 105, 0.3) 100%) !important;
-  border: 1px solid rgba(52, 211, 153, 0.35) !important;
-  color: #a7f3d0 !important;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2) !important;
+  background: rgba(16, 185, 129, 0.22) !important;
+  border: 1px solid rgba(52, 211, 153, 0.45) !important;
+  color: #6ee7b7 !important;
+  box-shadow: 0 0 14px rgba(16, 185, 129, 0.2) !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   font-size: 0.85rem;
 }
 
 #btn-create-room.btn-waiting:hover:not(:disabled) {
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.28) 0%, rgba(5, 150, 105, 0.42) 100%) !important;
-  border-color: rgba(52, 211, 153, 0.55) !important;
+  background: rgba(16, 185, 129, 0.32) !important;
+  border-color: rgba(52, 211, 153, 0.7) !important;
   color: #ffffff !important;
+  box-shadow: 0 0 22px rgba(16, 185, 129, 0.4) !important;
   transform: translateY(-1px);
 }
 
