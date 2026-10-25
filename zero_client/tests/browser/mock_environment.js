@@ -290,6 +290,17 @@
             },
             offsetWidth: 100,
             children: [],
+            get firstElementChild() {
+                return (this.children && this.children.length > 0) ? this.children[0] : null;
+            },
+            contains: function(child) {
+                let curr = child;
+                while (curr) {
+                    if (curr === this) return true;
+                    curr = curr.parentNode;
+                }
+                return false;
+            },
             appendChild: function(child) {
                 child.parentNode = this;
                 this.children.push(child);
@@ -414,9 +425,46 @@
     global.createMockElement = createMockElement;
 
     const elementRegistry = new Map();
+
+    // Pre-populate header controls hierarchy per Ticket-042
+    const mockHeaderControls = createMockElement("header-controls", "header-controls", "div");
+    elementRegistry.set("header-controls", mockHeaderControls);
+
+    const mockBurnBtn = createMockElement("destroy-session-button", "btn btn-burn btn-header-burn hidden", "button");
+    mockBurnBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"></path></svg>';
+    elementRegistry.set("destroy-session-button", mockBurnBtn);
+    mockHeaderControls.appendChild(mockBurnBtn);
+
+    const mockHeaderAddBtn = createMockElement("header-add-btn", "btn btn-icon hidden", "button");
+    elementRegistry.set("header-add-btn", mockHeaderAddBtn);
+    mockHeaderControls.appendChild(mockHeaderAddBtn);
+
+    const mockPeerCountEl = createMockElement("peer-count", "peer-count-badge hidden", "div");
+    mockPeerCountEl.innerHTML = '<svg class="peer-slashed-user-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="10" cy="7" r="4"></circle><line x1="2" y1="2" x2="22" y2="22"></line></svg>';
+    elementRegistry.set("peer-count", mockPeerCountEl);
+    mockHeaderControls.appendChild(mockPeerCountEl);
+
+    const mockIdleStatusCapsule = createMockElement("idle-status-capsule", "status-capsule-disconnected hidden", "div");
+    elementRegistry.set("idle-status-capsule", mockIdleStatusCapsule);
+    mockHeaderControls.appendChild(mockIdleStatusCapsule);
+
+    const mockPeerListEl = createMockElement("peer-list", "peer-list hidden", "div");
+    elementRegistry.set("peer-list", mockPeerListEl);
+    mockHeaderControls.appendChild(mockPeerListEl);
+
+    const mockHeaderLeaveBtn = createMockElement("header-leave-btn", "btn btn-leave btn-icon hidden", "button");
+    elementRegistry.set("header-leave-btn", mockHeaderLeaveBtn);
+    mockHeaderControls.appendChild(mockHeaderLeaveBtn);
+
+    const mockBrandTextEl = createMockElement("brand-text", "brand-text", "div");
+    elementRegistry.set("brand-text", mockBrandTextEl);
+
     if (!global.document) {
         global.document = {
             getElementById: function(id) {
+                if (id === "burn-room-bar") {
+                    return null;
+                }
                 if (!elementRegistry.has(id)) {
                     const el = createMockElement(id);
                     if (id === "peer-count") {
@@ -467,6 +515,30 @@
                     elementRegistry.set(id, el);
                 }
                 return elementRegistry.get(id);
+            },
+            querySelector: function(selector) {
+                if (selector === ".header-controls" || selector === "#header-controls") {
+                    return elementRegistry.get("header-controls");
+                }
+                if (selector === ".brand-text" || selector === "#brand-text") {
+                    return elementRegistry.get("brand-text");
+                }
+                if (selector === "#destroy-session-button" || selector === ".btn-header-burn") {
+                    return elementRegistry.get("destroy-session-button");
+                }
+                if (selector === "#burn-room-bar" || selector === ".burn-room-bar") {
+                    return null;
+                }
+                if (selector.startsWith("#")) {
+                    const id = selector.slice(1);
+                    if (id === "burn-room-bar") return null;
+                    return elementRegistry.has(id) ? elementRegistry.get(id) : null;
+                }
+                return null;
+            },
+            querySelectorAll: function(selector) {
+                const el = this.querySelector(selector);
+                return el ? [el] : [];
             },
             createElement: function(tag) {
                 return createMockElement("", tag);
