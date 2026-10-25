@@ -174,13 +174,29 @@
                 },
                 contains: function(c) {
                     return classListArray.includes(c);
+                },
+                toggle: function(c, force) {
+                    if (force === undefined) {
+                        force = !classListArray.includes(c);
+                    }
+                    if (force) {
+                        if (!classListArray.includes(c)) classListArray.push(c);
+                    } else {
+                        const idx = classListArray.indexOf(c);
+                        if (idx >= 0) classListArray.splice(idx, 1);
+                    }
+                    return force;
                 }
             },
             _textContent: "",
             get textContent() {
                 if (this._textContent !== "") return this._textContent;
                 if (this.children && this.children.length > 0) {
-                    return this.children.map(c => c.textContent || "").join("");
+                    const ch = this.children.map(c => c.textContent || "").join("");
+                    if (ch) return ch;
+                }
+                if (this._innerHTML) {
+                    return this._innerHTML.replace(/<[^>]+>/g, "");
                 }
                 return "";
             },
@@ -353,7 +369,11 @@
             },
             setAttribute: function(k, v) { attributes.set(k, String(v)); },
             getAttribute: function(k) { return attributes.get(k) || null; },
-            focus: function() {},
+            focus: function() {
+                if (global.document) {
+                    global.document.activeElement = this;
+                }
+            },
             value: "",
             addEventListener: function(event, cb) {
                 if (!listeners.has(event)) listeners.set(event, []);
@@ -366,11 +386,24 @@
                     if (idx >= 0) list.splice(idx, 1);
                 }
             },
+            dispatchEvent: function(event) {
+                event.target = this;
+                if (listeners.has(event.type)) {
+                    for (const cb of [...listeners.get(event.type)]) {
+                        cb(event);
+                    }
+                }
+                return !event.defaultPrevented;
+            },
             click: function() {
                 if (listeners.has("click")) {
                     let last;
-                    for (const cb of listeners.get("click")) {
-                        last = cb({ target: this, preventDefault: () => {}, stopPropagation: () => {} });
+                    const evt = (typeof global.Event === "function")
+                        ? new global.Event("click", { cancelable: true })
+                        : { target: this, defaultPrevented: false, preventDefault: () => {}, stopPropagation: () => {} };
+                    evt.target = this;
+                    for (const cb of [...listeners.get("click")]) {
+                        last = cb(evt);
                     }
                     return last;
                 }
@@ -441,6 +474,66 @@
         };
     }
 
+    class MockEvent {
+        constructor(type, options = {}) {
+            this.type = type;
+            this.bubbles = !!options.bubbles;
+            this.cancelable = !!options.cancelable;
+            this.defaultPrevented = false;
+            this.target = null;
+            for (const key in options) {
+                this[key] = options[key];
+            }
+        }
+        preventDefault() {
+            this.defaultPrevented = true;
+        }
+        stopPropagation() {}
+    }
+    if (!global.Event) {
+        global.Event = MockEvent;
+    }
+    if (!global.PageTransitionEvent) {
+        class MockPageTransitionEvent extends MockEvent {
+            constructor(type, options = {}) {
+                super(type, options);
+                this.persisted = !!options.persisted;
+            }
+        }
+        global.PageTransitionEvent = MockPageTransitionEvent;
+    }
+
+    if (!global.document.documentElement) {
+        global.document.documentElement = createMockElement("html", "", "html");
+    }
+    if (!("visibilityState" in global.document)) {
+        global.document.visibilityState = "visible";
+    }
+    if (!("activeElement" in global.document)) {
+        global.document.activeElement = null;
+    }
+    const documentListeners = new Map();
+    global.document.addEventListener = function(event, cb) {
+        if (!documentListeners.has(event)) documentListeners.set(event, []);
+        documentListeners.get(event).push(cb);
+    };
+    global.document.removeEventListener = function(event, cb) {
+        if (documentListeners.has(event)) {
+            const list = documentListeners.get(event);
+            const idx = list.indexOf(cb);
+            if (idx >= 0) list.splice(idx, 1);
+        }
+    };
+    global.document.dispatchEvent = function(evt) {
+        evt.target = global.document;
+        if (documentListeners.has(evt.type)) {
+            for (const cb of [...documentListeners.get(evt.type)]) {
+                cb(evt);
+            }
+        }
+        return !evt.defaultPrevented;
+    };
+
     if (!global.navigator) {
         global.navigator = {
             clipboard: {
@@ -453,16 +546,42 @@
 
     if (!global.window) {
         global.window = global;
-        global.window.location = {
-            origin: "http://localhost:8080",
-            pathname: "/",
-            hash: ""
-        };
-        global.window.history = {
-            replaceState: function() {}
-        };
-        global.window.addEventListener = function() {};
     }
+    global.window.location = global.window.location || {
+        origin: "http://localhost:8080",
+        pathname: "/",
+        hash: ""
+    };
+    global.window.history = global.window.history || {
+        replaceState: function() {}
+    };
+    global.window.innerHeight = 844;
+    global.window.innerWidth = 390;
+    global.window.scrollTo = function(x, y) {
+        global.window.scrollX = x;
+        global.window.scrollY = y;
+    };
+    const windowListeners = new Map();
+    global.window.addEventListener = function(event, cb) {
+        if (!windowListeners.has(event)) windowListeners.set(event, []);
+        windowListeners.get(event).push(cb);
+    };
+    global.window.removeEventListener = function(event, cb) {
+        if (windowListeners.has(event)) {
+            const list = windowListeners.get(event);
+            const idx = list.indexOf(cb);
+            if (idx >= 0) list.splice(idx, 1);
+        }
+    };
+    global.window.dispatchEvent = function(evt) {
+        evt.target = global.window;
+        if (windowListeners.has(evt.type)) {
+            for (const cb of [...windowListeners.get(evt.type)]) {
+                cb(evt);
+            }
+        }
+        return !evt.defaultPrevented;
+    };
 
     if (!global.getComputedStyle) {
         global.getComputedStyle = function(el) {

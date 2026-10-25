@@ -1585,6 +1585,183 @@ async function runTests() {
         print("  PASS: REQ-037.1 - REQ-037.9 verified cleanly.");
     }
 
+    // =========================================================================
+    // TEST 18: Mobile Viewport, Safe-Area Insets, Focus Retention & Reconnection
+    // =========================================================================
+    {
+        print("\n--- Test 18: Mobile Viewport, Safe-Area Insets, Focus Retention & Reconnection ---");
+
+        function readCssFile() {
+            if (typeof read === "function") {
+                try { return read("zero_client/style.css"); } catch (_) {}
+            }
+            if (typeof require !== "undefined") {
+                try { return require("fs").readFileSync("zero_client/style.css", "utf-8"); } catch (_) {}
+            }
+            return "";
+        }
+
+        // 1. CSS Layout & Font Size Invariants
+        const cssContent = readCssFile();
+        if (cssContent) {
+            assert(
+                cssContent.includes("position: fixed;") &&
+                cssContent.includes("inset: 0;") &&
+                cssContent.includes("height: var(--app-height, 100dvh);") &&
+                cssContent.includes("overflow: hidden;"),
+                "style.css: html, body must contain position: fixed, inset: 0, height: var(--app-height, 100dvh), and overflow: hidden"
+            );
+            assert(
+                cssContent.includes("font-size: 16px;"),
+                "style.css: message input must define font-size: 16px to prevent iOS auto-zoom"
+            );
+            assert(
+                cssContent.includes("padding-top: calc(12px + env(safe-area-inset-top, 0px));"),
+                "style.css: .chat-header must define safe-area-inset-top padding"
+            );
+            assert(
+                cssContent.includes(".keyboard-open") && cssContent.includes("padding-bottom: 8px;"),
+                "style.css: .keyboard-open must define padding-bottom: 8px"
+            );
+        }
+
+        // 2. Visual Viewport Synchronization & Keyboard Adaptation
+        window.visualViewport = {
+            height: 480,
+            offsetTop: 0,
+            addEventListener: function() {},
+            removeEventListener: function() {}
+        };
+        window.syncMobileViewport();
+        assert(document.documentElement.classList.contains("keyboard-open") === true,
+            "Opening keyboard (height 480 < 844 * 0.85) must add .keyboard-open class");
+        assert(document.documentElement.style.getPropertyValue("--app-height") === "480px",
+            `CSS property --app-height must be 480px, got '${document.documentElement.style.getPropertyValue("--app-height")}'`);
+
+        // Simulate keyboard close (height: 844, offsetTop: 0)
+        window.visualViewport.height = 844;
+        window.visualViewport.offsetTop = 0;
+        window.syncMobileViewport();
+        assert(document.documentElement.classList.contains("keyboard-open") === false,
+            "Closing keyboard (height 844 >= 844 * 0.85) must remove .keyboard-open class");
+        assert(document.documentElement.style.getPropertyValue("--app-height") === "844px",
+            `CSS property --app-height must be 844px, got '${document.documentElement.style.getPropertyValue("--app-height")}'`);
+
+        // 3. Touch Focus Retention on Send
+        resetToHome();
+        const pdEvent = new Event("pointerdown", { cancelable: true });
+        sendBtn.dispatchEvent(pdEvent);
+        assert(pdEvent.defaultPrevented === true,
+            "sendBtn pointerdown event must preventDefault to retain touch focus");
+
+        // In active chat, type into msgInput, call doSendMessage(), assert document.activeElement === msgInput
+        msgInput.disabled = false;
+        msgInput.value = "Retain focus test message";
+        const testEngine = new ZeroWebRtcEngine("peer-mobile-focus");
+        engine = testEngine;
+        window.engine = testEngine;
+        document.activeElement = null;
+        await doSendMessage();
+        assert(document.activeElement === msgInput,
+            "msgInput must retain active focus after doSendMessage()");
+
+        // 4. Joiner 404 Retry Loop & Host WebSocket Reconnect
+        resetToHome();
+        setLocalPeerId("peer-host-retry-t18");
+        await createRoomAsHost();
+        const hostInviteUrl = getActiveHostInviteUrl();
+        assert(hostInviteUrl !== null, "Host invite URL must be generated");
+
+        let dropAttempts = 0;
+        let observedTransientStatus = false;
+        const rootGlobal = typeof globalThis !== "undefined" ? globalThis : window;
+        const origFetch = rootGlobal.fetch;
+        rootGlobal.fetch = async function(url, options = {}) {
+            if (url && url.includes("/drop/")) {
+                dropAttempts++;
+                if (dropAttempts === 1) {
+                    setTimeout(() => {
+                        const transientEl = feed.querySelector(".transient-status");
+                        if (transientEl && (transientEl.textContent.includes("Waiting for host...") || transientEl.innerHTML.includes("Waiting for host..."))) {
+                            observedTransientStatus = true;
+                        }
+                        if (typeof advanceTimersByTime === "function") {
+                            advanceTimersByTime(1500);
+                        }
+                    }, 20);
+                    return {
+                        ok: false,
+                        status: 404,
+                        json: async () => ({})
+                    };
+                }
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ success: true })
+                };
+            }
+            return origFetch(url, options);
+        };
+
+        const hashMatch = hostInviteUrl.match(/#payload=.*/);
+        assert(hashMatch !== null, "Invite payload hash must be found");
+        await joinRoomFromHash(hashMatch[0]);
+        await delay(50);
+
+        assert(dropAttempts >= 2,
+            `Joiner must retry dead-drop after 404 response, made ${dropAttempts} attempts`);
+        assert(observedTransientStatus === true,
+            "Joiner must display 'Waiting for host...' transient status during retry loop");
+        rootGlobal.fetch = origFetch;
+
+        // Host WebSocket Reconnect on visibilitychange
+        resetToHome();
+        setLocalPeerId("peer-reconn-host-t18");
+        await createRoomAsHost();
+        const initialHostWs = window.getHostWs();
+        assert(initialHostWs !== null && initialHostWs.readyState === 1,
+            "Host WebSocket must be open initially");
+
+        // Simulate mobile OS background teardown
+        initialHostWs.close();
+        assert(initialHostWs.readyState === 3, "Host WebSocket must be closed");
+
+        document.visibilityState = "visible";
+        document.dispatchEvent(new Event("visibilitychange"));
+        const reconnectedHostWs = window.getHostWs();
+        assert(reconnectedHostWs !== null && reconnectedHostWs !== initialHostWs && reconnectedHostWs.readyState === 1,
+            "document visibilitychange must reconnect host WebSocket when visibilityState is 'visible'");
+
+        // 5. Bfcache Pagehide Safety
+        window.setOpportunisticLeaveSent(false);
+        const bfcacheEvent = new PageTransitionEvent("pagehide", { persisted: true });
+        window.dispatchEvent(bfcacheEvent);
+        assert(window.getOpportunisticLeaveSent() === false,
+            "pagehide with persisted: true must NOT trigger opportunisticLeaveSent (preserving bfcache session)");
+
+        // 6. Honest Copy Fallback
+        resetToHome();
+        const origWriteText = navigator.clipboard.writeText;
+        navigator.clipboard.writeText = async function() {
+            throw new Error("NotAllowedError");
+        };
+        setLocalPeerId("peer-honest-copy-t18");
+        await createRoomAsHost();
+
+        const tempNotices = feed.querySelectorAll(".system-temporary");
+        assert(tempNotices.length > 0,
+            "Temporary notices must be appended on room creation");
+        assert(tempNotices[0].textContent.includes("Invite ready — tap Copy to copy link"),
+            `Honest fallback notice must be shown when clipboard write fails, got: '${tempNotices[0].textContent}'`);
+        assert(!tempNotices[0].textContent.includes("Invite link copied to clipboard"),
+            "False success notice must NOT be shown when clipboard write fails");
+
+        navigator.clipboard.writeText = origWriteText;
+        resetToHome();
+        print("  PASS: REQ-041.1 - REQ-041.8 verified cleanly.");
+    }
+
     print("\n===============================================================================");
     print("ALL BROWSER HEADLESS MESH TESTS PASSED SUCCESSFULLY!");
     print("===============================================================================");
