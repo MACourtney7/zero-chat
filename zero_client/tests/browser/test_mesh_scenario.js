@@ -1982,6 +1982,139 @@ async function runTests() {
         print("  PASS: UI Architecture Refinements: Transparent Panels, Relocated Burn Button & Rounded Controls verified cleanly.");
     }
 
+    // --- Test 20: Mobile Browser Web Share API & Dynamic Share Icon Integration ---
+    print("\n--- Test 20: Mobile Browser Web Share API & Dynamic Share Icon Integration ---");
+    {
+        const origShare = navigator.share;
+
+        try {
+            // =====================================================================
+            // Case A: Web Share API Supported (navigator.share function present)
+            // =====================================================================
+            const shareInvocations = [];
+            navigator.share = async function(data) {
+                shareInvocations.push(data);
+            };
+
+            resetToHome();
+            setLocalPeerId("peer-share-test-host");
+
+            // 1. Initial click on #btn-create-room in Home View
+            await btnCreateRoom.click();
+
+            assert(shareInvocations.length === 1,
+                `Case A: navigator.share must be called once on initial room creation, got ${shareInvocations.length}`);
+            assert(shareInvocations[0].title === "zero-chat",
+                `Case A: navigator.share title must be 'zero-chat', got '${shareInvocations[0].title}'`);
+            assert(shareInvocations[0].text === "Join my encrypted zero-chat session:",
+                `Case A: navigator.share text must be 'Join my encrypted zero-chat session:', got '${shareInvocations[0].text}'`);
+            assert(typeof shareInvocations[0].url === "string" && shareInvocations[0].url.includes("#payload="),
+                `Case A: navigator.share url must contain '#payload=', got '${shareInvocations[0].url}'`);
+
+            assert(btnCreateRoom.classList.contains("btn-waiting"),
+                "Case A: #btn-create-room must have class 'btn-waiting' in Stage 2");
+            assert(btnCreateRoom.getAttribute("aria-label") === "Share invite link",
+                `Case A: #btn-create-room aria-label must be 'Share invite link', got '${btnCreateRoom.getAttribute("aria-label")}'`);
+            assert(btnCreateRoom.innerHTML.includes('<circle cx="18" cy="5"') || btnCreateRoom.innerHTML.includes(window.SHARE_ICON_SVG),
+                "Case A: #btn-create-room must display SHARE_ICON_SVG");
+
+            let tempNotices = feed.querySelectorAll(".system-temporary");
+            assert(tempNotices.length > 0,
+                "Case A: Temporary notices must be appended on room creation");
+            assert(tempNotices[0].textContent.includes("Invite link ready to share"),
+                `Case A: Notice must display 'Invite link ready to share', got: '${tempNotices[0].textContent}'`);
+
+            // 2. Click #btn-create-room again while in Stage 2 (waiting for peer)
+            await btnCreateRoom.click();
+
+            assert(shareInvocations.length === 2,
+                `Case A: navigator.share must be called again on subsequent click in Stage 2, got ${shareInvocations.length}`);
+            assert(shareInvocations[1].url === shareInvocations[0].url,
+                "Case A: Subsequent click must share the same invite URL");
+            assert(btnCreateRoom.classList.contains("btn-waiting"),
+                "Case A: #btn-create-room must remain in 'btn-waiting' state");
+            assert(btnCreateRoom.getAttribute("aria-label") === "Share invite link",
+                "Case A: #btn-create-room must maintain aria-label='Share invite link'");
+            assert(btnCreateRoom.innerHTML.includes('<circle cx="18" cy="5"'),
+                "Case A: #btn-create-room must maintain SHARE_ICON_SVG");
+
+            // 3. In an active chat session with peers, click #input-add-peer-btn
+            assert(engine !== null, "engine must be active for chat session");
+            engine.peers.set("peer-share-remote-1", { state: "open", dc: { readyState: "open" } });
+            updatePeerCountDisplay();
+
+            assert(!inputAddPeerBtn.classList.contains("hidden"),
+                "Case A: #input-add-peer-btn must be visible in active chat session");
+
+            await inputAddPeerBtn.click();
+
+            assert(shareInvocations.length === 3,
+                `Case A: navigator.share must be called when clicking #input-add-peer-btn, got ${shareInvocations.length}`);
+            assert(shareInvocations[2].title === "zero-chat",
+                `Case A: #input-add-peer-btn share title must be 'zero-chat', got '${shareInvocations[2].title}'`);
+            assert(shareInvocations[2].text === "Join my encrypted zero-chat session:",
+                "Case A: #input-add-peer-btn share text must match");
+            assert(typeof shareInvocations[2].url === "string" && shareInvocations[2].url.includes("#payload="),
+                "Case A: #input-add-peer-btn share url must contain '#payload='");
+
+            assert(inputAddPeerBtn.classList.contains("btn-waiting"),
+                "Case A: #input-add-peer-btn must have class 'btn-waiting' in Stage 2");
+            assert(inputAddPeerBtn.getAttribute("aria-label") === "Share invite link",
+                `Case A: #input-add-peer-btn aria-label must be 'Share invite link', got '${inputAddPeerBtn.getAttribute("aria-label")}'`);
+            assert(inputAddPeerBtn.innerHTML.includes('<circle cx="18" cy="5"') || inputAddPeerBtn.innerHTML.includes(window.SHARE_ICON_SVG),
+                "Case A: #input-add-peer-btn must display SHARE_ICON_SVG");
+
+            // =====================================================================
+            // Case B: Web Share API Not Supported (Fallback)
+            // =====================================================================
+            delete navigator.share;
+
+            resetToHome();
+            setLocalPeerId("peer-fallback-host");
+
+            // 1. Click #btn-create-room on Home View
+            await btnCreateRoom.click();
+
+            assert(btnCreateRoom.classList.contains("btn-waiting"),
+                "Case B: #btn-create-room must have class 'btn-waiting' in Stage 2 fallback");
+            assert(btnCreateRoom.getAttribute("aria-label") === "Copy invite link",
+                `Case B: #btn-create-room aria-label must be 'Copy invite link', got '${btnCreateRoom.getAttribute("aria-label")}'`);
+            assert(btnCreateRoom.innerHTML.includes("<rect") || btnCreateRoom.innerHTML.includes(window.COPY_ICON_SVG),
+                "Case B: #btn-create-room must display COPY_ICON_SVG");
+            assert(!btnCreateRoom.innerHTML.includes('<circle cx="18" cy="5"'),
+                "Case B: #btn-create-room must NOT display SHARE_ICON_SVG");
+
+            // 2. Active chat session: click #input-add-peer-btn
+            assert(engine !== null, "Case B: engine must be active");
+            engine.peers.set("peer-fallback-remote-1", { state: "open", dc: { readyState: "open" } });
+            updatePeerCountDisplay();
+
+            assert(!inputAddPeerBtn.classList.contains("hidden"),
+                "Case B: #input-add-peer-btn must be visible in active chat session");
+
+            await inputAddPeerBtn.click();
+
+            assert(inputAddPeerBtn.classList.contains("btn-waiting"),
+                "Case B: #input-add-peer-btn must have class 'btn-waiting' in Stage 2 fallback");
+            assert(inputAddPeerBtn.getAttribute("aria-label") === "Copy invite link",
+                `Case B: #input-add-peer-btn aria-label must be 'Copy invite link', got '${inputAddPeerBtn.getAttribute("aria-label")}'`);
+            assert(inputAddPeerBtn.innerHTML.includes("<rect") || inputAddPeerBtn.innerHTML.includes(window.COPY_ICON_SVG),
+                "Case B: #input-add-peer-btn must display COPY_ICON_SVG");
+            assert(!inputAddPeerBtn.innerHTML.includes('<circle cx="18" cy="5"'),
+                "Case B: #input-add-peer-btn must NOT display SHARE_ICON_SVG");
+
+            resetToHome();
+        } finally {
+            if (origShare !== undefined) {
+                navigator.share = origShare;
+            } else {
+                delete navigator.share;
+            }
+        }
+
+        print("  PASS: Mobile Browser Web Share API & Dynamic Share Icon Integration verified cleanly.");
+    }
+
     print("\n===============================================================================");
     print("ALL BROWSER HEADLESS MESH TESTS PASSED SUCCESSFULLY!");
     print("===============================================================================");
