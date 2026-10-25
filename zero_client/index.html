@@ -321,6 +321,20 @@
             syncMobileViewport();
         }
 
+        function isMobileBrowser() {
+            if (typeof window !== "undefined" && typeof window.isMobileBrowser === "function" && window.isMobileBrowser !== isMobileBrowser) {
+                return window.isMobileBrowser();
+            }
+            if (typeof navigator === "undefined") return false;
+            if (navigator.userAgentData && typeof navigator.userAgentData.mobile === "boolean") {
+                return navigator.userAgentData.mobile;
+            }
+            const ua = navigator.userAgent || "";
+            const isMobileUA = /Mobi|Android|iPhone|iPad|iPod/i.test(ua);
+            const isTouchMac = Boolean(navigator.maxTouchPoints && navigator.maxTouchPoints > 2 && /Macintosh/.test(ua));
+            return isMobileUA || isTouchMac;
+        }
+
         function resetInputAddPeerButton() {
             if (inputAddPeerBtn) {
                 inputAddPeerBtn.classList.remove("btn-waiting");
@@ -335,7 +349,7 @@
 
         function setInputAddPeerBtnStage2() {
             if (inputAddPeerBtn) {
-                const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
+                const canShare = isMobileBrowser() && typeof navigator !== "undefined" && typeof navigator.share === "function";
                 inputAddPeerBtn.classList.add("btn-waiting");
                 inputAddPeerBtn.innerHTML = canShare ? SHARE_ICON_SVG : COPY_ICON_SVG;
                 inputAddPeerBtn.setAttribute("aria-label", canShare ? "Share invite link" : "Copy invite link");
@@ -457,7 +471,7 @@
                 createRoomFeedbackTimer = null;
             }
             if (btnCreateRoom) {
-                const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
+                const canShare = isMobileBrowser() && typeof navigator !== "undefined" && typeof navigator.share === "function";
                 btnCreateRoom.disabled = false;
                 btnCreateRoom.className = "btn-action btn-action-full btn-waiting";
                 btnCreateRoom.setAttribute("aria-label", canShare ? "Share invite link" : "Copy invite link");
@@ -1289,7 +1303,7 @@
             }
             clearTemporarySystemMessages();
 
-            const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
+            const canShare = isMobileBrowser() && typeof navigator !== "undefined" && typeof navigator.share === "function";
             // Stage 1 notice immediately:
             appendTemporarySystemMessage(canShare ? "Invite link ready to share" : "Invite link copied to clipboard");
 
@@ -1379,7 +1393,7 @@
                 inChatInviteFeedbackTimer = null;
             }
 
-            const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
+            const canShare = isMobileBrowser() && typeof navigator !== "undefined" && typeof navigator.share === "function";
             const noticeText = canShare ? "Invite link ready to share" : "Invite link copied to clipboard";
 
             if (inChatInviteFeedbackEl && inChatInviteFeedbackEl.parentNode === feed) {
@@ -1634,13 +1648,12 @@
             if (!engine || isBurned) return;
 
             if (pendingInviteUrl) {
-                const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
+                const canShare = isMobileBrowser() && typeof navigator !== "undefined" && typeof navigator.share === "function";
                 let copySuccess = false;
                 if (canShare) {
                     try {
                         await navigator.share({
                             title: "zero-chat",
-                            text: "Join my encrypted zero-chat session:",
                             url: pendingInviteUrl
                         });
                         copySuccess = true;
@@ -1745,12 +1758,11 @@
 
                 // Attempt to fulfill ClipboardItem promise or fall back to writeText
                 let copySuccess = false;
-                const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
+                const canShare = isMobileBrowser() && typeof navigator !== "undefined" && typeof navigator.share === "function";
                 if (canShare) {
                     try {
                         await navigator.share({
                             title: "zero-chat",
-                            text: "Join my encrypted zero-chat session:",
                             url: inviteUrl
                         });
                         copySuccess = true;
@@ -2688,13 +2700,12 @@
             }
             if (activeHostInviteUrl) {
                 // Subsequent click while waiting for a peer: re-copy link and re-trigger temporary notices (REQ-033.2, REQ-034.2, REQ-034.3)
-                const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
+                const canShare = isMobileBrowser() && typeof navigator !== "undefined" && typeof navigator.share === "function";
                 let copySuccess = false;
                 if (canShare) {
                     try {
                         await navigator.share({
                             title: "zero-chat",
-                            text: "Join my encrypted zero-chat session:",
                             url: activeHostInviteUrl
                         });
                         copySuccess = true;
@@ -2802,12 +2813,11 @@
 
                 // Attempt to fulfill ClipboardItem promise or fall back to writeText
                 let copySuccess = false;
-                const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
+                const canShare = isMobileBrowser() && typeof navigator !== "undefined" && typeof navigator.share === "function";
                 if (canShare) {
                     try {
                         await navigator.share({
                             title: "zero-chat",
-                            text: "Join my encrypted zero-chat session:",
                             url: inviteUrl
                         });
                         copySuccess = true;
@@ -3331,6 +3341,7 @@
         window.setOpportunisticLeaveSent = (v) => { opportunisticLeaveSent = v; };
         window.triggerHonestCopyNotice = triggerHonestCopyNotice;
         window.triggerInChatHonestCopyNotice = triggerInChatHonestCopyNotice;
+        window.isMobileBrowser = isMobileBrowser;
         try {
             Object.defineProperty(window, "opportunisticLeaveSent", {
                 get: () => opportunisticLeaveSent,
