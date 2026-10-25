@@ -260,6 +260,8 @@
         let isInRoomSession = false;
         let staggerNoticeTimer = null;
         let activeHostInviteUrl = null;
+        let activeHostSignaling = null;
+        let activeInviteSignaling = null;
         let createRoomFeedbackTimer = null;
         let headerAddFeedbackTimer = null;
         let headerAddFeedbackEl = null;
@@ -274,6 +276,44 @@
         const RECONCILIATION_INTERVAL_MS = 2000;
         const TIE_BREAKER_GRACE_MS = 4000;
         const MAX_HANDSHAKE_RETRIES = 5;
+
+        if (typeof document !== "undefined" && !document.documentElement) {
+            document.documentElement = {
+                style: {
+                    setProperty: () => {}
+                },
+                classList: {
+                    toggle: () => {},
+                    contains: () => false,
+                    add: () => {},
+                    remove: () => {}
+                }
+            };
+        }
+
+        function syncMobileViewport() {
+            const vv = window.visualViewport;
+            if (!vv) return;
+            if (document.documentElement && document.documentElement.style && typeof document.documentElement.style.setProperty === "function") {
+                document.documentElement.style.setProperty("--app-height", `${vv.height}px`);
+                document.documentElement.style.setProperty("--app-offset-top", `${vv.offsetTop}px`);
+            }
+            const isKeyboardOpen = vv.height < window.innerHeight * 0.85;
+            if (document.documentElement && document.documentElement.classList && typeof document.documentElement.classList.toggle === "function") {
+                document.documentElement.classList.toggle("keyboard-open", isKeyboardOpen);
+            }
+            if (typeof window.scrollTo === "function") {
+                window.scrollTo(0, 0);
+            }
+            if (feed) {
+                feed.scrollTop = feed.scrollHeight;
+            }
+        }
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener("resize", syncMobileViewport);
+            window.visualViewport.addEventListener("scroll", syncMobileViewport);
+            syncMobileViewport();
+        }
 
         function resetInputAddPeerButton() {
             if (inputAddPeerBtn) {
@@ -614,7 +654,7 @@
                     timer = setTimeout(() => {
                         cleanup();
                         resolve();
-                    }, 3000); // 3s fallback limit
+                    }, 4500); // 4.5s fallback limit for mobile cellular latency
                 });
             }
 
@@ -1241,6 +1281,23 @@
             }, 450);
         }
 
+        function triggerHonestCopyNotice() {
+            if (staggerNoticeTimer) {
+                clearTimeout(staggerNoticeTimer);
+                staggerNoticeTimer = null;
+            }
+            clearTemporarySystemMessages();
+
+            // Honest fallback notice immediately:
+            appendTemporarySystemMessage("Invite ready — tap Copy to copy link");
+
+            // Stage 2 notice staggered after 450ms:
+            staggerNoticeTimer = setTimeout(() => {
+                appendTemporarySystemMessage("Waiting for peer", true);
+                staggerNoticeTimer = null;
+            }, 450);
+        }
+
         function appendTemporarySystemMessage(text, isWaitingDots = false) {
             clearTransientStatus();
             hideWelcomeSplash();
@@ -1332,6 +1389,34 @@
             }, 5000);
         }
 
+        function triggerInChatHonestCopyNotice() {
+            if (inChatInviteFeedbackTimer) {
+                clearTimeout(inChatInviteFeedbackTimer);
+                inChatInviteFeedbackTimer = null;
+            }
+
+            clearTransientStatus();
+            hideWelcomeSplash();
+            inChatInviteFeedbackEl = document.createElement("div");
+            inChatInviteFeedbackEl.className = "system-message system-temporary in-chat-invite-notice notice-pulse";
+
+            const textSpan = document.createElement("span");
+            textSpan.className = "system-text";
+            textSpan.textContent = "Invite ready — tap Copy to copy link";
+            inChatInviteFeedbackEl.appendChild(textSpan);
+
+            feed.appendChild(inChatInviteFeedbackEl);
+            feed.scrollTop = feed.scrollHeight;
+
+            inChatInviteFeedbackTimer = setTimeout(() => {
+                if (inChatInviteFeedbackEl && inChatInviteFeedbackEl.parentNode) {
+                    inChatInviteFeedbackEl.remove();
+                }
+                inChatInviteFeedbackEl = null;
+                inChatInviteFeedbackTimer = null;
+            }, 5000);
+        }
+
         function appendSystemMessage(text) {
             clearTemporarySystemMessages();
             clearTransientStatus();
@@ -1369,6 +1454,7 @@
             }
             pendingInviteUrl = null;
             pendingInvitePeerId = null;
+            activeInviteSignaling = null;
             if (pendingInviteWs) {
                 try {
                     pendingInviteWs.close();
@@ -1378,28 +1464,205 @@
             clearInChatInviteFeedback();
         }
 
+        function setupHostWebSocket(ctx) {
+            if (!ctx) return;
+            if (hostWs && (hostWs.readyState === WebSocket.OPEN || hostWs.readyState === WebSocket.CONNECTING)) {
+                return;
+            }
+            const wsUrl = `${WORKER_WS_ORIGIN}/host/${ctx.doId}?secret=${ctx.hostSecretHex}`;
+            hostWs = new WebSocket(wsUrl);
+
+            hostWs.onmessage = async (ev) => {
+                try {
+                    const drop = JSON.parse(ev.data);
+                    if (drop && drop.sdp_answer && drop.sdp_answer.sdp) {
+                        showTransientStatus("Establishing secure connection");
+                        updateStatus("connecting", "Received answer! Snapping P2P channel...");
+                        const targetPeerId = drop.joiner_peer_id || drop.peer_id || ctx.assignedPeerId;
+                        if (targetPeerId !== ctx.assignedPeerId && engine && engine.peers.has(ctx.assignedPeerId)) {
+                            engine.rename_peer(ctx.assignedPeerId, targetPeerId);
+                        } else if (targetPeerId !== "peer-01" && engine && engine.peers.has("peer-01")) {
+                            engine.rename_peer("peer-01", targetPeerId);
+                        }
+                        if (engine) {
+                            await engine.apply_answer(drop.sdp_answer.sdp, targetPeerId);
+                        }
+                    }
+                } catch (err) {
+                    console.error("Failed to parse dropped answer:", err);
+                }
+            };
+
+            hostWs.onerror = (e) => console.warn("Signaling socket error:", e);
+            hostWs.onclose = () => {
+                if (activeHostSignaling) {
+                    const peerState = engine && engine.peers.has(activeHostSignaling.assignedPeerId)
+                        ? engine.peers.get(activeHostSignaling.assignedPeerId).state
+                        : null;
+                    if (peerState !== "open") {
+                        setTimeout(() => {
+                            if (activeHostSignaling) {
+                                setupHostWebSocket(activeHostSignaling);
+                            }
+                        }, 1000);
+                    }
+                }
+            };
+        }
+
+        function setupPendingInviteWebSocket(ctx) {
+            if (!ctx) return;
+            if (pendingInviteWs && (pendingInviteWs.readyState === WebSocket.OPEN || pendingInviteWs.readyState === WebSocket.CONNECTING)) {
+                return;
+            }
+            const wsUrl = `${WORKER_WS_ORIGIN}/host/${ctx.doId}?secret=${ctx.hostSecretHex}`;
+            const ws = new WebSocket(wsUrl);
+            pendingInviteWs = ws;
+
+            ws.onmessage = async (ev) => {
+                try {
+                    const drop = JSON.parse(ev.data);
+                    if (drop && drop.sdp_answer && drop.sdp_answer.sdp) {
+                        const targetPeerId = drop.joiner_peer_id || drop.peer_id || ctx.assignedPeerId;
+                        if (targetPeerId !== ctx.assignedPeerId && engine && engine.peers.has(ctx.assignedPeerId)) {
+                            engine.rename_peer(ctx.assignedPeerId, targetPeerId);
+                            if (pendingInvitePeerId === ctx.assignedPeerId) {
+                                pendingInvitePeerId = targetPeerId;
+                            }
+                        }
+                        if (engine) {
+                            await engine.apply_answer(drop.sdp_answer.sdp, targetPeerId);
+                        }
+                        try {
+                            ws.close();
+                        } catch (_) {}
+                        if (pendingInviteWs === ws) {
+                            pendingInviteWs = null;
+                        }
+                        activeInviteSignaling = null;
+                    }
+                } catch (err) {
+                    console.error("Failed to parse dropped answer for pending invite:", err);
+                }
+            };
+
+            ws.onerror = (e) => console.warn("Pending invite signaling socket error:", e);
+            ws.onclose = () => {
+                if (activeInviteSignaling) {
+                    const peerState = engine && engine.peers.has(activeInviteSignaling.assignedPeerId)
+                        ? engine.peers.get(activeInviteSignaling.assignedPeerId).state
+                        : null;
+                    if (peerState !== "open") {
+                        setTimeout(() => {
+                            if (activeInviteSignaling) {
+                                setupPendingInviteWebSocket(activeInviteSignaling);
+                            }
+                        }, 1000);
+                    }
+                }
+            };
+        }
+
+        if (typeof document !== "undefined" && typeof document.addEventListener !== "function" && typeof window !== "undefined" && typeof window.addEventListener === "function") {
+            document.addEventListener = (evt, handler, opts) => window.addEventListener(evt, handler, opts);
+        }
+
+        function handleVisibilityChange() {
+            const isVisible = (typeof document !== "undefined" && document.visibilityState)
+                ? document.visibilityState === "visible"
+                : true;
+            if (isVisible) {
+                if (activeHostSignaling) {
+                    const peerState = engine && engine.peers.has(activeHostSignaling.assignedPeerId)
+                        ? engine.peers.get(activeHostSignaling.assignedPeerId).state
+                        : null;
+                    if (peerState !== "open") {
+                        if (hostWs && hostWs.readyState !== WebSocket.OPEN) {
+                            try { hostWs.close(); } catch (_) {}
+                            hostWs = null;
+                        }
+                        setupHostWebSocket(activeHostSignaling);
+                    }
+                }
+                if (activeInviteSignaling) {
+                    const peerState = engine && engine.peers.has(activeInviteSignaling.assignedPeerId)
+                        ? engine.peers.get(activeInviteSignaling.assignedPeerId).state
+                        : null;
+                    if (peerState !== "open") {
+                        if (pendingInviteWs && pendingInviteWs.readyState !== WebSocket.OPEN) {
+                            try { pendingInviteWs.close(); } catch (_) {}
+                            pendingInviteWs = null;
+                        }
+                        setupPendingInviteWebSocket(activeInviteSignaling);
+                    }
+                }
+            }
+        }
+
+        if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+            document.addEventListener("visibilitychange", handleVisibilityChange);
+        }
+        if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+            window.addEventListener("visibilitychange", handleVisibilityChange);
+        }
+
         async function handleInRoomInvite(targetButton = null) {
             if (!engine || isBurned) return;
 
             if (pendingInviteUrl) {
+                let copySuccess = false;
                 if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
                     try {
                         await navigator.clipboard.writeText(pendingInviteUrl);
+                        copySuccess = true;
                     } catch (e) {
                         console.warn("Clipboard copy failed:", e);
                     }
                 }
                 if (targetButton === btnCreateRoom) {
                     setCreateRoomStage2();
-                    triggerCreateRoomNotices();
+                    if (copySuccess) {
+                        triggerCreateRoomNotices();
+                    } else {
+                        triggerHonestCopyNotice();
+                    }
                 } else if (targetButton === inputAddPeerBtn) {
                     setInputAddPeerBtnStage2();
-                    triggerInChatInviteFeedback();
+                    if (copySuccess) {
+                        triggerInChatInviteFeedback();
+                    } else {
+                        triggerInChatHonestCopyNotice();
+                    }
                 } else {
                     if (inputAddPeerBtn) setInputAddPeerBtnStage2();
-                    triggerInChatInviteFeedback();
+                    if (copySuccess) {
+                        triggerInChatInviteFeedback();
+                    } else {
+                        triggerInChatHonestCopyNotice();
+                    }
                 }
                 return;
+            }
+
+            // Mobile Clipboard User-Gesture Compliance:
+            let resolveClipboardBlob = null;
+            let clipboardWritePromise = null;
+            if (typeof window !== "undefined" && typeof window.ClipboardItem !== "undefined" && navigator && navigator.clipboard && typeof navigator.clipboard.write === "function") {
+                try {
+                    const deferredBlobPromise = new Promise((resolve) => {
+                        resolveClipboardBlob = resolve;
+                    });
+                    const item = new window.ClipboardItem({
+                        "text/plain": deferredBlobPromise
+                    });
+                    clipboardWritePromise = navigator.clipboard.write([item]);
+                    if (clipboardWritePromise && typeof clipboardWritePromise.catch === "function") {
+                        clipboardWritePromise.catch(() => {});
+                    }
+                } catch (e) {
+                    clipboardWritePromise = null;
+                    resolveClipboardBlob = null;
+                }
             }
 
             try {
@@ -1431,55 +1694,64 @@
                 const inviteUrl = window.location.origin + window.location.pathname + packedHash;
                 pendingInviteUrl = inviteUrl;
 
-                const wsUrl = `${WORKER_WS_ORIGIN}/host/${doId}?secret=${hostSecretHex}`;
-                const ws = new WebSocket(wsUrl);
-                pendingInviteWs = ws;
+                // Track active signaling context for in-room invite
+                activeInviteSignaling = { doId, hostSecretHex, assignedPeerId };
+                setupPendingInviteWebSocket(activeInviteSignaling);
 
-                ws.onmessage = async (ev) => {
+                // Attempt to fulfill ClipboardItem promise or fall back to writeText
+                let copySuccess = false;
+                if (resolveClipboardBlob) {
                     try {
-                        const drop = JSON.parse(ev.data);
-                        if (drop && drop.sdp_answer && drop.sdp_answer.sdp) {
-                            const targetPeerId = drop.joiner_peer_id || drop.peer_id || assignedPeerId;
-                            if (targetPeerId !== assignedPeerId && engine.peers.has(assignedPeerId)) {
-                                engine.rename_peer(assignedPeerId, targetPeerId);
-                                if (pendingInvitePeerId === assignedPeerId) {
-                                    pendingInvitePeerId = targetPeerId;
-                                }
-                            }
-                            await engine.apply_answer(drop.sdp_answer.sdp, targetPeerId);
-                            try {
-                                ws.close();
-                            } catch (_) {}
-                            if (pendingInviteWs === ws) {
-                                pendingInviteWs = null;
-                            }
-                        }
+                        resolveClipboardBlob(new Blob([inviteUrl], { type: "text/plain" }));
+                    } catch (_) {}
+                }
+                if (clipboardWritePromise) {
+                    try {
+                        await clipboardWritePromise;
+                        copySuccess = true;
                     } catch (err) {
-                        console.error("Failed to parse dropped answer for pending invite:", err);
+                        copySuccess = false;
                     }
-                };
+                }
 
-                ws.onerror = (e) => console.warn("Pending invite signaling socket error:", e);
-
-                if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+                if (!copySuccess && navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
                     try {
                         await navigator.clipboard.writeText(inviteUrl);
+                        copySuccess = true;
                     } catch (e) {
                         console.warn("Clipboard copy failed:", e);
+                        copySuccess = false;
                     }
                 }
 
                 if (targetButton === btnCreateRoom) {
                     setCreateRoomStage2();
-                    triggerCreateRoomNotices();
+                    if (copySuccess) {
+                        triggerCreateRoomNotices();
+                    } else {
+                        triggerHonestCopyNotice();
+                    }
                 } else if (targetButton === inputAddPeerBtn) {
                     setInputAddPeerBtnStage2();
-                    triggerInChatInviteFeedback();
+                    if (copySuccess) {
+                        triggerInChatInviteFeedback();
+                    } else {
+                        triggerInChatHonestCopyNotice();
+                    }
                 } else {
                     if (inputAddPeerBtn) setInputAddPeerBtnStage2();
-                    triggerInChatInviteFeedback();
+                    if (copySuccess) {
+                        triggerInChatInviteFeedback();
+                    } else {
+                        triggerInChatHonestCopyNotice();
+                    }
                 }
             } catch (err) {
+                if (resolveClipboardBlob) {
+                    try {
+                        resolveClipboardBlob(new Blob([""], { type: "text/plain" }));
+                    } catch (_) {}
+                }
                 console.error("Failed to create pending invite:", err);
                 clearPendingInvite();
             }
@@ -1755,6 +2027,15 @@
                     peerDepartureHandled = false;
                     opportunisticLeaveSent = false;
                     activeHostInviteUrl = null;
+                    if (activeHostSignaling) {
+                        if (!activeHostSignaling.assignedPeerId || activeHostSignaling.assignedPeerId === peerId || (engine && engine.openPeerCount > 0)) {
+                            activeHostSignaling = null;
+                            if (hostWs) {
+                                try { hostWs.close(); } catch (_) {}
+                                hostWs = null;
+                            }
+                        }
+                    }
                     clearPendingInvite(peerId);
                     clearTemporarySystemMessages();
                     hideWelcomeSplash();
@@ -2333,16 +2614,43 @@
             }
             if (activeHostInviteUrl) {
                 // Subsequent click while waiting for a peer: re-copy link and re-trigger temporary notices (REQ-033.2, REQ-034.2, REQ-034.3)
+                let copySuccess = false;
                 if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
                     try {
                         await navigator.clipboard.writeText(activeHostInviteUrl);
+                        copySuccess = true;
                     } catch (e) {
                         console.warn("Clipboard copy failed:", e);
                     }
                 }
                 setCreateRoomStage2();
-                triggerCreateRoomNotices();
+                if (copySuccess) {
+                    triggerCreateRoomNotices();
+                } else {
+                    triggerHonestCopyNotice();
+                }
                 return;
+            }
+
+            // Mobile Clipboard User-Gesture Compliance:
+            let resolveClipboardBlob = null;
+            let clipboardWritePromise = null;
+            if (typeof window !== "undefined" && typeof window.ClipboardItem !== "undefined" && navigator && navigator.clipboard && typeof navigator.clipboard.write === "function") {
+                try {
+                    const deferredBlobPromise = new Promise((resolve) => {
+                        resolveClipboardBlob = resolve;
+                    });
+                    const item = new window.ClipboardItem({
+                        "text/plain": deferredBlobPromise
+                    });
+                    clipboardWritePromise = navigator.clipboard.write([item]);
+                    if (clipboardWritePromise && typeof clipboardWritePromise.catch === "function") {
+                        clipboardWritePromise.catch(() => {});
+                    }
+                } catch (e) {
+                    clipboardWritePromise = null;
+                    resolveClipboardBlob = null;
+                }
             }
 
             isInRoomSession = true;
@@ -2392,50 +2700,61 @@
                 const inviteUrl = window.location.origin + window.location.pathname + packedHash;
                 activeHostInviteUrl = inviteUrl;
 
-                // Connect host signaling WebSocket
+                // Track active signaling context for WebSocket reconnection on app switch
+                activeHostSignaling = { doId, hostSecretHex, assignedPeerId };
                 updateStatus("signaling", "Awaiting peer connection...");
-                const wsUrl = `${WORKER_WS_ORIGIN}/host/${doId}?secret=${hostSecretHex}`;
-                hostWs = new WebSocket(wsUrl);
+                setupHostWebSocket(activeHostSignaling);
 
-                hostWs.onmessage = async (ev) => {
+                // Attempt to fulfill ClipboardItem promise or fall back to writeText
+                let copySuccess = false;
+                if (resolveClipboardBlob) {
                     try {
-                        const drop = JSON.parse(ev.data);
-                        if (drop && drop.sdp_answer && drop.sdp_answer.sdp) {
-                            showTransientStatus("Establishing secure connection");
-                            updateStatus("connecting", "Received answer! Snapping P2P channel...");
-                            const targetPeerId = drop.joiner_peer_id || drop.peer_id || assignedPeerId;
-                            if (targetPeerId !== assignedPeerId && engine.peers.has(assignedPeerId)) {
-                                engine.rename_peer(assignedPeerId, targetPeerId);
-                            } else if (targetPeerId !== "peer-01" && engine.peers.has("peer-01")) {
-                                engine.rename_peer("peer-01", targetPeerId);
-                            }
-                            await engine.apply_answer(drop.sdp_answer.sdp, targetPeerId);
-                        }
+                        resolveClipboardBlob(new Blob([inviteUrl], { type: "text/plain" }));
+                    } catch (_) {}
+                }
+                if (clipboardWritePromise) {
+                    try {
+                        await clipboardWritePromise;
+                        copySuccess = true;
                     } catch (err) {
-                        console.error("Failed to parse dropped answer:", err);
+                        copySuccess = false;
                     }
-                };
+                }
 
-                hostWs.onerror = (e) => console.warn("Signaling socket error:", e);
-
-                // Automatically copy inviteUrl directly to navigator.clipboard (REQ-029.1)
-                if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+                if (!copySuccess && navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
                     try {
                         await navigator.clipboard.writeText(inviteUrl);
+                        copySuccess = true;
                     } catch (e) {
                         console.warn("Clipboard copy failed:", e);
+                        copySuccess = false;
                     }
                 }
 
                 // Enable button and transition to Stage 2 (REQ-033.1)
                 setCreateRoomStage2();
 
-                // Bottom button click flow: clear temp messages, emit invite copied + waiting for peer (REQ-033.2, REQ-034.2, REQ-034.3)
-                triggerCreateRoomNotices();
+                if (copySuccess) {
+                    // Bottom button click flow: clear temp messages, emit invite copied + waiting for peer (REQ-033.2, REQ-034.2, REQ-034.3)
+                    triggerCreateRoomNotices();
+                } else {
+                    // Honest fallback: Do NOT claim copied; display honest notice
+                    triggerHonestCopyNotice();
+                }
             } catch (err) {
+                if (resolveClipboardBlob) {
+                    try {
+                        resolveClipboardBlob(new Blob([""], { type: "text/plain" }));
+                    } catch (_) {}
+                }
                 console.error("Chat creation failed:", err);
                 appendSystemMessage("Failed to create chat");
                 activeHostInviteUrl = null;
+                activeHostSignaling = null;
+                if (hostWs) {
+                    try { hostWs.close(); } catch (_) {}
+                    hostWs = null;
+                }
                 if (createRoomBar) {
                     createRoomBar.classList.remove("hidden");
                     setCreateRoomStage1Plus();
@@ -2528,17 +2847,46 @@
                 };
 
                 const dropUrl = `${WORKER_ORIGIN}/drop/${invite.do_id}/${invite.invite_uuid}`;
-                const resp = await fetch(dropUrl, {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "Authorization": `Bearer ${invite.token}`
-                    },
-                    body: JSON.stringify(dropPayload)
-                });
+                let resp = null;
+                const MAX_DROP_ATTEMPTS = 10;
+                const RETRY_INTERVAL_MS = 1500;
 
-                if (!resp.ok) {
+                for (let attempt = 1; attempt <= MAX_DROP_ATTEMPTS; attempt++) {
+                    resp = await fetch(dropUrl, {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "Authorization": `Bearer ${invite.token}`
+                        },
+                        body: JSON.stringify(dropPayload)
+                    });
+
+                    if (resp.ok) {
+                        break;
+                    }
+
+                    if (resp.status === 401 || resp.status === 410) {
+                        throw new Error(`Dead-drop rejected with HTTP ${resp.status}`);
+                    }
+
+                    if (resp.status === 404) {
+                        if (attempt < MAX_DROP_ATTEMPTS) {
+                            showTransientStatus("Waiting for host...");
+                            await new Promise((resolve) => setTimeout(resolve, RETRY_INTERVAL_MS));
+                            if (!isJoining || isBurned) {
+                                return;
+                            }
+                            continue;
+                        } else {
+                            throw new Error(`Dead-drop rejected with HTTP 404 (host unavailable after ${MAX_DROP_ATTEMPTS} attempts)`);
+                        }
+                    }
+
                     throw new Error(`Dead-drop rejected with HTTP ${resp.status}`);
+                }
+
+                if (!resp || !resp.ok) {
+                    throw new Error(`Dead-drop rejected with HTTP ${resp ? resp.status : "unknown"}`);
                 }
 
                 // Strip hash from URL for privacy and zero forensic trace
@@ -2559,15 +2907,20 @@
         btnCreateRoom.addEventListener("click", handleCreateRoomClick);
 
         function doSendMessage() {
-            if (!msgInput.value.trim() || !engine) return;
+            if (!msgInput.value.trim() || !engine) {
+                if (msgInput) msgInput.focus();
+                return;
+            }
             const text = msgInput.value.trim();
 
             if (engine.openPeerCount === 0) {
                 appendSystemMessage("Message not sent: no connected peers");
+                if (msgInput) msgInput.focus();
                 return;
             }
 
             msgInput.value = "";
+            if (msgInput) msgInput.focus();
 
             const messageUuid = generateUuid();
             markMessageSeen(messageUuid);
@@ -2598,12 +2951,20 @@
                 console.error("Send error:", e);
                 appendSystemMessage("Failed to deliver message");
             }
+            if (msgInput) msgInput.focus();
         }
 
-        sendBtn.addEventListener("click", doSendMessage);
-        msgInput.addEventListener("keydown", (e) => {
-            if (e.key === "Enter") doSendMessage();
-        });
+        if (sendBtn) {
+            sendBtn.addEventListener("pointerdown", (e) => {
+                e.preventDefault();
+            });
+            sendBtn.addEventListener("click", doSendMessage);
+        }
+        if (msgInput) {
+            msgInput.addEventListener("keydown", (e) => {
+                if (e.key === "Enter") doSendMessage();
+            });
+        }
 
         function resetToHome() {
             stopReconciliationTimer();
@@ -2618,6 +2979,8 @@
                 joinWatchdogTimer = null;
             }
             activeHostInviteUrl = null;
+            activeHostSignaling = null;
+            activeInviteSignaling = null;
             if (staggerNoticeTimer) {
                 clearTimeout(staggerNoticeTimer);
                 staggerNoticeTimer = null;
@@ -2653,6 +3016,10 @@
             if (hostWs) {
                 try { hostWs.close(); } catch (_) {}
                 hostWs = null;
+            }
+            if (pendingInviteWs) {
+                try { pendingInviteWs.close(); } catch (_) {}
+                pendingInviteWs = null;
             }
             feed.querySelectorAll(".message-bubble, .system-message").forEach((el) => {
                 if (el._agingTimer) {
@@ -2712,7 +3079,11 @@
         }
 
         window.addEventListener("beforeunload", sendOpportunisticLeave);
-        window.addEventListener("pagehide", sendOpportunisticLeave);
+        window.addEventListener("pagehide", (event) => {
+            if (!event.persisted) {
+                sendOpportunisticLeave();
+            }
+        });
 
         if (headerAddBtn) {
             headerAddBtn.addEventListener("click", handleHeaderAddPeerClick);
@@ -2821,6 +3192,24 @@
         window.clearTransientStatus = clearTransientStatus;
         window.showWelcomeSplash = showWelcomeSplash;
         window.hideWelcomeSplash = hideWelcomeSplash;
+        window.syncMobileViewport = syncMobileViewport;
+        window.getActiveHostSignaling = () => activeHostSignaling;
+        window.getActiveInviteSignaling = () => activeInviteSignaling;
+        window.getHostWs = () => hostWs;
+        window.triggerHonestCopyNotice = triggerHonestCopyNotice;
+        window.triggerInChatHonestCopyNotice = triggerInChatHonestCopyNotice;
+        try {
+            Object.defineProperty(window, "activeHostSignaling", {
+                get: () => activeHostSignaling,
+                set: (v) => { activeHostSignaling = v; },
+                configurable: true
+            });
+            Object.defineProperty(window, "activeInviteSignaling", {
+                get: () => activeInviteSignaling,
+                set: (v) => { activeInviteSignaling = v; },
+                configurable: true
+            });
+        } catch (_) {}
     </script>
 </body>
 </html>
