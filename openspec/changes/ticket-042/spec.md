@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-042"
 title: "UI Architecture Refinements: Transparent Panels, Relocated Header Burn Button, and Rounded Controls"
-state: "PLANNING"
+state: "IN_PROGRESS"
 created_at: "2026-10-25T14:55:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-042/main"
