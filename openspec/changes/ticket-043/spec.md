@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-043"
 title: "UI Architecture Fixes: Glow Clipping, Burn/Leave Theme Alignment, Limbo Burn Visibility, Mobile Bubble Flex Containment, and Ellipsis De-duplication"
-state: "PLANNING"
+state: "IN_PROGRESS"
 created_at: "2026-10-25T16:15:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-043/main"
