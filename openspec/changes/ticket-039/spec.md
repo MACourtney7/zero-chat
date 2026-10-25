@@ -3,7 +3,7 @@
 ```yaml
 ---
 ticket_id: "ticket-039"
-title: "UI Tweaks: Add Peer Icon, Bottom-Left Invite Button, Top-Bar Home Cleanliness & Zero-Peer Slashed Badge"
+title: "UI Tweaks: Add Peer Icon, Bottom-Left Invite Button, Top-Bar Home Cleanliness, Zero-Peer Slashed Badge & Blue Dot Unification"
 state: "PLANNING"
 created_at: "2026-10-25T08:45:00Z"
 base_branch: "main"
@@ -14,7 +14,7 @@ max_review_cycles: 3
 
 ## 1. Problem Statement & User Intent
 
-Through visual testing and iterative design review, four user interface refinements have been requested to streamline navigation and simplify top-bar / footer interactions:
+Through visual testing and iterative design review, five user interface refinements have been requested to streamline navigation and unify top-bar / footer interactions:
 
 1. **Add Peer Icon (`+[person_icon]`)**:
    - The Stage 1 Plus bottom button variant previously displayed a generic plus sign (`+`).
@@ -26,10 +26,13 @@ Through visual testing and iterative design review, four user interface refineme
    - This keeps the input bar as a compact single row (~54px total height), prevents thumb collision with Send, preserves draft text safety, and establishes the bottom-left action anchor for a future nested attachment flow (where Add User and file attachments can be combined into an action drawer).
 3. **Clean Home View Top Bar**:
    - On the Home view (`!inRoom`), the top bar previously showed the slashed person icon badge and the blue dot capsule.
-   - **Intent**: Remove badges from the top bar at home view (`#peer-count` `[no_peers_badge]` and `#idle-status-capsule` `[blue_dot_badge]` are both hidden). The top bar displays only the brand text on the left, with zero badges or buttons on the right.
+   - **Intent**: Remove badges from the top bar at home view (`#peer-count` `[no_peers_badge]`, `#idle-status-capsule` `[blue_dot_badge]`, and `#peer-list` are all hidden). The top bar displays only the brand text on the left, with zero badges or buttons on the right.
 4. **Zero-Peer Slashed Badge Invariant**:
    - When a session is entered or all peers depart (`inRoom && openPeerCount === 0`), the peer counter previously rendered the numeric character `"0"`.
-   - **Intent**: Replace numeric `"0"` with `[no_peers_badge]` (`SLASHED_PERSON_ICON_SVG`). Inside a room session with 0 peers, `#peer-count` renders the slashed person icon, the blue dot capsule is visible, and the Leave button is visible. When peers > 0, `#peer-count` renders the numeric string (`"1"`, `"2"`...), the blue dot is hidden, and the Leave button remains visible.
+   - **Intent**: Replace numeric `"0"` with `[no_peers_badge]` (`SLASHED_PERSON_ICON_SVG`). Inside a room session with 0 peers, `#peer-count` renders the slashed person icon. When peers > 0, `#peer-count` renders the numeric string (`"1"`, `"2"`...).
+5. **Zero-Peer Badge Unification (Blue Dot Instead of Padlock)**:
+   - Previously, when a user started a new chat (host waiting), the header showed `[0_peer_counter] [blue dot] [leave]`. However, when peers departed (limbo state), the header showed `[0_peer_counter] [padlock] [leave]`.
+   - **Intent**: Unify the UI state across all 0-peer room states: whenever the 0-peer counter badge is displayed, the blue dot badge (`#idle-status-capsule`) MUST be displayed, and the padlock (`#peer-list`) MUST be hidden. The padlock is reserved strictly for active encrypted sessions with >0 peers. Both host waiting and peer limbo show identical top-bar icons: `[no_peers_badge] [blue dot] [leave]`.
 
 ---
 
@@ -54,22 +57,26 @@ Through visual testing and iterative design review, four user interface refineme
   - When `!inRoom` (Home view):
     - `#peer-count` (`peerCountEl`) is **hidden** (`classList.add("hidden")`).
     - `#idle-status-capsule` (`idleStatusCapsule`) is **hidden** (`classList.add("hidden")`).
+    - `#peer-list` (`peerListEl`) is **hidden** (`classList.add("hidden")` and `innerHTML = ""`).
     - `#header-leave-btn` (`headerLeaveBtn`) is **hidden** (`classList.add("hidden")`).
     - `#header-add-btn` (`headerAddBtn`) is **hidden** (`classList.add("hidden")`).
     - `#message-form` is **hidden**.
     - `#create-room-bar` is **visible** in Create Chat mode (`setCreateRoomStage1()`).
 
-### REQ-039.3: Zero-Peer Slashed Badge & Numeric Counter Lifecycle
-- In `zero_client/index.html` `updatePeerCountDisplay()`:
+### REQ-039.3: Zero-Peer Slashed Badge & Numeric Counter Lifecycle (Blue Dot Unification)
+- In `zero_client/index.html` `updatePeerCountDisplay()` and limbo disconnect handler:
   - When `inRoom && openPeerCount === 0` (host waiting, limbo disconnect, join failure):
     - `#peer-count` is **visible** (`classList.remove("hidden")`) and renders `SLASHED_PERSON_ICON_SVG` (`[no_peers_badge]`) instead of `"0"`.
-    - `#idle-status-capsule` is **visible** (`classList.remove("hidden")`).
+    - `#idle-status-capsule` (blue dot) is **visible** (`classList.remove("hidden")`).
+    - `#peer-list` (padlock) is **hidden** (`classList.add("hidden")` and `innerHTML = ""`).
     - `#header-leave-btn` is **visible** (`classList.remove("hidden")`).
     - `#message-form` is **hidden**.
     - `#create-room-bar` is **visible** in full-width Stage 1 Plus mode (`setCreateRoomStage1Plus()`, `+[person_icon]`).
+    - **UI Unification Invariant**: Whenever the 0-peer counter badge is displayed, the blue dot badge (`#idle-status-capsule`) is always displayed alongside it (`[no_peers_badge] [blue dot] [leave]`), and the padlock icon (`#peer-list`) is strictly hidden. Both host waiting and peer departure limbo states present identical top-bar controls.
   - When `inRoom && openPeerCount > 0` (active chat with 1+ peers):
     - `#peer-count` is **visible** (`classList.remove("hidden")`) and renders numeric string `String(count)` (`"1"`, `"2"`...).
     - `#idle-status-capsule` is **hidden** (`classList.add("hidden")`).
+    - `#peer-list` (padlock) is **visible** (`classList.remove("hidden")`).
     - `#header-leave-btn` is **visible** (`classList.remove("hidden")`).
     - `#create-room-bar` is **hidden** (`classList.add("hidden")`).
     - `#message-form` is **visible** (`classList.remove("hidden")`).
@@ -109,12 +116,17 @@ Through visual testing and iterative design review, four user interface refineme
   - Update Home view assertions:
     - Assert `#peer-count` is hidden (`classList.contains("hidden") === true`).
     - Assert `#idle-status-capsule` is hidden (`classList.contains("hidden") === true`).
-  - Update 0-peers room assertions:
+    - Assert `#peer-list` is hidden (`classList.contains("hidden") === true`).
+  - Update 0-peers room assertions (both host waiting and peer limbo after disconnect):
     - Assert `#peer-count` is visible and contains `peer-slashed-user-icon` SVG (instead of text `"0"`).
+    - Assert `#idle-status-capsule` is visible (`classList.contains("hidden") === false`).
+    - Assert `#peer-list` is hidden (`classList.contains("hidden") === true`).
+    - Assert `#header-leave-btn` is visible.
   - Update active chat assertions:
     - Assert `#header-add-btn` is hidden or omitted from top bar.
     - Assert `#input-add-peer-btn` is visible on the left of `#message-input` inside `#message-form`.
     - Assert `#input-add-peer-btn` contains `+[person_icon]` icon.
+    - Assert `#peer-list` is visible and contains padlock icon.
     - Assert clicking `#input-add-peer-btn` in active chat copies invite link, morphs to copy icon, and emits notices cleanly without altering draft input text.
   - All 17 browser headless tests must pass (`bash zero_client/tests/browser/run_test.sh`).
   - All 123 Rust workspace tests must pass (`cargo test --workspace`).
@@ -125,9 +137,9 @@ Through visual testing and iterative design review, four user interface refineme
 
 | Module / File | Changes & Responsibilities |
 |---|---|
-| `zero_client/index.html` | 1. Update `ADD_PEER_ICON_SVG` to user-plus vector icon.<br>2. In Home view: hide `#peer-count` and `#idle-status-capsule`.<br>3. In 0-peer room view: render `SLASHED_PERSON_ICON_SVG` in `#peer-count`.<br>4. In active chat: remove `#header-add-btn`, add `#input-add-peer-btn` immediately before `#message-input` with `ADD_PEER_ICON_SVG`, wire invite flow. |
+| `zero_client/index.html` | 1. Update `ADD_PEER_ICON_SVG` to user-plus vector icon.<br>2. In Home view: hide `#peer-count`, `#idle-status-capsule`, and `#peer-list`.<br>3. In 0-peer room view & limbo state: render `SLASHED_PERSON_ICON_SVG` in `#peer-count`, show `#idle-status-capsule` (blue dot), hide `#peer-list` (padlock).<br>4. In active chat: remove `#header-add-btn`, add `#input-add-peer-btn` immediately before `#message-input` with `ADD_PEER_ICON_SVG`, wire invite flow. |
 | `zero_client/style.css` | Style `#input-add-peer-btn` / `.btn-action-peer` with cyan accent, 44px × 42px dimensions symmetrical with `#send-button`, hover and `.btn-waiting` states. |
-| `zero_client/tests/browser/test_mesh_scenario.js` | Update assertions across test scenarios for hidden home badges, slashed badge for 0 peers, and bottom-left `#input-add-peer-btn` in active chat. |
+| `zero_client/tests/browser/test_mesh_scenario.js` | Update assertions across test scenarios for hidden home badges, slashed badge for 0 peers, unified blue dot (no padlock) in 0-peer states, and bottom-left `#input-add-peer-btn` in active chat. |
 | `openspec/specs/overview.md` | Reconcile canonical spec with Invariant 16 upon task completion. |
 
 ---
