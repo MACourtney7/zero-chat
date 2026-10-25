@@ -71,7 +71,10 @@ Through visual testing and iterative design review, five user interface refineme
     - `#peer-list` (padlock) is **hidden** (`classList.add("hidden")` and `innerHTML = ""`).
     - `#header-leave-btn` is **visible** (`classList.remove("hidden")`).
     - `#message-form` is **hidden**.
-    - `#create-room-bar` is **visible** in full-width Stage 1 Plus mode (`setCreateRoomStage1Plus()`, `+[person_icon]`).
+    - `#create-room-bar` is **visible** (`classList.remove("hidden")`):
+      - **Host Waiting (Initial creation from Home view)**: Since the invite URL was generated and copied to the clipboard during room creation, `#btn-create-room` is in **Stage 2 (`.btn-waiting`, Copy Icon)**. Clicking it re-copies the invite link to the clipboard and restarts temporary feedback notices.
+      - **Limbo Disconnect (Peers have left)**: Before a new invite is requested, `#btn-create-room` is initialized in **Stage 1 Plus (`+[person_icon]`)**. Clicking it generates a new in-room offer, copies to clipboard, and transitions to **Stage 2 (`.btn-waiting`, Copy Icon)**.
+      - `updatePeerCountDisplay()` preserves `.btn-waiting` if already in Stage 2 (never prematurely resets active Stage 2 copy buttons).
     - **UI Unification Invariant**: Whenever the 0-peer counter badge is displayed, the blue dot badge (`#idle-status-capsule`) is always displayed alongside it (`[no_peers_badge] [blue dot] [leave]`), and the padlock icon (`#peer-list`) is strictly hidden. Both host waiting and peer departure limbo states present identical top-bar controls.
   - When `inRoom && openPeerCount > 0` (active chat with 1+ peers):
     - `#peer-count` is **visible** (`classList.remove("hidden")`) and renders numeric string `String(count)` (`"1"`, `"2"`...).
