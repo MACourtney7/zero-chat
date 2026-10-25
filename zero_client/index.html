@@ -367,10 +367,12 @@
                 const count = activeEngine ? activeEngine.openPeerCount : 0;
                 peerCountEl.classList.remove("hidden");
                 if (headerLeaveBtn) headerLeaveBtn.classList.remove("hidden");
+                if (burnBtn) burnBtn.classList.remove("hidden");
 
                 if (count === 0) {
-                    // 0 Peers: show slashed person icon & blue dot, hide padlock & burn button
-                    if (burnBtn) burnBtn.classList.add("hidden");
+                    // 0 Peers: show slashed person icon & blue dot, hide padlock, keep leave & burn button visible
+                    if (headerLeaveBtn) headerLeaveBtn.classList.remove("hidden");
+                    if (burnBtn) burnBtn.classList.remove("hidden");
                     peerCountEl.innerHTML = SLASHED_PERSON_ICON_SVG;
                     if (idleStatusCapsule) idleStatusCapsule.classList.remove("hidden");
                     if (peerListEl) {
@@ -385,6 +387,7 @@
                     }
                 } else {
                     // >0 Peers: show numeric count, padlock, and burn button, hide blue dot
+                    if (headerLeaveBtn) headerLeaveBtn.classList.remove("hidden");
                     if (burnBtn) burnBtn.classList.remove("hidden");
                     peerCountEl.textContent = String(count);
                     if (idleStatusCapsule) idleStatusCapsule.classList.add("hidden");
@@ -1031,7 +1034,8 @@
             clearTransientStatus();
             transientStatusEl = document.createElement("div");
             transientStatusEl.className = "system-message transient-status";
-            transientStatusEl.innerHTML = `<span class="transient-text">${text}</span><span class="ticking-dots"></span>`;
+            const cleanText = (text || "").replace(/\.+$/, "");
+            transientStatusEl.innerHTML = `<span class="transient-text">${cleanText}</span><span class="ticking-dots"></span>`;
             feed.appendChild(transientStatusEl);
             feed.scrollTop = feed.scrollHeight;
         }
@@ -1310,7 +1314,7 @@
 
             const textSpan = document.createElement("span");
             textSpan.className = "system-text";
-            textSpan.textContent = text;
+            textSpan.textContent = isWaitingDots ? (text || "").replace(/\.+$/, "") : text;
             el.appendChild(textSpan);
 
             if (isWaitingDots) {
@@ -1998,7 +2002,7 @@
                         idleStatusCapsule.classList.remove("hidden");
                     }
                     if (burnBtn) {
-                        burnBtn.classList.add("hidden");
+                        burnBtn.classList.remove("hidden");
                     }
                     if (messageForm) {
                         messageForm.classList.add("hidden");
@@ -2058,7 +2062,7 @@
                     }
                     if (headerAddBtn) headerAddBtn.classList.add("hidden");
                     if (headerLeaveBtn) headerLeaveBtn.classList.remove("hidden");
-                    if (burnBtn && engine && engine.openPeerCount > 0) burnBtn.classList.remove("hidden");
+                    if (burnBtn) burnBtn.classList.remove("hidden");
                     if (createRoomBar) createRoomBar.classList.add("hidden");
                     if (messageForm) messageForm.classList.remove("hidden");
                     if (inputAddPeerBtn) {
@@ -2109,6 +2113,7 @@
                         } else {
                             updatePeerCountDisplay();
                             if (headerLeaveBtn) headerLeaveBtn.classList.remove("hidden");
+                            if (burnBtn) burnBtn.classList.remove("hidden");
                             if (headerAddBtn) headerAddBtn.classList.add("hidden");
                             if (messageForm) messageForm.classList.add("hidden");
                             if (createRoomBar) {
@@ -2794,6 +2799,7 @@
             isInRoomSession = true;
             updatePeerCountDisplay();
             if (headerLeaveBtn) headerLeaveBtn.classList.remove("hidden");
+            if (burnBtn) burnBtn.classList.remove("hidden");
             if (headerAddBtn) headerAddBtn.classList.add("hidden");
             if (messageForm) messageForm.classList.add("hidden");
             if (createRoomBar) {
@@ -2875,7 +2881,7 @@
 
                     if (resp.status === 404) {
                         if (attempt < MAX_DROP_ATTEMPTS) {
-                            showTransientStatus("Waiting for host...");
+                            showTransientStatus("Waiting for host");
                             await new Promise((resolve) => setTimeout(resolve, RETRY_INTERVAL_MS));
                             if (!isJoining || isBurned) {
                                 return;
