@@ -21,6 +21,7 @@ Following the visual modernization in `ticket-042`, five specific UI glitches an
 4. **Chat Bubble Text Spilling Out on Mobile Keyboard Open**: On mobile viewports (e.g. iOS Safari), opening the virtual keyboard compresses the vertical space of `.messages-container`. Because `.message-bubble` lacks `flex-shrink: 0`, flexbox forcibly compresses each bubble down to its `min-height: 44px`. Because `overflow` is visible, the message text (`.message-text`) spills out below the bubble background onto the dark page background.
 5. **Redundant Static Ellipses in Ticking System Messages**: Transient system status displays like `"Waiting for host..."` include three literal trailing dots in the input string, while the `.ticking-dots` element adds an additional 1 to 3 animated dots, producing an erroneous `"Waiting for host......"` (6 dots). All ellipsis messages must strictly display their dynamic ticking ellipsis with zero static dots.
 6. **Mobile Browser Web Share API & Dynamic Share Icon**: On mobile browsers, sending invite links via the system share sheet (`navigator.share`) is significantly faster and more intuitive than manual copy-paste. When `navigator.share` is supported, clicking the bottom `#input-add-peer-btn` or the full-width `#btn-create-room` must trigger the native share sheet with the invite link, and the Stage 2 waiting button must dynamically morph to a Share icon (`SHARE_ICON_SVG`) and `aria-label="Share invite link"`, with re-clicking re-opening the share sheet. On desktop or unsupported platforms, the button gracefully falls back to clipboard copying with the Copy icon (`COPY_ICON_SVG`).
+7. **Favicon Badge Outer Border Rounding**: The SVG favicon defined in `<link rel="icon">` previously used a square-ish rectangle (`rx='8'`), contrasting with the application-wide design system where badges and icons use fully rounded geometry (`border-radius: 9999px`). The outer border of the favicon badge must be smoothly rounded into a circular badge (`rx='15'` / `rx='16'`) with cleanly contained stroke.
 
 ---
 
@@ -99,16 +100,24 @@ Following the visual modernization in `ticket-042`, five specific UI glitches an
   - When `canShare` is false (desktop browsers or browsers without Web Share support):
     - Maintain existing behavior: clipboard copy, `COPY_ICON_SVG`, and `aria-label="Copy invite link"`.
 
-### REQ-043.7: Automated Headless Browser & Workspace Test Verification
+### REQ-043.7: Favicon Badge Outer Border Rounding
+- In `zero_client/index.html`:
+  - Update `<link rel="icon">` SVG data URI:
+    - Replace the squarish `<rect width='32' height='32' rx='8' ...>` with a fully rounded circular badge:
+      `<rect x='1' y='1' width='30' height='30' rx='15' fill='%23121826' stroke='%2338bdf8' stroke-width='2' stroke-opacity='0.4'/>`
+    - Ensures the 2px cyan border (`#38bdf8`) has 100% round curvature matching the application-wide pill/circle design language (`border-radius: 9999px`) without clipping against the viewBox boundary.
+
+### REQ-043.8: Automated Headless Browser & Workspace Test Verification
 - In `zero_client/tests/browser/test_mesh_scenario.js`:
   - Update Test 18 and Test 19 to assert:
     - `.message-bubble` has `flex-shrink: 0`.
     - `#destroy-session-button` theme matches `rgba(244, 63, 94, ...)` and `#fda4af`.
     - `#destroy-session-button` remains visible during 0-peer limbo room state when `#header-leave-btn` is visible.
     - `showTransientStatus` strips trailing dots and never produces 6 dots.
-  - Add Test 20 (or expand Test 18/19) to assert:
+  - Add Test 20 to assert:
     - When `navigator.share` is present: `#btn-create-room` and `#input-add-peer-btn` invoke `navigator.share`, display `SHARE_ICON_SVG` in Stage 2, set `aria-label="Share invite link"`, and subsequent clicks re-invoke `navigator.share`.
     - When `navigator.share` is absent: `#btn-create-room` and `#input-add-peer-btn` copy to clipboard, display `COPY_ICON_SVG` in Stage 2, and set `aria-label="Copy invite link"`.
+    - Favicon `<link rel="icon">` has rounded outer border (`rx='15'` or circular geometry).
   - All browser test suites pass (`bash zero_client/tests/browser/run_test.sh`).
   - All 123 Rust workspace tests pass (`cargo test --workspace`).
   - Dual WASM compilation checks pass (`zero_client` and `zero_network`).
@@ -120,7 +129,7 @@ Following the visual modernization in `ticket-042`, five specific UI glitches an
 | Module / File | Scope of Changes |
 |---|---|
 | `zero_client/style.css` | Fix bottom button hover glow clipping (`overflow: visible`, padding); align burn button color palette/height with leave button (`rgba(244, 63, 94, ...)`, 26px); add `flex-shrink: 0` to `.message-bubble`. |
-| `zero_client/index.html` | Ensure `#destroy-session-button` is visible whenever `#header-leave-btn` is visible (including limbo); clean static dots from `showTransientStatus`; integrate Web Share API (`navigator.share`) on mobile browsers for `#btn-create-room` and `#input-add-peer-btn`, morphing Stage 2 to dynamic `SHARE_ICON_SVG` and `aria-label="Share invite link"`. |
+| `zero_client/index.html` | Ensure `#destroy-session-button` is visible whenever `#header-leave-btn` is visible (including limbo); clean static dots from `showTransientStatus`; integrate Web Share API (`navigator.share`) on mobile browsers for `#btn-create-room` and `#input-add-peer-btn`, morphing Stage 2 to dynamic `SHARE_ICON_SVG` and `aria-label="Share invite link"`; round outer border of favicon badge in `<link rel="icon">`. |
 | `zero_client/tests/browser/test_mesh_scenario.js` | Update test assertions for limbo burn button visibility, burn button color palette, bubble flex containment, ellipsis de-duplication, and Web Share API / Share icon behavior. |
 | `openspec/specs/overview.md` | Reconcile canonical spec with Invariant 18 & 19 updates upon completion. |
 
