@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.15.0"
+version: "1.16.0"
 milestone: "ephemeral-ui-modernization"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-25T14:25:00Z"
+updated_at: "2026-10-25T15:35:00Z"
 ---
 ```
 
@@ -96,6 +96,12 @@ updated_at: "2026-10-25T14:25:00Z"
     - **Host WebSocket Suspension & Auto-Reconnection**: Active signaling context (`activeHostSignaling`, `activeInviteSignaling`) is retained in memory. `visibilitychange` listener (`visibilityState === "visible"`) auto-reconnects closed host WebSockets while peer channels are pending open.
     - **Joiner 404 Retry Loop**: In `joinRoomFromHash`, if `POST /drop/...` receives HTTP 404 (host backgrounded in messaging app), it retries every 1500ms up to 10 attempts (~15s) while displaying transient status `"Waiting for host..."`.
     - **ICE Gathering Latency & Bfcache Safety**: `_waitForIceGatheringComplete` timeout extended to 4500ms for cellular STUN latency. `pagehide` listener guarded with `!event.persisted`, preventing app switching into bfcache from falsely incinerating active room sessions.
+18. **Atmospheric Transparency, Relocated Header Burn Button & Rounded Glass Controls**:
+    - **Atmospheric Transparency**: `.chat-header`, `.welcome-splash`, and `.chat-footer` / `#create-room-bar` strip opaque panel backgrounds, hard borders, box-shadows, and backdrop filters (`background: transparent !important; border: none !important; box-shadow: none !important; backdrop-filter: none !important;`), allowing the dark ambient gradient to flow seamlessly through the application layout.
+    - **Header Brand Minimalism**: In Home View (`!inRoom`), `.brand-text` (`zero-chat.pages.dev` and `SECURE P2P CHAT`) is displayed alongside the cyan `0` brand glyph. In active room sessions (`inRoom`), `.brand-text` is hidden (`classList.add("hidden")`), preserving only the `0` glyph on the top-left and freeing up horizontal header width. Full brand text is restored upon `resetToHome()`.
+    - **Relocated Header Burn Button (Leftmost in Header Controls)**: The obsolete full-width `#burn-room-bar` underneath the header is completely excised, reclaiming vertical screen space for the message feed. `#destroy-session-button` is integrated into `.header-controls` as the leftmost/first child element, styled as a wide oval pill (`border-radius: 9999px; min-width: 80px; height: 28px; padding: 0 14px;`) with translucent red styling (`background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.3); color: var(--accent-rose);`), smooth rose micro-glow hover transitions (`box-shadow: 0 0 10px rgba(239, 68, 68, 0.35)`), and clean 16x16 flame icon. Managed by `updatePeerCountDisplay()`: hidden in Home and 0-peer Limbo states, visible in active chat (>0 peers).
+    - **Rounded Bottom Bar Buttons**: `#input-add-peer-btn` and `#send-button` enforce fully rounded pill geometry (`border-radius: 9999px; width: 42px; height: 42px;`), adopting the top-bar translucent glass aesthetic with micro-glow hover states and disabled opacity.
+    - **Inverted Dock & Input Styling**: Bottom bar dock container is completely transparent; `#message-input` adopts the previous panel background (`rgba(18, 24, 38, 0.7)`), `backdrop-filter: blur(16px)`, `border: 1px solid rgba(255, 255, 255, 0.12)`, `border-radius: 9999px`, and `padding: 10px 18px`.
 
 ---
 
