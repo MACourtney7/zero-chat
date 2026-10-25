@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.13.0"
+version: "1.14.0"
 milestone: "ephemeral-ui-modernization"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-25T10:20:00Z"
+updated_at: "2026-10-25T10:55:00Z"
 ---
 ```
 
@@ -75,7 +75,18 @@ updated_at: "2026-10-25T10:20:00Z"
     - **Clean Home View Top Bar**: In Home view (`!inRoom` / `resetToHome()`), the top bar renders strictly the brand logo (`<span class="brand-icon">0</span>`) and domain name on the left. All right-side controls and status badges (`#peer-count`, `#idle-status-capsule`, `#peer-list`, and `#header-leave-btn`) are completely hidden.
     - **Zero-Peer Slashed Badge Invariant**: When in an active room session with 0 connected peers (`inRoom && openPeerCount === 0`, e.g. host waiting, limbo disconnect, or join failure), `#peer-count` renders `SLASHED_PERSON_ICON_SVG` (`[no_peers_badge]`) instead of numeric `"0"`. When peers > 0, `#peer-count` renders numeric count strings (`"1"`, `"2"`...).
     - **Zero-Peer Blue Dot & Padlock Unification**: In all 0-peer room states (both host waiting and limbo disconnect), the top bar right controls strictly display `[no_peers_badge] [blue dot] [leave]`. The padlock icon (`#peer-list`) is strictly hidden when peer count is 0 and is displayed only during active encrypted sessions with >0 peers (where the blue dot is hidden).
-    - **Bottom-Left Inlined Add Peer Button (`#input-add-peer-btn`)**: The top-bar `+` button (`#header-add-btn`) is permanently omitted. Inside `#message-form`, `#input-add-peer-btn` is placed on the left side of `#message-input` with the `+[person_icon]` vector icon, styled symmetrically with `#send-button` (44px × 42px). Clicking it generates an in-room invite, copies to clipboard, transitions to `.btn-waiting` (copy icon), and triggers temporary feedback notices without altering or clearing draft input text in `#message-input`, establishing the bottom-left anchor for future nested attachment flows.
+    - **Bottom-Left Inlined Add Peer Button (`#input-add-peer-btn`) & 2-Stage Blue/Cyan Styling**: The top-bar `+` button (`#header-add-btn`) is permanently omitted. Inside `#message-form`, `#input-add-peer-btn` is placed on the left side of `#message-input` with the `+[person_icon]` vector icon, styled symmetrically with `#send-button` (44px × 42px). Amber/orange styling is completely eliminated from the active chat view.
+      - **Stage 1 (Default / Idle)**: Translucent cyan (`background: rgba(56, 189, 248, 0.12); border-color: rgba(56, 189, 248, 0.3); color: var(--accent-cyan);`) displaying `ADD_PEER_ICON_SVG`.
+      - **Stage 2 (Active / Copied)**: Deeper blue/cyan accent (`background: rgba(56, 189, 248, 0.28); border-color: rgba(56, 189, 248, 0.65); color: #38bdf8;`) displaying `COPY_ICON_SVG`.
+    - **5-Second Notice Timeout & Elimination of "Waiting for peer..." in Chat View**:
+      - Clicking `#input-add-peer-btn` triggers `triggerInChatInviteFeedback()`, copying the invite URL to clipboard, pulsing `.notice-pulse`, and displaying a single temporary notice `"Invite link copied to clipboard"` (`.in-chat-invite-notice`).
+      - Distracting `"Waiting for peer..."` notices are completely suppressed in active chat.
+      - The notice auto-dismisses and removes itself from the DOM after exactly 5000ms (`setTimeout(..., 5000)`).
+      - Re-clicking within 5000ms re-copies the URL, re-pulses the notice, and resets the 5000ms timer.
+    - **Synchronized Button State Reversion**:
+      - When the 5000ms timeout expires, `#input-add-peer-btn` cleanly reverts from Stage 2 (copy icon) back to Stage 1 (`+[person_icon]`).
+      - Peer connections or room teardowns cancel active timers, remove feedback elements, and reset the button to Stage 1.
+      - Message draft text in `#message-input` is never modified or cleared during invite actions.
 
 ---
 
@@ -283,7 +294,7 @@ Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
     * Test 10: Scoped clearPendingInvite protects in-flight invite from secondary peer connection
     * Test 11: Pre-assigned peer IDs and clean host departure in 3-peer mesh (single notice deduplication)
     * Test 12: E2E createRoomAsHost and joinRoomFromHash via signaling exchange (zero peer renaming)
-    * Test 13: Simplified icon-only button, temporary system messages & pulse animation (REQ-033.1 - REQ-033.4)
+    * Test 13: In-chat add peer button 2-stage blue/cyan styling, 5s temporary notice timeout & reversion (REQ-033.1 - REQ-033.4, REQ-040.1 - REQ-040.4)
     * Test 14: Zero input placeholder, staggered temporary notices, single ellipsis & slashed person icon (REQ-034.1 - REQ-034.4)
     * Test 15: Enhanced Burn Behavior - 90s TTL, 70s aging fade, per-message flame button, distributed BurnMessage signaling, quiet room invariant, and reset restoration (REQ-035.1 - REQ-035.5)
     * Test 16: Limbo State Recovery - in-room plus button, two-stage copy morphing, staggered notices, 95s TTL immunity, peer reconnection, and zero whitespace ticking dots (REQ-036.1 - REQ-036.7)
