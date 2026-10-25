@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-044"
 title: "UI Architecture: Desktop Share Bypass, Clean Mobile Share URL, Burn Icon Optical Alignment, and Vertical Layout Compaction"
-state: "PLANNING"
+state: "IN_PROGRESS"
 created_at: "2026-10-25T17:35:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-044/main"
