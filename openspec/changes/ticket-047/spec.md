@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-047"
 title: "Browser Runtime Integration of WasmCryptoSession & Blind Dead-Drop"
-state: "PLANNING"
+state: "IN_PROGRESS"
 created_at: "2026-10-26T19:50:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-047/main"
