@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.19.0"
-milestone: "ephemeral-ui-modernization"
+version: "1.20.0"
+milestone: "option-b-crypto-modernization"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-25T20:45:00Z"
+updated_at: "2026-10-26T18:15:00Z"
 ---
 ```
 
@@ -118,6 +118,11 @@ updated_at: "2026-10-25T20:45:00Z"
     - **Deterministic Per-Peer Role Tracking & System Notice Invariant**: `peerRoles = new Map()` maps remote peer IDs to `"inviter" | "joiner" | "mesh"`. System notice `"Joined chat"` emits strictly when the local client is a joiner entering the room for the first time (`role === "joiner" && !hasAnnouncedInitialSelfJoin`); all subsequent peer connections emit `"Peer joined chat"` without repetition or role reversal. Guarded initial signaling: mesh reconciliation and incoming offer glare handling skip any `peerId` currently awaiting initial dead-drop response (`activeHostSignaling` / `activeInviteSignaling`).
     - **Transient Background Freeze Grace Period & Self-Healing `departedPeers`**: Unannounced channel closures (`closed` / `disconnected`) wait for a 12-second grace period (`pendingDisconnectTimers`, extended to 20s if tab is hidden) before executing departure teardown. Tab returns (`visibilitychange` to `"visible"`) extend pending disconnect timers to `visible + 8s` and kick off non-destructive mesh reconciliation. Reconnection within the grace window cancels the timer, self-heals `departedPeers.delete(peerId)`, preserves existing message bubbles, updates `#peer-count`, and suppresses duplicate join notices. Explicit `PeerLeftAndBurn` signals immediately bypass the grace period, purging messages and emitting `"Peer left chat"` with zero delay.
     - **Smart Non-Trickle ICE Gathering & Multi-Port STUN / TURN Configuration**: In `_waitForIceGatheringComplete(pc)`, candidate strings are inspected for `"typ srflx"` and `"typ relay"`. Detection of public/relay candidates starts an adaptive 400ms settle timer, resolving immediately to minimize invite creation latency while maintaining non-trickle candidate completeness. Includes a 5000ms fallback ceiling if public candidates are delayed. Default STUN endpoints span Google and Cloudflare across ports 19302 and 3478, and merges dynamic `window.ZERO_TURN_SERVERS` for symmetric cellular NAT / CGNAT relay fallback.
+22. **Option B Burner Keybundle (Ed25519 + X25519 + ChaCha20-Poly1305), Blind Dead-Drop Signaling & WASM Crypto Bridge**:
+    - **Dual Cryptographic Burner Identity**: Each client generates an in-memory `BurnerKeybundle` containing an `X25519Keypair` (for pairwise ChaCha20-Poly1305 AEAD) and an `Ed25519Keypair` (for authenticating envelopes and mesh introductions). All secret key material derives `Zeroize` and `ZeroizeOnDrop`, with explicit volatile memory scrubbing via `burn_all()`.
+    - **Blind Dead-Drop Signaling**: The Joiner uses the pre-distributed `host_public_key` from `#payload=` and its own ephemeral `joiner_private_key` to derive the pairwise X25519 shared secret. `sdp_answer.sdp` is sealed into `sealed_sdp_answer: Option<SealedFrame>` prior to POSTing to `/drop/:do_id/:invite_uuid`. The Cloudflare Worker (`zero_network`) is 100% blind to SDP parameters and internal ICE candidates.
+    - **Signed Envelopes & Backward Compatibility**: `InvitePayload`, `DropPayload`, `SealedFrame`, and `PeerJoined` carry backward-compatible `#[serde(default)]` Ed25519 public keys and signatures, preventing mesh relay nodes from tampering with introduced peer identities or forging frames.
+    - **WASM Crypto Bridge (`WasmCryptoSession`)**: Exposes an ergonomic, high-performance `#[wasm_bindgen]` API from `zero_client`, providing browser JavaScript with peer session management, authenticated frame sealing/opening, blind SDP encryption/decryption, and CSPRNG UUID generation without Curve25519 point multiplication.
 
 ---
 
@@ -334,6 +339,6 @@ Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
     * Test 20: Mobile Browser Web Share API, Desktop Share Bypass, Clean Share URL, Burn Offset & Compacted Layout (ticket-043, ticket-044)
     * Test 21: Unified Connectivity Resilience - Per-Peer Roles, Grace Window & Smart ICE (REQ-045.1 - REQ-045.4)
 
-Total: 125 Rust tests + 21 Browser tests passed, 0 failed.
+Total: 136 Rust tests + 21 Browser tests passed, 0 failed.
 ```
 
