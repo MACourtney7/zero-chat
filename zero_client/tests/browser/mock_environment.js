@@ -957,4 +957,388 @@
     }
     global.RTCPeerConnection = MockRTCPeerConnection;
 
+    // 4. Mock WASM Crypto Bridge (ticket-047)
+    function sha256Bytes(data) {
+        function rightRotate(value, amount) {
+            return (value >>> amount) | (value << (32 - amount));
+        }
+        let i, j;
+        const words = [];
+        const asciiBitLength = data.length * 8;
+
+        const hash = [
+            0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+            0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+        ];
+
+        const k = [
+            0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+            0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+            0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+            0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+            0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+            0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+            0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+            0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+        ];
+
+        const w = new Array(64);
+        for (i = 0; i < data.length; i++) {
+            words[i >> 2] = (words[i >> 2] || 0) | ((data[i] & 0xff) << ((3 - (i % 4)) * 8));
+        }
+        words[asciiBitLength >> 5] = (words[asciiBitLength >> 5] || 0) | (0x80 << ((3 - (asciiBitLength % 4)) * 8));
+        const totalWords = (((asciiBitLength + 64) >> 9) << 4) + 16;
+        for (i = 0; i < totalWords; i++) {
+            if (!words[i]) words[i] = 0;
+        }
+        words[totalWords - 1] = asciiBitLength;
+
+        for (i = 0; i < totalWords; i += 16) {
+            let a = hash[0], b = hash[1], c = hash[2], d = hash[3],
+                e = hash[4], f = hash[5], g = hash[6], h = hash[7];
+
+            for (j = 0; j < 64; j++) {
+                if (j < 16) {
+                    w[j] = words[i + j] | 0;
+                } else {
+                    const s0 = rightRotate(w[j - 15], 7) ^ rightRotate(w[j - 15], 18) ^ (w[j - 15] >>> 3);
+                    const s1 = rightRotate(w[j - 2], 17) ^ rightRotate(w[j - 2], 19) ^ (w[j - 2] >>> 10);
+                    w[j] = (w[j - 16] + s0 + w[j - 7] + s1) | 0;
+                }
+
+                const s1 = rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25);
+                const ch = (e & f) ^ ((~e) & g);
+                const temp1 = (h + s1 + ch + k[j] + w[j]) | 0;
+                const s0 = rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22);
+                const maj = (a & b) ^ (a & c) ^ (b & c);
+                const temp2 = (s0 + maj) | 0;
+
+                h = g;
+                g = f;
+                f = e;
+                e = (d + temp1) | 0;
+                d = c;
+                c = b;
+                b = a;
+                a = (temp1 + temp2) | 0;
+            }
+
+            hash[0] = (hash[0] + a) | 0;
+            hash[1] = (hash[1] + b) | 0;
+            hash[2] = (hash[2] + c) | 0;
+            hash[3] = (hash[3] + d) | 0;
+            hash[4] = (hash[4] + e) | 0;
+            hash[5] = (hash[5] + f) | 0;
+            hash[6] = (hash[6] + g) | 0;
+            hash[7] = (hash[7] + h) | 0;
+        }
+
+        const out = [];
+        for (i = 0; i < 8; i++) {
+            for (j = 3; j >= 0; j--) {
+                out.push((hash[i] >>> (j * 8)) & 0xff);
+            }
+        }
+        return new Uint8Array(out);
+    }
+
+    function hmacSha256(key, message) {
+        let k = (typeof key === "string") ? new TextEncoder().encode(key) : new Uint8Array(key);
+        if (k.length > 64) {
+            k = sha256Bytes(k);
+        }
+        const paddedKey = new Uint8Array(64);
+        paddedKey.set(k, 0);
+        const oKeyPad = new Uint8Array(64);
+        const iKeyPad = new Uint8Array(64);
+        for (let i = 0; i < 64; i++) {
+            oKeyPad[i] = paddedKey[i] ^ 0x5c;
+            iKeyPad[i] = paddedKey[i] ^ 0x36;
+        }
+        const msg = (typeof message === "string") ? new TextEncoder().encode(message) : new Uint8Array(message);
+        const inner = new Uint8Array(64 + msg.length);
+        inner.set(iKeyPad, 0);
+        inner.set(msg, 64);
+        const innerHash = sha256Bytes(inner);
+
+        const outer = new Uint8Array(64 + 32);
+        outer.set(oKeyPad, 0);
+        outer.set(innerHash, 64);
+        const outerHash = sha256Bytes(outer);
+
+        let hex = "";
+        for (let i = 0; i < outerHash.length; i++) {
+            let h = outerHash[i].toString(16);
+            if (h.length < 2) h = "0" + h;
+            hex += h;
+        }
+        return hex;
+    }
+
+    function deriveMockSharedSecret(pub1, pub2) {
+        const p1 = new Uint8Array(pub1);
+        const p2 = new Uint8Array(pub2);
+        let cmp = 0;
+        for (let i = 0; i < 32; i++) {
+            const b1 = p1[i] || 0;
+            const b2 = p2[i] || 0;
+            if (b1 < b2) { cmp = -1; break; }
+            if (b1 > b2) { cmp = 1; break; }
+        }
+        const first = cmp <= 0 ? p1 : p2;
+        const second = cmp <= 0 ? p2 : p1;
+        const secret = new Uint8Array(32);
+        for (let i = 0; i < 32; i++) {
+            const b1 = first[i] || 0;
+            const b2 = second[(i * 7 + 13) % (second.length || 1)] || 0;
+            secret[i] = (b1 ^ b2 ^ ((i * 37) & 0xff)) & 0xff;
+        }
+        return secret;
+    }
+
+    function computeMockMac(key, nonce, encBytes) {
+        const tag = new Uint8Array(16);
+        for (let i = 0; i < 16; i++) {
+            tag[i] = (key[i] ^ key[i + 16] ^ nonce[i % 12]) & 0xff;
+        }
+        for (let i = 0; i < encBytes.length; i++) {
+            const b = encBytes[i];
+            const idx = i % 16;
+            tag[idx] = (tag[idx] * 33 + b + (i & 0xff)) & 0xff;
+        }
+        for (let i = 0; i < 16; i++) {
+            tag[i] = (tag[i] ^ key[(i * 3 + 5) % 32]) & 0xff;
+        }
+        return tag;
+    }
+
+    function computeMockSignature(pubKey, data) {
+        const sig = new Uint8Array(64);
+        const pub = new Uint8Array(pubKey || 32);
+        const d = new Uint8Array(data);
+        for (let i = 0; i < 32; i++) {
+            sig[i] = (pub[i] ^ ((i * 41 + 19) & 0xff)) & 0xff;
+            sig[i + 32] = (pub[31 - i] ^ ((i * 59 + 83) & 0xff)) & 0xff;
+        }
+        for (let i = 0; i < d.length; i++) {
+            const b = d[i];
+            const idx1 = i % 32;
+            const idx2 = 32 + ((i * 7) % 32);
+            sig[idx1] = (sig[idx1] * 31 + b + (i & 0xff)) & 0xff;
+            sig[idx2] = (sig[idx2] * 37 + b + ((i >> 3) & 0xff)) & 0xff;
+        }
+        for (let i = 0; i < 64; i++) {
+            sig[i] = (sig[i] ^ sig[(i + 17) % 64] ^ 0xa5) & 0xff;
+        }
+        return sig;
+    }
+
+    class MockWasmCryptoSession {
+        constructor() {
+            this._x25519Pub = crypto.getRandomValues(new Uint8Array(32));
+            this._ed25519Pub = crypto.getRandomValues(new Uint8Array(32));
+            this.peerSessions = new Map();
+        }
+
+        static new() {
+            return new MockWasmCryptoSession();
+        }
+
+        x25519_public_key_bytes() {
+            return new Uint8Array(this._x25519Pub);
+        }
+
+        ed25519_public_key_bytes() {
+            return new Uint8Array(this._ed25519Pub);
+        }
+
+        register_peer(peerId, peerX25519Pub, peerEd25519Pub) {
+            if (!peerX25519Pub || peerX25519Pub.length !== 32) {
+                throw new Error("Invalid X25519 public key length: expected 32, got " + (peerX25519Pub ? peerX25519Pub.length : 0));
+            }
+            const x25519 = new Uint8Array(peerX25519Pub);
+            let ed25519 = null;
+            if (peerEd25519Pub && peerEd25519Pub.length > 0) {
+                if (peerEd25519Pub.length !== 32) {
+                    throw new Error("Invalid Ed25519 public key length: expected 32, got " + peerEd25519Pub.length);
+                }
+                ed25519 = new Uint8Array(peerEd25519Pub);
+            }
+            const sharedSecret = deriveMockSharedSecret(this._x25519Pub, x25519);
+            this.peerSessions.set(peerId, {
+                x25519,
+                ed25519,
+                sharedSecret
+            });
+        }
+
+        has_peer_session(peerId) {
+            return this.peerSessions.has(peerId);
+        }
+
+        remove_peer(peerId) {
+            this.peerSessions.delete(peerId);
+        }
+
+        seal_for_peer(peerId, plaintextBytes) {
+            const entry = this.peerSessions.get(peerId);
+            if (!entry) {
+                throw new Error("No peer session found for '" + peerId + "'");
+            }
+            const pt = (typeof plaintextBytes === "string")
+                ? new TextEncoder().encode(plaintextBytes)
+                : new Uint8Array(plaintextBytes);
+
+            const nonce = crypto.getRandomValues(new Uint8Array(12));
+            const enc = new Uint8Array(pt.length);
+            for (let i = 0; i < pt.length; i++) {
+                enc[i] = (pt[i] ^ entry.sharedSecret[i % 32] ^ nonce[i % 12] ^ ((i * 31 + 17) & 0xff)) & 0xff;
+            }
+
+            const tag = computeMockMac(entry.sharedSecret, nonce, enc);
+            const ciphertext = new Uint8Array(enc.length + 16);
+            ciphertext.set(enc, 0);
+            ciphertext.set(tag, enc.length);
+
+            const toSign = new Uint8Array(nonce.length + ciphertext.length);
+            toSign.set(nonce, 0);
+            toSign.set(ciphertext, nonce.length);
+            const signature = computeMockSignature(this._ed25519Pub, toSign);
+
+            return JSON.stringify({
+                nonce: Array.from(nonce),
+                ciphertext: Array.from(ciphertext),
+                signature: Array.from(signature)
+            });
+        }
+
+        open_from_peer(peerId, sealedFrameJson) {
+            let frame = sealedFrameJson;
+            if (typeof frame === "string") {
+                try {
+                    frame = JSON.parse(frame);
+                } catch (e) {
+                    throw new Error("Invalid SealedFrame JSON: " + e.message);
+                }
+            }
+            const entry = this.peerSessions.get(peerId);
+            if (!entry) {
+                throw new Error("No peer session found for '" + peerId + "'");
+            }
+
+            if (frame.signature && entry.ed25519) {
+                const sig = new Uint8Array(frame.signature);
+                if (sig.length !== 64) {
+                    throw new Error("Ed25519 signature verification failed: invalid signature length");
+                }
+                const nonce = new Uint8Array(frame.nonce);
+                const ct = new Uint8Array(frame.ciphertext);
+                const toSign = new Uint8Array(nonce.length + ct.length);
+                toSign.set(nonce, 0);
+                toSign.set(ct, nonce.length);
+                const expectedSig = computeMockSignature(entry.ed25519, toSign);
+                let sigMatch = true;
+                for (let i = 0; i < 64; i++) {
+                    if (sig[i] !== expectedSig[i]) {
+                        sigMatch = false;
+                        break;
+                    }
+                }
+                if (!sigMatch) {
+                    throw new Error("Ed25519 signature verification failed");
+                }
+            }
+
+            const ct = new Uint8Array(frame.ciphertext);
+            if (ct.length < 16) {
+                throw new Error("DecryptionFailed: ciphertext too short");
+            }
+            const enc = ct.slice(0, ct.length - 16);
+            const tag = ct.slice(ct.length - 16);
+            const nonce = new Uint8Array(frame.nonce);
+            const expectedTag = computeMockMac(entry.sharedSecret, nonce, enc);
+            let macMatch = true;
+            for (let i = 0; i < 16; i++) {
+                if (tag[i] !== expectedTag[i]) {
+                    macMatch = false;
+                    break;
+                }
+            }
+            if (!macMatch) {
+                throw new Error("DecryptionFailed: MAC tag verification failed");
+            }
+
+            const pt = new Uint8Array(enc.length);
+            for (let i = 0; i < enc.length; i++) {
+                pt[i] = (enc[i] ^ entry.sharedSecret[i % 32] ^ nonce[i % 12] ^ ((i * 31 + 17) & 0xff)) & 0xff;
+            }
+            return pt;
+        }
+
+        seal_drop_sdp(hostPeerId, hostX25519Pub, hostEd25519Pub, sdpPlaintext) {
+            this.register_peer(hostPeerId, hostX25519Pub, hostEd25519Pub);
+            const sdpBytes = (typeof sdpPlaintext === "string")
+                ? new TextEncoder().encode(sdpPlaintext)
+                : new Uint8Array(sdpPlaintext);
+            return this.seal_for_peer(hostPeerId, sdpBytes);
+        }
+
+        open_drop_sdp(joinerPeerId, joinerX25519Pub, joinerEd25519Pub, sealedFrameJson) {
+            this.register_peer(joinerPeerId, joinerX25519Pub, joinerEd25519Pub);
+            const plaintextBytes = this.open_from_peer(joinerPeerId, sealedFrameJson);
+            return new TextDecoder().decode(plaintextBytes);
+        }
+
+        sign_bytes(data) {
+            const d = (typeof data === "string") ? new TextEncoder().encode(data) : new Uint8Array(data);
+            return computeMockSignature(this._ed25519Pub, d);
+        }
+
+        verify_peer_signature(peerId, data, sig) {
+            const entry = this.peerSessions.get(peerId);
+            if (!entry) {
+                throw new Error("No peer session found for '" + peerId + "'");
+            }
+            if (!entry.ed25519) {
+                return false;
+            }
+            const s = new Uint8Array(sig);
+            if (s.length !== 64) {
+                return false;
+            }
+            const d = (typeof data === "string") ? new TextEncoder().encode(data) : new Uint8Array(data);
+            const expected = computeMockSignature(entry.ed25519, d);
+            for (let i = 0; i < 64; i++) {
+                if (s[i] !== expected[i]) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        static compute_hmac_hex(secret, inviteUuid) {
+            return hmacSha256(secret, inviteUuid);
+        }
+
+        compute_hmac_hex(secret, inviteUuid) {
+            return hmacSha256(secret, inviteUuid);
+        }
+
+        burn_all() {
+            this.peerSessions.clear();
+            if (this._x25519Pub) this._x25519Pub.fill(0);
+            if (this._ed25519Pub) this._ed25519Pub.fill(0);
+        }
+    }
+
+    global.initWasm = async function() {
+        return Promise.resolve();
+    };
+    global.WasmCryptoSession = MockWasmCryptoSession;
+
+    if (typeof globalThis !== "undefined") {
+        globalThis.initWasm = global.initWasm;
+        globalThis.WasmCryptoSession = MockWasmCryptoSession;
+    }
+
 })(typeof globalThis !== 'undefined' ? globalThis : this);
