@@ -1,12 +1,18 @@
 //! Target-independent cryptographic primitives for zero_chat:
 //! - HMAC-SHA256 invite token generation and constant-time verification
 //! - X25519 ephemeral keypair generation and Diffie-Hellman key agreement with zeroization on drop
-//! - ChaCha20-Poly1305 AEAD payload sealing and opening
+//! - Ed25519 signing keypair generation and signature verification with zeroization on drop
+//! - Combined BurnerKeybundle for ephemeral zero-knowledge identities
+//! - ChaCha20-Poly1305 AEAD payload sealing and opening (including blind dead-drop SDP helpers)
+//! - Fast CSPRNG UUID generation without Curve25519 point multiplication
 
 use crate::envelope::{InviteToken, ProtocolError, SealedFrame};
 
-/// Standard 256-bit (32-byte) key length for X25519 and ChaCha20-Poly1305.
+/// Standard 256-bit (32-byte) key length for X25519, Ed25519, and ChaCha20-Poly1305.
 pub const KEY_LEN: usize = 32;
+
+/// Standard 512-bit (64-byte) signature length for Ed25519.
+pub const SIGNATURE_LEN: usize = 64;
 
 /// Standard 96-bit (12-byte) nonce length for ChaCha20-Poly1305.
 pub const NONCE_LEN: usize = 12;
@@ -146,6 +152,139 @@ pub mod x25519 {
     }
 }
 
+/// Ed25519 signing keypair generation and signature verification.
+pub mod ed25519 {
+    use super::*;
+    use ::ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+    use zeroize::{Zeroize, ZeroizeOnDrop};
+
+    /// Ed25519 signing keypair whose private seed is automatically zeroized on drop.
+    #[derive(Clone, Debug, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
+    pub struct Ed25519Keypair {
+        pub seed: [u8; KEY_LEN],
+        #[zeroize(skip)]
+        pub public_key: [u8; KEY_LEN],
+    }
+
+    impl Ed25519Keypair {
+        /// Generates a fresh random Ed25519 keypair using `getrandom`.
+        pub fn generate() -> Result<Self, ProtocolError> {
+            let mut seed = [0u8; KEY_LEN];
+            getrandom::getrandom(&mut seed)
+                .map_err(|e| ProtocolError::RandomGenerationError(e.to_string()))?;
+            let keypair = Self::from_seed(seed);
+            seed.zeroize();
+            Ok(keypair)
+        }
+
+        /// Deterministically constructs an `Ed25519Keypair` from a 32-byte secret seed.
+        pub fn from_seed(seed: [u8; KEY_LEN]) -> Self {
+            let signing_key = SigningKey::from_bytes(&seed);
+            let public_key = signing_key.verifying_key().to_bytes();
+            Self { seed, public_key }
+        }
+
+        /// Returns a reference to the 32-byte verifying public key.
+        pub fn public_key_bytes(&self) -> &[u8; KEY_LEN] {
+            &self.public_key
+        }
+
+        /// Signs `message` and returns a 64-byte Ed25519 signature.
+        pub fn sign(&self, message: &[u8]) -> [u8; SIGNATURE_LEN] {
+            let signing_key = SigningKey::from_bytes(&self.seed);
+            signing_key.sign(message).to_bytes()
+        }
+    }
+
+    /// Verifies `signature` over `message` against `public_key`.
+    /// Returns `Ok(())` on success, or `Err(ProtocolError::InvalidHmacSignature)` on verification failure.
+    pub fn verify_ed25519_signature(
+        public_key: &[u8; KEY_LEN],
+        message: &[u8],
+        signature: &[u8; SIGNATURE_LEN],
+    ) -> Result<(), ProtocolError> {
+        let verifying_key = VerifyingKey::from_bytes(public_key)
+            .map_err(|_| ProtocolError::InvalidHmacSignature)?;
+        let sig = Signature::from_bytes(signature);
+        verifying_key
+            .verify(message, &sig)
+            .map_err(|_| ProtocolError::InvalidHmacSignature)
+    }
+}
+
+/// Ephemeral burner keybundle combining X25519 key agreement and Ed25519 signature keypairs.
+pub mod burner {
+    use super::*;
+    use crate::crypto::{ed25519::Ed25519Keypair, x25519::X25519Keypair};
+    use zeroize::{Zeroize, ZeroizeOnDrop};
+
+    /// Ephemeral burner keybundle combining X25519 key agreement and Ed25519 signature keypairs.
+    #[derive(Clone, Debug, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
+    pub struct BurnerKeybundle {
+        pub x25519: X25519Keypair,
+        pub ed25519: Ed25519Keypair,
+    }
+
+    impl BurnerKeybundle {
+        /// Generates fresh random X25519 and Ed25519 keypairs.
+        pub fn generate() -> Result<Self, ProtocolError> {
+            Ok(Self {
+                x25519: X25519Keypair::generate()?,
+                ed25519: Ed25519Keypair::generate()?,
+            })
+        }
+
+        /// Returns the 32-byte X25519 public key.
+        pub fn x25519_public_key(&self) -> [u8; KEY_LEN] {
+            *self.x25519.public_key_bytes()
+        }
+
+        /// Returns the 32-byte Ed25519 public key.
+        pub fn ed25519_public_key(&self) -> [u8; KEY_LEN] {
+            *self.ed25519.public_key_bytes()
+        }
+
+        /// Explicitly zeroizes both secret key materials in memory.
+        pub fn zeroize(&mut self) {
+            self.x25519.zeroize();
+            self.ed25519.zeroize();
+        }
+    }
+}
+
+/// Cryptographically secure random UUID v4 generation without Curve25519 point multiplication.
+pub mod uuid {
+    use super::*;
+
+    /// Generates 16 cryptographically random bytes via `getrandom`.
+    pub fn generate_random_bytes_16() -> Result<[u8; 16], ProtocolError> {
+        let mut bytes = [0u8; 16];
+        getrandom::getrandom(&mut bytes)
+            .map_err(|e| ProtocolError::RandomGenerationError(e.to_string()))?;
+        Ok(bytes)
+    }
+
+    /// Generates an RFC 4122 v4 UUID string (`xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`)
+    /// using direct CSPRNG bytes.
+    pub fn generate_uuid_v4() -> Result<String, ProtocolError> {
+        let mut bytes = generate_random_bytes_16()?;
+        // Set version to 4 (0100 in high 4 bits of time_hi_and_version)
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        // Set variant to RFC 4122 (10 in high 2 bits of clock_seq_hi_and_reserved)
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+        let hex_str = hex::encode(bytes);
+        Ok(format!(
+            "{}-{}-{}-{}-{}",
+            &hex_str[0..8],
+            &hex_str[8..12],
+            &hex_str[12..16],
+            &hex_str[16..20],
+            &hex_str[20..32],
+        ))
+    }
+}
+
 /// ChaCha20-Poly1305 AEAD payload encryption and authenticated decryption.
 pub mod chacha20poly1305 {
     use super::*;
@@ -176,6 +315,7 @@ pub mod chacha20poly1305 {
         Ok(SealedFrame {
             nonce: *nonce,
             ciphertext,
+            signature: None,
         })
     }
 
@@ -199,10 +339,32 @@ pub mod chacha20poly1305 {
             .decrypt(Nonce::from_slice(&frame.nonce), frame.ciphertext.as_ref())
             .map_err(|e| ProtocolError::DecryptionError(e.to_string()))
     }
+
+    /// Encrypts `plaintext` into a `SealedFrame` using the derived 32-byte `shared_secret`.
+    pub fn seal_with_shared_secret(
+        shared_secret: &[u8; KEY_LEN],
+        plaintext: &[u8],
+    ) -> Result<SealedFrame, ProtocolError> {
+        seal_payload(shared_secret, plaintext)
+    }
+
+    /// Decrypts a `SealedFrame` using the derived 32-byte `shared_secret`.
+    pub fn open_with_shared_secret(
+        shared_secret: &[u8; KEY_LEN],
+        frame: &SealedFrame,
+    ) -> Result<Vec<u8>, ProtocolError> {
+        open_payload(shared_secret, frame)
+    }
 }
 
-pub use chacha20poly1305::{generate_nonce, open_payload, seal_payload, seal_payload_with_nonce};
+pub use burner::BurnerKeybundle;
+pub use chacha20poly1305::{
+    generate_nonce, open_payload, open_with_shared_secret, seal_payload, seal_payload_with_nonce,
+    seal_with_shared_secret,
+};
+pub use ed25519::{verify_ed25519_signature, Ed25519Keypair};
 pub use hmac_sha256::{
     compute_hmac_sha256, compute_invite_token, verify_hmac_sha256, verify_invite_token,
 };
+pub use uuid::{generate_random_bytes_16, generate_uuid_v4};
 pub use x25519::{derive_shared_secret, X25519Keypair};
