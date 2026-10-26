@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.20.0"
+version: "1.21.0"
 milestone: "option-b-crypto-modernization"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-26T18:15:00Z"
+updated_at: "2026-10-26T20:35:00Z"
 ---
 ```
 
@@ -123,6 +123,11 @@ updated_at: "2026-10-26T18:15:00Z"
     - **Blind Dead-Drop Signaling**: The Joiner uses the pre-distributed `host_public_key` from `#payload=` and its own ephemeral `joiner_private_key` to derive the pairwise X25519 shared secret. `sdp_answer.sdp` is sealed into `sealed_sdp_answer: Option<SealedFrame>` prior to POSTing to `/drop/:do_id/:invite_uuid`. The Cloudflare Worker (`zero_network`) is 100% blind to SDP parameters and internal ICE candidates.
     - **Signed Envelopes & Backward Compatibility**: `InvitePayload`, `DropPayload`, `SealedFrame`, and `PeerJoined` carry backward-compatible `#[serde(default)]` Ed25519 public keys and signatures, preventing mesh relay nodes from tampering with introduced peer identities or forging frames.
     - **WASM Crypto Bridge (`WasmCryptoSession`)**: Exposes an ergonomic, high-performance `#[wasm_bindgen]` API from `zero_client`, providing browser JavaScript with peer session management, authenticated frame sealing/opening, blind SDP encryption/decryption, and CSPRNG UUID generation without Curve25519 point multiplication.
+23. **Browser WASM Cryptographic Runtime Integration, Blind Dead-Drop Sealing & Tamper Rejection**:
+    - **WASM Bridge & 100% Stub Elimination**: Browser client (`zero_client/index.html`) directly binds to `WasmCryptoSession` (`./pkg/zero_client.js`) via `ensureCryptoReady()`, eliminating 100% of legacy JavaScript dummy keys (`crypto.getRandomValues`), fill-zero stubs, and cleartext byte buffers. Volatile memory is zeroized via `cryptoSession.burn_all()` on `resetToHome()` and `cryptoSession.remove_peer(peerId)` on peer departure.
+    - **Blind Dead-Drop Handshake**: Joiners seal WebRTC SDP answers into `sealed_sdp_answer: Option<SealedFrame>` using the Host's pre-distributed X25519 public key before POSTing `DropPayload` with dummy `sdp_answer: { sdp: "SEALED" }`. The Cloudflare Worker signaling relay is 100% blind to WebRTC SDP parameters, codecs, internal IP addresses, and ICE candidates. Hosts verify and decrypt incoming dead-drops via `cryptoSession.open_drop_sdp(...)`.
+    - **Signed Multi-Peer Mesh Introductions**: `PeerJoined` introduces existing participants to newly joined peers using real X25519 and Ed25519 public keys. Receiving nodes register pairwise sessions prior to in-band relay handshakes, preventing glare or unregistered peer exceptions.
+    - **End-to-End Encrypted Relay & Per-Peer Sealed Chat**: `RelaySdpOffer` and `RelaySdpAnswer` are sealed end-to-end; intermediate mesh nodes forward frames without decryption. `BroadcastChat` is uniquely sealed per connected peer with ChaCha20-Poly1305 AEAD ciphertext and 64-byte Ed25519 signatures. Corrupted MAC tags or forged signatures fail closed and are discarded without mutating the DOM.
 
 ---
 
@@ -338,7 +343,8 @@ Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
     * Test 19: UI Architecture Refinements - Transparent Panels, Relocated Burn Button & Rounded Controls (ticket-042)
     * Test 20: Mobile Browser Web Share API, Desktop Share Bypass, Clean Share URL, Burn Offset & Compacted Layout (ticket-043, ticket-044)
     * Test 21: Unified Connectivity Resilience - Per-Peer Roles, Grace Window & Smart ICE (REQ-045.1 - REQ-045.4)
+    * Test 22: WasmCryptoSession Browser Runtime Integration & Blind Dead-Drop - Wire Blindness, Authenticated AEAD & Ed25519 Signatures, 3-Peer Mesh Formation & Host Departure Continuity, Tamper Rejection & Fail-Closed Security, and Volatile Memory Wipe (REQ-047.1 - REQ-047.5)
 
-Total: 136 Rust tests + 21 Browser tests passed, 0 failed.
+Total: 136 Rust tests + 22 Browser tests passed, 0 failed.
 ```
 
