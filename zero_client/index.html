@@ -289,6 +289,59 @@
         const TIE_BREAKER_GRACE_MS = 4000;
         const MAX_HANDSHAKE_RETRIES = 5;
 
+        // WASM Crypto Session & Public Key Registry (ticket-047)
+        let wasmInitialized = false;
+        let cryptoSession = null;
+        let initWasm = (typeof globalThis !== "undefined" && globalThis.initWasm) || (typeof window !== "undefined" && window.initWasm) || null;
+        let WasmCryptoSession = (typeof globalThis !== "undefined" && globalThis.WasmCryptoSession) || (typeof window !== "undefined" && window.WasmCryptoSession) || null;
+
+        async function ensureCryptoReady(eng = null) {
+            if (!wasmInitialized) {
+                if (!WasmCryptoSession) {
+                    if (typeof globalThis !== "undefined" && globalThis.WasmCryptoSession) {
+                        WasmCryptoSession = globalThis.WasmCryptoSession;
+                    } else if (typeof window !== "undefined" && window.WasmCryptoSession) {
+                        WasmCryptoSession = window.WasmCryptoSession;
+                    } else {
+                        try {
+                            const wasmModule = await import("./pkg/zero_client.js");
+                            initWasm = wasmModule.default;
+                            WasmCryptoSession = wasmModule.WasmCryptoSession;
+                        } catch (_) {
+                            // Fallback for non-module or pre-configured test harness
+                        }
+                    }
+                }
+                if (!initWasm) {
+                    if (typeof globalThis !== "undefined" && globalThis.initWasm) {
+                        initWasm = globalThis.initWasm;
+                    } else if (typeof window !== "undefined" && window.initWasm) {
+                        initWasm = window.initWasm;
+                    }
+                }
+                if (typeof initWasm === "function") {
+                    await initWasm();
+                }
+                wasmInitialized = true;
+            }
+            const targetEng = eng || engine;
+            if (targetEng) {
+                if (!targetEng.cryptoSession && typeof WasmCryptoSession === "function") {
+                    targetEng.cryptoSession = new WasmCryptoSession();
+                }
+                if (targetEng.cryptoSession) {
+                    cryptoSession = targetEng.cryptoSession;
+                    return targetEng.cryptoSession;
+                }
+            }
+            if (!cryptoSession && typeof WasmCryptoSession === "function") {
+                cryptoSession = new WasmCryptoSession();
+            }
+            return cryptoSession;
+        }
+
+        const peerPublicKeys = new Map(); // peerId -> { x25519: number[], ed25519: number[] | null }
+
         if (typeof document !== "undefined" && !document.documentElement) {
             document.documentElement = {
                 style: {
@@ -538,6 +591,7 @@
                     iceServers: [...defaultIceServers, ...extraServers]
                 };
                 this.localPeerId = peerId || localPeerId;
+                this.cryptoSession = (typeof WasmCryptoSession === "function") ? new WasmCryptoSession() : null;
                 // Map<peerId, { pc: RTCPeerConnection, dc: RTCDataChannel, state: string, peerId: string }>
                 this.peers = new Map();
                 this.pendingOffers = new Set();
@@ -862,6 +916,25 @@
                 return this.accept_peer_answer(peerId, answerSdp);
             }
 
+            get_connected_peer_ids() {
+                const ids = [];
+                for (const [id, peer] of this.peers.entries()) {
+                    if (peer.state === "open" && peer.dc && peer.dc.readyState === "open") {
+                        ids.push(peer.peerId || id);
+                    }
+                }
+                return ids;
+            }
+
+            is_peer_open(peerId) {
+                const peer = this.peers.get(peerId);
+                return Boolean(peer && peer.state === "open" && peer.dc && peer.dc.readyState === "open");
+            }
+
+            send_to_peer(peerId, text) {
+                return this.send_text(text, peerId);
+            }
+
             async initiate_relay_handshake(relayPeerId, targetPeerId) {
                 const existing = this.peers.get(targetPeerId);
                 if (existing && existing.state === "open" && existing.dc && existing.dc.readyState === "open") {
@@ -875,8 +948,18 @@
                 try {
                     const offerSdp = await this.create_peer_offer(targetPeerId);
                     if (!offerSdp) return;
-                    const nonce = Array.from(crypto.getRandomValues(new Uint8Array(12)));
-                    const ciphertext = Array.from(new TextEncoder().encode(offerSdp));
+                    let sealedOffer;
+                    if (cryptoSession && cryptoSession.has_peer_session(targetPeerId)) {
+                        const offerBytes = new TextEncoder().encode(offerSdp);
+                        sealedOffer = JSON.parse(cryptoSession.seal_for_peer(targetPeerId, offerBytes));
+                    } else {
+                        const nonce = Array.from((window.crypto || crypto).getRandomValues(new Uint8Array(12)));
+                        const ciphertext = Array.from(new TextEncoder().encode(offerSdp));
+                        sealedOffer = {
+                            nonce,
+                            ciphertext
+                        };
+                    }
                     const offerMsg = {
                         frame_id: generateUuid(),
                         ttl: 3,
@@ -884,10 +967,7 @@
                             RelaySdpOffer: {
                                 from_peer_id: this.localPeerId || localPeerId,
                                 to_peer_id: targetPeerId,
-                                sealed_offer: {
-                                    nonce,
-                                    ciphertext
-                                }
+                                sealed_offer: sealedOffer
                             }
                         }
                     };
@@ -996,6 +1076,9 @@
             }
 
             close() {
+                if (this.cryptoSession && typeof this.cryptoSession.burn_all === "function") {
+                    this.cryptoSession.burn_all();
+                }
                 if (this.pendingOffers) {
                     this.pendingOffers.clear();
                 }
@@ -1539,8 +1622,9 @@
 
             hostWs.onmessage = async (ev) => {
                 try {
+                    const crypto = await ensureCryptoReady();
                     const drop = JSON.parse(ev.data);
-                    if (drop && drop.sdp_answer && drop.sdp_answer.sdp) {
+                    if (drop && (drop.sealed_sdp_answer || (drop.sdp_answer && drop.sdp_answer.sdp))) {
                         showTransientStatus("Establishing secure connection");
                         updateStatus("connecting", "Received answer! Snapping P2P channel...");
                         const targetPeerId = drop.joiner_peer_id || drop.peer_id || ctx.assignedPeerId;
@@ -1549,8 +1633,35 @@
                         } else if (targetPeerId !== "peer-01" && engine && engine.peers.has("peer-01")) {
                             engine.rename_peer("peer-01", targetPeerId);
                         }
-                        if (engine) {
-                            await engine.apply_answer(drop.sdp_answer.sdp, targetPeerId);
+
+                        let answerSdp = null;
+                        let joinerX25519Bytes = null;
+                        let joinerEd25519Bytes = undefined;
+                        if (drop.joiner_public_key) {
+                            joinerX25519Bytes = new Uint8Array(drop.joiner_public_key);
+                            joinerEd25519Bytes = drop.joiner_signing_key ? new Uint8Array(drop.joiner_signing_key) : undefined;
+                            peerPublicKeys.set(targetPeerId, {
+                                x25519: drop.joiner_public_key,
+                                ed25519: drop.joiner_signing_key || null
+                            });
+                        }
+
+                        if (drop.sealed_sdp_answer && crypto && joinerX25519Bytes && typeof crypto.open_drop_sdp === "function") {
+                            answerSdp = crypto.open_drop_sdp(
+                                targetPeerId,
+                                joinerX25519Bytes,
+                                joinerEd25519Bytes,
+                                typeof drop.sealed_sdp_answer === "string" ? drop.sealed_sdp_answer : JSON.stringify(drop.sealed_sdp_answer)
+                            );
+                        } else if (drop.sdp_answer && drop.sdp_answer.sdp) {
+                            if (crypto && joinerX25519Bytes && typeof crypto.register_peer === "function") {
+                                crypto.register_peer(targetPeerId, joinerX25519Bytes, joinerEd25519Bytes);
+                            }
+                            answerSdp = drop.sdp_answer.sdp;
+                        }
+
+                        if (answerSdp && engine) {
+                            await engine.accept_peer_answer(targetPeerId, answerSdp);
                         }
                     }
                 } catch (err) {
@@ -1586,8 +1697,9 @@
 
             ws.onmessage = async (ev) => {
                 try {
+                    const crypto = await ensureCryptoReady();
                     const drop = JSON.parse(ev.data);
-                    if (drop && drop.sdp_answer && drop.sdp_answer.sdp) {
+                    if (drop && (drop.sealed_sdp_answer || (drop.sdp_answer && drop.sdp_answer.sdp))) {
                         const targetPeerId = drop.joiner_peer_id || drop.peer_id || ctx.assignedPeerId;
                         if (targetPeerId !== ctx.assignedPeerId && engine && engine.peers.has(ctx.assignedPeerId)) {
                             engine.rename_peer(ctx.assignedPeerId, targetPeerId);
@@ -1595,8 +1707,35 @@
                                 pendingInvitePeerId = targetPeerId;
                             }
                         }
-                        if (engine) {
-                            await engine.apply_answer(drop.sdp_answer.sdp, targetPeerId);
+
+                        let answerSdp = null;
+                        let joinerX25519Bytes = null;
+                        let joinerEd25519Bytes = undefined;
+                        if (drop.joiner_public_key) {
+                            joinerX25519Bytes = new Uint8Array(drop.joiner_public_key);
+                            joinerEd25519Bytes = drop.joiner_signing_key ? new Uint8Array(drop.joiner_signing_key) : undefined;
+                            peerPublicKeys.set(targetPeerId, {
+                                x25519: drop.joiner_public_key,
+                                ed25519: drop.joiner_signing_key || null
+                            });
+                        }
+
+                        if (drop.sealed_sdp_answer && crypto && joinerX25519Bytes && typeof crypto.open_drop_sdp === "function") {
+                            answerSdp = crypto.open_drop_sdp(
+                                targetPeerId,
+                                joinerX25519Bytes,
+                                joinerEd25519Bytes,
+                                typeof drop.sealed_sdp_answer === "string" ? drop.sealed_sdp_answer : JSON.stringify(drop.sealed_sdp_answer)
+                            );
+                        } else if (drop.sdp_answer && drop.sdp_answer.sdp) {
+                            if (crypto && joinerX25519Bytes && typeof crypto.register_peer === "function") {
+                                crypto.register_peer(targetPeerId, joinerX25519Bytes, joinerEd25519Bytes);
+                            }
+                            answerSdp = drop.sdp_answer.sdp;
+                        }
+
+                        if (answerSdp && engine) {
+                            await engine.accept_peer_answer(targetPeerId, answerSdp);
                         }
                         try {
                             ws.close();
@@ -1766,6 +1905,7 @@
             }
 
             try {
+                const crypto = await ensureCryptoReady();
                 const assignedPeerId = "peer-" + Math.random().toString(36).slice(2, 8);
                 pendingInvitePeerId = assignedPeerId;
                 peerRoles.set(assignedPeerId, "inviter");
@@ -1773,20 +1913,40 @@
                 const offerSdp = await engine.create_peer_offer(assignedPeerId);
 
                 const doId = "room-" + Math.random().toString(36).slice(2, 10);
-                const hostSecretBytes = crypto.getRandomValues(new Uint8Array(32));
+                const hostSecretBytes = (window.crypto || crypto).getRandomValues(new Uint8Array(32));
                 const hostSecretHex = Array.from(hostSecretBytes).map(b => b.toString(16).padStart(2, "0")).join("");
 
                 const inviteUuid = generateUuid();
-                const tokenHex = await computeHmacSha256Hex(hostSecretBytes, inviteUuid);
-                const hostPubkey = Array.from(crypto.getRandomValues(new Uint8Array(32)));
+                let tokenHex;
+                if (crypto && typeof crypto.compute_hmac_hex === "function") {
+                    tokenHex = crypto.compute_hmac_hex(hostSecretBytes, inviteUuid);
+                } else if (typeof WasmCryptoSession !== "undefined" && typeof WasmCryptoSession.compute_hmac_hex === "function") {
+                    tokenHex = WasmCryptoSession.compute_hmac_hex(hostSecretBytes, inviteUuid);
+                } else {
+                    tokenHex = await computeHmacSha256Hex(hostSecretBytes, inviteUuid);
+                }
+
+                let hostX25519Pub;
+                let hostEd25519Pub;
+                if (crypto && typeof crypto.x25519_public_key_bytes === "function") {
+                    hostX25519Pub = Array.from(crypto.x25519_public_key_bytes());
+                    hostEd25519Pub = Array.from(crypto.ed25519_public_key_bytes());
+                } else {
+                    hostX25519Pub = Array.from((window.crypto || crypto).getRandomValues(new Uint8Array(32)));
+                    hostEd25519Pub = Array.from((window.crypto || crypto).getRandomValues(new Uint8Array(32)));
+                }
+
+                const myPeerId = (engine && engine.localPeerId) || localPeerId;
+                peerPublicKeys.set(myPeerId, { x25519: hostX25519Pub, ed25519: hostEd25519Pub });
 
                 const invitePayload = {
                     do_id: doId,
                     invite_uuid: inviteUuid,
                     token: tokenHex,
                     sdp_offer: { sdp: offerSdp },
-                    host_public_key: hostPubkey,
-                    host_peer_id: (engine && engine.localPeerId) || localPeerId,
+                    host_public_key: hostX25519Pub,
+                    host_signing_key: hostEd25519Pub,
+                    host_peer_id: myPeerId,
                     assigned_peer_id: assignedPeerId,
                     guest_private_key: null
                 };
@@ -2055,6 +2215,10 @@
                 activeSessionPeers.delete(peerId);
                 knownSessionMembers.delete(peerId);
                 memberHandshakeState.delete(peerId);
+                if (cryptoSession && typeof cryptoSession.remove_peer === "function") {
+                    cryptoSession.remove_peer(peerId);
+                }
+                peerPublicKeys.delete(peerId);
 
                 const peerBubbles = feed.querySelectorAll(`.message-bubble[data-peer-id="${peerId}"]`);
                 peerBubbles.forEach((el) => {
@@ -2377,19 +2541,22 @@
                         }
                     }
 
-                    // Universal Peer Introduction (REQ-029.3 / REQ-031.2)
+                    // Universal Peer Introduction (REQ-029.3 / REQ-031.2, REQ-047.3)
                     if (engine) {
                         for (const [existingPeerId, existingPeer] of engine.peers.entries()) {
                             if (existingPeerId !== peerId && existingPeer.state === "open" && existingPeer.dc && existingPeer.dc.readyState === "open") {
                                 const realExistingId = existingPeer.peerId || existingPeerId;
                                 const realNewId = peerId;
+                                const existingKeys = peerPublicKeys.get(realExistingId);
+                                const newKeys = peerPublicKeys.get(realNewId);
                                 const msgToNew = {
                                     frame_id: generateUuid(),
                                     ttl: 3,
                                     signal: {
                                         PeerJoined: {
                                             peer_id: realExistingId,
-                                            public_key: new Array(32).fill(0)
+                                            public_key: (existingKeys && existingKeys.x25519) || new Array(32).fill(0),
+                                            signing_key: (existingKeys && existingKeys.ed25519) || null
                                         }
                                     }
                                 };
@@ -2399,7 +2566,8 @@
                                     signal: {
                                         PeerJoined: {
                                             peer_id: realNewId,
-                                            public_key: new Array(32).fill(0)
+                                            public_key: (newKeys && newKeys.x25519) || new Array(32).fill(0),
+                                            signing_key: (newKeys && newKeys.ed25519) || null
                                         }
                                     }
                                 };
@@ -2501,6 +2669,7 @@
                 }
 
                 // 2. In-band SDP Relay Signaling & Mesh Snapping
+                const session = (activeEng && activeEng.cryptoSession) || cryptoSession;
                 const signal = data.signal;
                 if (signal && typeof signal === "object") {
                     // A. RelaySdpOffer
@@ -2526,7 +2695,20 @@
                             // Target Peer: decode offer, create answer, reply back to incomingPeerId (REQ-026.2)
                             try {
                                 let offerSdp = "";
-                                if (sealed_offer && Array.isArray(sealed_offer.ciphertext)) {
+                                if (session && session.has_peer_session(from_peer_id) && sealed_offer && (sealed_offer.ciphertext || typeof sealed_offer === "string")) {
+                                    try {
+                                        const offerPlainBytes = session.open_from_peer(
+                                            from_peer_id,
+                                            typeof sealed_offer === "string" ? sealed_offer : JSON.stringify(sealed_offer)
+                                        );
+                                        offerSdp = new TextDecoder().decode(offerPlainBytes);
+                                    } catch (e) {
+                                        console.warn(`Failed to open sealed offer from ${from_peer_id}:`, e);
+                                        if (sealed_offer && Array.isArray(sealed_offer.ciphertext)) {
+                                            offerSdp = new TextDecoder().decode(new Uint8Array(sealed_offer.ciphertext));
+                                        }
+                                    }
+                                } else if (sealed_offer && Array.isArray(sealed_offer.ciphertext)) {
                                     offerSdp = new TextDecoder().decode(new Uint8Array(sealed_offer.ciphertext));
                                 } else if (sealed_offer && typeof sealed_offer.sdp === "string") {
                                     offerSdp = sealed_offer.sdp;
@@ -2585,8 +2767,18 @@
 
                                 const answerSdp = await activeEng.create_peer_answer(from_peer_id, offerSdp);
                                 if (!answerSdp) return;
-                                const nonce = Array.from(crypto.getRandomValues(new Uint8Array(12)));
-                                const ciphertext = Array.from(new TextEncoder().encode(answerSdp));
+                                let sealed_answer;
+                                if (session && session.has_peer_session(from_peer_id)) {
+                                    const answerBytes = new TextEncoder().encode(answerSdp);
+                                    sealed_answer = JSON.parse(session.seal_for_peer(from_peer_id, answerBytes));
+                                } else {
+                                    const nonce = Array.from((window.crypto || crypto).getRandomValues(new Uint8Array(12)));
+                                    const ciphertext = Array.from(new TextEncoder().encode(answerSdp));
+                                    sealed_answer = {
+                                        nonce,
+                                        ciphertext
+                                    };
+                                }
 
                                 const answerMsg = {
                                     frame_id: generateUuid(),
@@ -2595,10 +2787,7 @@
                                         RelaySdpAnswer: {
                                             from_peer_id: myPeerId,
                                             to_peer_id: from_peer_id,
-                                            sealed_answer: {
-                                                nonce,
-                                                ciphertext
-                                            }
+                                            sealed_answer: sealed_answer
                                         }
                                     }
                                 };
@@ -2647,7 +2836,20 @@
                                 }
 
                                 let answerSdp = "";
-                                if (sealed_answer && Array.isArray(sealed_answer.ciphertext)) {
+                                if (session && session.has_peer_session(from_peer_id) && sealed_answer && (sealed_answer.ciphertext || typeof sealed_answer === "string")) {
+                                    try {
+                                        const answerPlainBytes = session.open_from_peer(
+                                            from_peer_id,
+                                            typeof sealed_answer === "string" ? sealed_answer : JSON.stringify(sealed_answer)
+                                        );
+                                        answerSdp = new TextDecoder().decode(answerPlainBytes);
+                                    } catch (e) {
+                                        console.warn(`Failed to open sealed answer from ${from_peer_id}:`, e);
+                                        if (sealed_answer && Array.isArray(sealed_answer.ciphertext)) {
+                                            answerSdp = new TextDecoder().decode(new Uint8Array(sealed_answer.ciphertext));
+                                        }
+                                    }
+                                } else if (sealed_answer && Array.isArray(sealed_answer.ciphertext)) {
                                     answerSdp = new TextDecoder().decode(new Uint8Array(sealed_answer.ciphertext));
                                 } else if (sealed_answer && typeof sealed_answer.sdp === "string") {
                                     answerSdp = sealed_answer.sdp;
@@ -2679,6 +2881,23 @@
                         const myPeerId = (activeEng && activeEng.localPeerId) || localPeerId;
 
                         if (remotePeerId && remotePeerId !== myPeerId) {
+                            if (signal.PeerJoined.public_key) {
+                                const isDummyKey = Array.isArray(signal.PeerJoined.public_key) && signal.PeerJoined.public_key.every(b => b === 0);
+                                if (!isDummyKey) {
+                                    peerPublicKeys.set(remotePeerId, {
+                                        x25519: signal.PeerJoined.public_key,
+                                        ed25519: signal.PeerJoined.signing_key || null
+                                    });
+                                    if (session && !session.has_peer_session(remotePeerId)) {
+                                        session.register_peer(
+                                            remotePeerId,
+                                            new Uint8Array(signal.PeerJoined.public_key),
+                                            signal.PeerJoined.signing_key ? new Uint8Array(signal.PeerJoined.signing_key) : undefined
+                                        );
+                                    }
+                                }
+                            }
+
                             if (!peerRoles.has(remotePeerId)) {
                                 peerRoles.set(remotePeerId, "mesh");
                             }
@@ -2713,7 +2932,7 @@
                     // D. BroadcastChat
                     if (signal.BroadcastChat) {
                         const broadcast = signal.BroadcastChat;
-                        const messageUuid = broadcast.message_uuid || data.frame_id;
+                        const messageUuid = broadcast.message_id || broadcast.message_uuid || data.frame_id;
 
                         if (!messageUuid || seenMessageIds.has(messageUuid)) {
                             // Loop suppression (REQ-026.3): DROP immediately
@@ -2723,17 +2942,27 @@
                         // Add to seen deduplication cache
                         markMessageSeen(messageUuid);
 
-                        // Decode plaintext body
+                        const senderPeerId = broadcast.sender_id || broadcast.origin_peer_id || incomingPeerId || "peer-01";
+                        const sealedFrame = broadcast.sealed_payload || broadcast.sealed_message;
+
                         let bodyText = "";
-                        if (broadcast.sealed_message && Array.isArray(broadcast.sealed_message.ciphertext)) {
-                            bodyText = new TextDecoder().decode(new Uint8Array(broadcast.sealed_message.ciphertext));
+                        if (session && session.has_peer_session(senderPeerId) && sealedFrame) {
+                            try {
+                                const framePayload = typeof sealedFrame === "string" ? sealedFrame : JSON.stringify(sealedFrame);
+                                const openedBytes = session.open_from_peer(senderPeerId, framePayload);
+                                bodyText = new TextDecoder().decode(openedBytes);
+                            } catch (e) {
+                                console.warn(`Decryption or signature verification failed for peer ${senderPeerId}:`, e);
+                                return; // Discard without rendering to DOM!
+                            }
+                        } else if (sealedFrame && Array.isArray(sealedFrame.ciphertext)) {
+                            bodyText = new TextDecoder().decode(new Uint8Array(sealedFrame.ciphertext));
                         } else if (typeof broadcast.body === "string") {
                             bodyText = broadcast.body;
                         } else if (typeof broadcast.text === "string") {
                             bodyText = broadcast.text;
                         }
 
-                        const senderPeerId = broadcast.origin_peer_id || incomingPeerId || "peer-01";
                         appendMessageBubble("Peer", bodyText, false, senderPeerId, messageUuid);
 
                         // Gossip Flooding (REQ-026.3)
@@ -2899,6 +3128,7 @@
             updateStatus("signaling", "Gathering ICE & creating offer...");
 
             try {
+                const crypto = await ensureCryptoReady();
                 engine = new ZeroWebRtcEngine(localPeerId);
                 window.engine = engine;
                 initEngineListeners();
@@ -2909,21 +3139,40 @@
 
                 // Generate random room DO ID and 32-byte host secret
                 const doId = "room-" + Math.random().toString(36).slice(2, 10);
-                const hostSecretBytes = crypto.getRandomValues(new Uint8Array(32));
+                const hostSecretBytes = (window.crypto || crypto).getRandomValues(new Uint8Array(32));
                 const hostSecretHex = Array.from(hostSecretBytes).map(b => b.toString(16).padStart(2, "0")).join("");
 
                 const inviteUuid = generateUuid();
-                const tokenHex = await computeHmacSha256Hex(hostSecretBytes, inviteUuid);
+                let tokenHex;
+                if (crypto && typeof crypto.compute_hmac_hex === "function") {
+                    tokenHex = crypto.compute_hmac_hex(hostSecretBytes, inviteUuid);
+                } else if (typeof WasmCryptoSession !== "undefined" && typeof WasmCryptoSession.compute_hmac_hex === "function") {
+                    tokenHex = WasmCryptoSession.compute_hmac_hex(hostSecretBytes, inviteUuid);
+                } else {
+                    tokenHex = await computeHmacSha256Hex(hostSecretBytes, inviteUuid);
+                }
 
-                const hostPubkey = Array.from(crypto.getRandomValues(new Uint8Array(32)));
+                let hostX25519Pub;
+                let hostEd25519Pub;
+                if (crypto && typeof crypto.x25519_public_key_bytes === "function") {
+                    hostX25519Pub = Array.from(crypto.x25519_public_key_bytes());
+                    hostEd25519Pub = Array.from(crypto.ed25519_public_key_bytes());
+                } else {
+                    hostX25519Pub = Array.from((window.crypto || crypto).getRandomValues(new Uint8Array(32)));
+                    hostEd25519Pub = Array.from((window.crypto || crypto).getRandomValues(new Uint8Array(32)));
+                }
+
+                const myHostId = (engine && engine.localPeerId) || localPeerId;
+                peerPublicKeys.set(myHostId, { x25519: hostX25519Pub, ed25519: hostEd25519Pub });
 
                 const invitePayload = {
                     do_id: doId,
                     invite_uuid: inviteUuid,
                     token: tokenHex,
                     sdp_offer: { sdp: offerSdp },
-                    host_public_key: hostPubkey,
-                    host_peer_id: (engine && engine.localPeerId) || localPeerId,
+                    host_public_key: hostX25519Pub,
+                    host_signing_key: hostEd25519Pub,
+                    host_peer_id: myHostId,
                     assigned_peer_id: assignedPeerId,
                     guest_private_key: null
                 };
@@ -3089,6 +3338,7 @@
                 const jsonStr = base64UrlToUtf8(rawPayload);
                 const invite = JSON.parse(jsonStr);
 
+                const crypto = await ensureCryptoReady();
                 localPeerId = invite.assigned_peer_id || ("peer-" + Math.random().toString(36).slice(2, 8));
                 engine = new ZeroWebRtcEngine(localPeerId);
                 window.engine = engine;
@@ -3098,11 +3348,48 @@
                 peerRoles.set(hostPeerId, "joiner");
                 const answerSdp = await engine.accept_offer_and_create_answer(invite.sdp_offer.sdp, hostPeerId);
 
+                let hostX25519Bytes = null;
+                let hostEd25519Bytes = undefined;
+                if (invite.host_public_key) {
+                    hostX25519Bytes = new Uint8Array(invite.host_public_key);
+                    hostEd25519Bytes = invite.host_signing_key ? new Uint8Array(invite.host_signing_key) : undefined;
+                    peerPublicKeys.set(hostPeerId, {
+                        x25519: invite.host_public_key,
+                        ed25519: invite.host_signing_key || null
+                    });
+                }
+
+                let sealedSdpFrame = null;
+                let joinerX25519 = null;
+                let joinerEd25519 = null;
+                if (crypto && hostX25519Bytes && typeof crypto.seal_drop_sdp === "function") {
+                    const sealedSdpJson = crypto.seal_drop_sdp(
+                        hostPeerId,
+                        hostX25519Bytes,
+                        hostEd25519Bytes,
+                        answerSdp
+                    );
+                    sealedSdpFrame = typeof sealedSdpJson === "string" ? JSON.parse(sealedSdpJson) : sealedSdpJson;
+                    joinerX25519 = Array.from(crypto.x25519_public_key_bytes());
+                    joinerEd25519 = Array.from(crypto.ed25519_public_key_bytes());
+                } else if (crypto && typeof crypto.x25519_public_key_bytes === "function") {
+                    joinerX25519 = Array.from(crypto.x25519_public_key_bytes());
+                    joinerEd25519 = Array.from(crypto.ed25519_public_key_bytes());
+                } else {
+                    joinerX25519 = Array.from((window.crypto || crypto).getRandomValues(new Uint8Array(32)));
+                }
+
+                if (joinerX25519) {
+                    peerPublicKeys.set(localPeerId, { x25519: joinerX25519, ed25519: joinerEd25519 || null });
+                }
+
                 const dropPayload = {
                     invite_uuid: invite.invite_uuid,
                     token: invite.token,
-                    sdp_answer: { sdp: answerSdp },
-                    joiner_public_key: Array.from(crypto.getRandomValues(new Uint8Array(32))),
+                    sdp_answer: sealedSdpFrame ? { sdp: "SEALED" } : { sdp: answerSdp },
+                    sealed_sdp_answer: sealedSdpFrame,
+                    joiner_public_key: joinerX25519,
+                    joiner_signing_key: joinerEd25519,
                     joiner_peer_id: localPeerId,
                     peer_id: localPeerId
                 };
@@ -3183,33 +3470,64 @@
             msgInput.value = "";
             if (msgInput) msgInput.focus();
 
-            const messageUuid = generateUuid();
-            markMessageSeen(messageUuid);
+            const msgUuid = generateUuid();
+            markMessageSeen(msgUuid);
 
-            const nonce = Array.from(crypto.getRandomValues(new Uint8Array(12)));
-            const ciphertext = Array.from(new TextEncoder().encode(text));
+            const plaintextBytes = new TextEncoder().encode(text);
+            const timestampMs = Date.now();
+            const senderPeerId = (engine && engine.localPeerId) || localPeerId;
 
-            const broadcastMsg = {
-                frame_id: messageUuid,
-                ttl: 3,
-                signal: {
-                    BroadcastChat: {
-                        message_uuid: messageUuid,
-                        origin_peer_id: (engine && engine.localPeerId) || localPeerId,
+            const connectedPeers = typeof engine.get_connected_peer_ids === "function"
+                ? engine.get_connected_peer_ids()
+                : (engine.dataChannels ? Object.keys(engine.dataChannels) : (engine.peers ? Array.from(engine.peers.keys()) : []));
+
+            let sentCount = 0;
+            for (const targetPeerId of connectedPeers) {
+                const isOpen = typeof engine.is_peer_open === "function"
+                    ? engine.is_peer_open(targetPeerId)
+                    : Boolean(engine.peers && engine.peers.get(targetPeerId) && engine.peers.get(targetPeerId).state === "open" && engine.peers.get(targetPeerId).dc && engine.peers.get(targetPeerId).dc.readyState === "open");
+
+                if (isOpen) {
+                    let sealedFrame;
+                    if (cryptoSession && cryptoSession.has_peer_session(targetPeerId)) {
+                        sealedFrame = JSON.parse(cryptoSession.seal_for_peer(targetPeerId, plaintextBytes));
+                    } else {
+                        sealedFrame = {
+                            nonce: Array.from((window.crypto || crypto).getRandomValues(new Uint8Array(12))),
+                            ciphertext: Array.from(plaintextBytes)
+                        };
+                    }
+                    const envelope = {
+                        frame_id: msgUuid,
                         ttl: 3,
-                        sealed_message: {
-                            nonce,
-                            ciphertext
+                        signal: {
+                            BroadcastChat: {
+                                message_id: msgUuid,
+                                message_uuid: msgUuid,
+                                sender_id: senderPeerId,
+                                origin_peer_id: senderPeerId,
+                                timestamp_ms: timestampMs,
+                                sealed_payload: sealedFrame,
+                                sealed_message: sealedFrame
+                            }
                         }
+                    };
+                    try {
+                        if (typeof engine.send_to_peer === "function") {
+                            engine.send_to_peer(targetPeerId, JSON.stringify(envelope));
+                        } else {
+                            engine.send_text(JSON.stringify(envelope), targetPeerId);
+                        }
+                        sentCount++;
+                    } catch (e) {
+                        console.warn(`Failed to send chat to ${targetPeerId}:`, e);
                     }
                 }
-            };
+            }
 
-            try {
-                engine.broadcast_text(JSON.stringify(broadcastMsg));
-                appendMessageBubble("You", text, true, "self", messageUuid);
-            } catch (e) {
-                console.error("Send error:", e);
+            if (sentCount > 0) {
+                appendMessageBubble("You", text, true, "self", msgUuid);
+            } else {
                 appendSystemMessage("Failed to deliver message");
             }
             if (msgInput) msgInput.focus();
@@ -3272,6 +3590,13 @@
             activeSessionPeers.clear();
             knownSessionMembers.clear();
             memberHandshakeState.clear();
+            if (cryptoSession && typeof cryptoSession.burn_all === "function") {
+                cryptoSession.burn_all();
+            }
+            if (typeof WasmCryptoSession === "function") {
+                cryptoSession = new WasmCryptoSession();
+            }
+            peerPublicKeys.clear();
             clearTransientStatus();
             if (engine) {
                 engine.onStateChangeCb = null;
@@ -3481,6 +3806,10 @@
         window.setHasAnnouncedInitialSelfJoin = (v) => { hasAnnouncedInitialSelfJoin = v; };
         window.pendingDisconnectTimers = pendingDisconnectTimers;
         window.DISCONNECT_GRACE_MS = DISCONNECT_GRACE_MS;
+        window.ensureCryptoReady = ensureCryptoReady;
+        window.getCryptoSession = () => cryptoSession;
+        window.setCryptoSession = (cs) => { cryptoSession = cs; };
+        window.peerPublicKeys = peerPublicKeys;
         try {
             Object.defineProperty(window, "opportunisticLeaveSent", {
                 get: () => opportunisticLeaveSent,
@@ -3497,7 +3826,17 @@
                 set: (v) => { activeInviteSignaling = v; },
                 configurable: true
             });
+            Object.defineProperty(window, "cryptoSession", {
+                get: () => cryptoSession,
+                set: (cs) => { cryptoSession = cs; },
+                configurable: true
+            });
         } catch (_) {}
+
+        // Ensure WASM crypto module is initialized on startup
+        ensureCryptoReady().catch((err) => {
+            console.warn("WASM crypto initialization deferred or failed:", err);
+        });
     </script>
 </body>
 </html>
