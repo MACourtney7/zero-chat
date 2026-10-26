@@ -61,6 +61,8 @@ pub struct InvitePayload {
     pub host_peer_id: Option<String>,
     #[serde(default)]
     pub assigned_peer_id: Option<String>,
+    #[serde(default)]
+    pub host_signing_key: Option<[u8; 32]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,12 +73,35 @@ pub struct DropPayload {
     pub joiner_public_key: [u8; 32],
     #[serde(default)]
     pub joiner_peer_id: Option<String>,
+    #[serde(default)]
+    pub joiner_signing_key: Option<[u8; 32]>,
+    #[serde(default)]
+    pub sealed_sdp_answer: Option<SealedFrame>,
+    #[serde(default)]
+    pub signature: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SealedFrame {
     pub nonce: [u8; 12],
     pub ciphertext: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Vec<u8>>,
+}
+
+impl SealedFrame {
+    pub fn new(nonce: [u8; 12], ciphertext: Vec<u8>) -> Self {
+        Self {
+            nonce,
+            ciphertext,
+            signature: None,
+        }
+    }
+
+    pub fn with_signature(mut self, signature: Vec<u8>) -> Self {
+        self.signature = Some(signature);
+        self
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,6 +118,10 @@ pub enum MeshRelaySignal {
     PeerJoined {
         peer_id: String,
         public_key: [u8; 32],
+        #[serde(default)]
+        signing_key: Option<[u8; 32]>,
+        #[serde(default)]
+        signature: Option<Vec<u8>>,
     },
     PeerLeft {
         peer_id: String,
@@ -180,6 +209,7 @@ mod tests {
             guest_private_key: Some([9u8; 32]),
             host_peer_id: Some("host-peer-001".to_string()),
             assigned_peer_id: Some("guest-peer-002".to_string()),
+            host_signing_key: Some([13u8; 32]),
         };
 
         let json = to_json_string(&payload).expect("serialize to string");
@@ -201,6 +231,13 @@ mod tests {
             },
             joiner_public_key: [11u8; 32],
             joiner_peer_id: Some("joiner-peer-003".to_string()),
+            joiner_signing_key: Some([17u8; 32]),
+            sealed_sdp_answer: Some(SealedFrame {
+                nonce: [1u8; 12],
+                ciphertext: vec![1, 2, 3],
+                signature: None,
+            }),
+            signature: Some(vec![9u8; 64]),
         };
 
         let json = to_json_string(&payload).expect("serialize to string");
@@ -222,6 +259,7 @@ mod tests {
             sealed: Some(SealedFrame {
                 nonce: [1u8; 12],
                 ciphertext: vec![10, 20, 30, 40],
+                signature: None,
             }),
         };
 
@@ -246,6 +284,7 @@ mod tests {
                 sealed_message: SealedFrame {
                     nonce: [2u8; 12],
                     ciphertext: vec![99, 88, 77],
+                    signature: None,
                 },
             },
         };
