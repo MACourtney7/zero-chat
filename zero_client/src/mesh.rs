@@ -9,6 +9,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
 
+use serde::{Deserialize, Serialize};
+
 use zero_protocol::{
     crypto::x25519::X25519Keypair,
     envelope::{from_json_str, to_json_string, ChatMessage, MeshRelayMessage, MeshRelaySignal},
@@ -87,6 +89,14 @@ impl From<ProtocolError> for MeshError {
     }
 }
 
+/// Role of a peer in the session topology (REQ-048.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PeerRole {
+    Inviter,
+    Joiner,
+    Mesh,
+}
+
 /// A connected peer in the local mesh topology.
 #[derive(Clone)]
 pub struct ConnectedPeer {
@@ -133,6 +143,9 @@ struct MeshTopologyInner {
     local_private_key: [u8; 32],
     local_public_key: [u8; 32],
     peers: HashMap<String, ConnectedPeer>,
+    peer_roles: HashMap<String, PeerRole>,
+    pending_disconnect_grace: HashMap<String, u64>, // peer_id -> timestamp_ms
+    departed_peers: HashSet<String>,
     pending_offers: HashMap<String, WebRtcPeer>, // target_peer_id -> pending WebRtcPeer
     known_public_keys: HashMap<String, [u8; 32]>,
     known_members: HashMap<String, KnownMember>,
@@ -159,6 +172,9 @@ impl MeshTopology {
                 local_private_key,
                 local_public_key,
                 peers: HashMap::new(),
+                peer_roles: HashMap::new(),
+                pending_disconnect_grace: HashMap::new(),
+                departed_peers: HashSet::new(),
                 pending_offers: HashMap::new(),
                 known_public_keys: HashMap::new(),
                 known_members: HashMap::new(),
@@ -218,6 +234,8 @@ impl MeshTopology {
             if inner.peers.contains_key(peer_id) {
                 return Err(MeshError::DuplicatePeer(peer_id.to_string()));
             }
+            inner.pending_disconnect_grace.remove(peer_id);
+            inner.departed_peers.remove(peer_id);
             inner
                 .known_public_keys
                 .insert(peer_id.to_string(), public_key);
@@ -276,7 +294,14 @@ impl MeshTopology {
         let pid_state = peer_id.to_string();
         rtc_peer.on_state_change(move |state| {
             if state == PeerLifecycleState::Closed {
-                let _ = topology_state.remove_peer(&pid_state);
+                let in_grace = topology_state
+                    .inner
+                    .borrow()
+                    .pending_disconnect_grace
+                    .contains_key(&pid_state);
+                if !in_grace {
+                    let _ = topology_state.remove_peer(&pid_state);
+                }
             }
         });
 
@@ -339,6 +364,8 @@ impl MeshTopology {
     pub fn remove_peer(&self, peer_id: &str) -> Result<(), MeshError> {
         let (removed, burn_callbacks, left_callbacks) = {
             let mut inner = self.inner.borrow_mut();
+            inner.pending_disconnect_grace.remove(peer_id);
+            inner.departed_peers.insert(peer_id.to_string());
             let peer = inner.peers.remove(peer_id);
             let burn_cbs = inner.on_burn_peer_messages_callbacks.clone();
             let left_cbs = inner.on_peer_left_callbacks.clone();
@@ -364,6 +391,99 @@ impl MeshTopology {
     /// Alias for `remove_peer`.
     pub fn disconnect_peer(&self, peer_id: &str) -> Result<(), MeshError> {
         self.remove_peer(peer_id)
+    }
+
+    /// Sets the role for a specific peer in the mesh (REQ-048.3).
+    pub fn set_peer_role(&self, peer_id: &str, role: PeerRole) {
+        self.inner
+            .borrow_mut()
+            .peer_roles
+            .insert(peer_id.to_string(), role);
+    }
+
+    /// Returns the role for a specific peer, if set (REQ-048.3).
+    pub fn peer_role(&self, peer_id: &str) -> Option<PeerRole> {
+        self.inner.borrow().peer_roles.get(peer_id).copied()
+    }
+
+    /// Records the peer as experiencing transient disconnect without prematurely purging messages or emitting on_peer_left (REQ-048.3).
+    pub fn mark_peer_disconnected_grace(
+        &self,
+        peer_id: &str,
+        timestamp_ms: u64,
+    ) -> Result<(), MeshError> {
+        let rtc_peer = {
+            let mut inner = self.inner.borrow_mut();
+            if !inner.peers.contains_key(peer_id)
+                && !inner.pending_disconnect_grace.contains_key(peer_id)
+            {
+                return Err(MeshError::PeerNotFound(peer_id.to_string()));
+            }
+            inner
+                .pending_disconnect_grace
+                .insert(peer_id.to_string(), timestamp_ms);
+            inner.peers.get(peer_id).map(|p| p.rtc_peer.clone())
+        };
+
+        if let Some(rtc) = rtc_peer {
+            let _ = rtc.close();
+        }
+
+        Ok(())
+    }
+
+    /// Cancels any pending grace state and removes peer_id from departed_peers upon recovery (REQ-048.3).
+    pub fn recover_peer(&self, peer_id: &str) -> Result<(), MeshError> {
+        let mut inner = self.inner.borrow_mut();
+        inner.pending_disconnect_grace.remove(peer_id);
+        inner.departed_peers.remove(peer_id);
+        Ok(())
+    }
+
+    /// Finalizes departure when grace period expires, removing the peer and triggering message burn and peer left callbacks (REQ-048.3).
+    pub fn expire_peer_grace(&self, peer_id: &str) -> Result<(), MeshError> {
+        let (removed, burn_callbacks, left_callbacks) = {
+            let mut inner = self.inner.borrow_mut();
+            inner.pending_disconnect_grace.remove(peer_id);
+            inner.departed_peers.insert(peer_id.to_string());
+            let peer = inner.peers.remove(peer_id);
+            let burn_cbs = inner.on_burn_peer_messages_callbacks.clone();
+            let left_cbs = inner.on_peer_left_callbacks.clone();
+            (peer, burn_cbs, left_cbs)
+        };
+
+        if let Some(peer) = removed {
+            let _ = peer.rtc_peer.close();
+        }
+        for cb in burn_callbacks {
+            cb(peer_id);
+        }
+        for cb in left_callbacks {
+            cb(peer_id);
+        }
+        Ok(())
+    }
+
+    /// Returns true if `peer_id` is currently in transient disconnect grace period.
+    pub fn is_peer_in_grace(&self, peer_id: &str) -> bool {
+        self.inner
+            .borrow()
+            .pending_disconnect_grace
+            .contains_key(peer_id)
+    }
+
+    /// Returns true if `peer_id` is recorded in departed peers set.
+    pub fn is_peer_departed(&self, peer_id: &str) -> bool {
+        self.inner.borrow().departed_peers.contains(peer_id)
+    }
+
+    /// Returns the timestamp of a peer in disconnect grace period, if any.
+    pub fn peer_grace_timestamp(&self, peer_id: &str) -> Option<u64> {
+        self.inner
+            .borrow()
+            .pending_disconnect_grace
+            .get(peer_id)
+            .copied()
     }
 
     /// Returns list of currently connected peer IDs.
@@ -1055,6 +1175,13 @@ impl MeshTopology {
                                 let _ = rtc.send_text(&fwd_json);
                             }
                         }
+                    }
+
+                    // Cancel pending grace and mark departed immediately (REQ-048.3)
+                    {
+                        let mut inner = self.inner.borrow_mut();
+                        inner.pending_disconnect_grace.remove(peer_id);
+                        inner.departed_peers.insert(peer_id.to_string());
                     }
 
                     // Remove peer_id and close its channel (triggers burn and left callbacks if peer was connected)
@@ -1983,5 +2110,168 @@ mod tests {
             *left_log.borrow(),
             vec!["bob".to_string(), "charlie".to_string()]
         );
+    }
+
+    #[test]
+    fn test_peer_roles() {
+        let (alice_sk, _alice_pk) = generate_kp();
+        let mesh = MeshTopology::new("alice", alice_sk);
+
+        assert_eq!(mesh.peer_role("bob"), None);
+
+        mesh.set_peer_role("bob", PeerRole::Inviter);
+        assert_eq!(mesh.peer_role("bob"), Some(PeerRole::Inviter));
+
+        mesh.set_peer_role("carol", PeerRole::Joiner);
+        assert_eq!(mesh.peer_role("carol"), Some(PeerRole::Joiner));
+
+        mesh.set_peer_role("dave", PeerRole::Mesh);
+        assert_eq!(mesh.peer_role("dave"), Some(PeerRole::Mesh));
+
+        // Test serde roundtrip
+        let serialized = serde_json::to_string(&PeerRole::Inviter).expect("serialize");
+        let deserialized: PeerRole = serde_json::from_str(&serialized).expect("deserialize");
+        assert_eq!(deserialized, PeerRole::Inviter);
+    }
+
+    #[test]
+    fn test_peer_disconnect_grace_and_recovery() {
+        let (alice_sk, _alice_pk) = generate_kp();
+        let alice_mesh = MeshTopology::new("alice", alice_sk);
+
+        let left_log = Rc::new(RefCell::new(Vec::new()));
+        let l_clone = left_log.clone();
+        alice_mesh.on_peer_left(move |id| {
+            l_clone.borrow_mut().push(id.to_string());
+        });
+
+        let burn_log = Rc::new(RefCell::new(Vec::new()));
+        let b_clone = burn_log.clone();
+        alice_mesh.on_burn_peer_messages(move |id| {
+            b_clone.borrow_mut().push(id.to_string());
+        });
+
+        let (_bob_sk, bob_pk) = generate_kp();
+        let bob_peer = WebRtcPeer::new();
+        alice_mesh
+            .add_peer("bob", bob_pk, bob_peer)
+            .expect("add bob");
+        assert!(alice_mesh.has_peer("bob"));
+        assert!(!alice_mesh.is_peer_in_grace("bob"));
+        assert!(!alice_mesh.is_peer_departed("bob"));
+
+        // 1. Mark Bob in disconnect grace period
+        alice_mesh
+            .mark_peer_disconnected_grace("bob", 10_000)
+            .expect("mark grace");
+        assert!(alice_mesh.is_peer_in_grace("bob"));
+        assert_eq!(alice_mesh.peer_grace_timestamp("bob"), Some(10_000));
+        assert!(alice_mesh.has_peer("bob"));
+
+        // Critically: verify NO callbacks fired!
+        assert!(burn_log.borrow().is_empty());
+        assert!(left_log.borrow().is_empty());
+
+        // 2. Recover Bob within grace window
+        alice_mesh.recover_peer("bob").expect("recover bob");
+        assert!(!alice_mesh.is_peer_in_grace("bob"));
+        assert!(!alice_mesh.is_peer_departed("bob"));
+
+        // Verify still NO callbacks fired
+        assert!(burn_log.borrow().is_empty());
+        assert!(left_log.borrow().is_empty());
+    }
+
+    #[test]
+    fn test_peer_disconnect_grace_and_expiration() {
+        let (alice_sk, _alice_pk) = generate_kp();
+        let alice_mesh = MeshTopology::new("alice", alice_sk);
+
+        let left_log = Rc::new(RefCell::new(Vec::new()));
+        let l_clone = left_log.clone();
+        alice_mesh.on_peer_left(move |id| {
+            l_clone.borrow_mut().push(id.to_string());
+        });
+
+        let burn_log = Rc::new(RefCell::new(Vec::new()));
+        let b_clone = burn_log.clone();
+        alice_mesh.on_burn_peer_messages(move |id| {
+            b_clone.borrow_mut().push(id.to_string());
+        });
+
+        let (_charlie_sk, charlie_pk) = generate_kp();
+        let charlie_peer = WebRtcPeer::new();
+        alice_mesh
+            .add_peer("charlie", charlie_pk, charlie_peer)
+            .expect("add charlie");
+
+        // Mark Charlie in grace
+        alice_mesh
+            .mark_peer_disconnected_grace("charlie", 20_000)
+            .expect("mark grace");
+        assert!(burn_log.borrow().is_empty());
+        assert!(left_log.borrow().is_empty());
+
+        // Expire Charlie's grace window
+        alice_mesh
+            .expire_peer_grace("charlie")
+            .expect("expire grace");
+        assert!(!alice_mesh.is_peer_in_grace("charlie"));
+        assert!(alice_mesh.is_peer_departed("charlie"));
+        assert!(!alice_mesh.has_peer("charlie"));
+
+        // Both burn and left callbacks must have fired exactly once
+        assert_eq!(*burn_log.borrow(), vec!["charlie".to_string()]);
+        assert_eq!(*left_log.borrow(), vec!["charlie".to_string()]);
+    }
+
+    #[test]
+    fn test_peer_explicit_remove_bypasses_grace() {
+        let (alice_sk, _alice_pk) = generate_kp();
+        let alice_mesh = MeshTopology::new("alice", alice_sk);
+
+        let left_log = Rc::new(RefCell::new(Vec::new()));
+        let l_clone = left_log.clone();
+        alice_mesh.on_peer_left(move |id| {
+            l_clone.borrow_mut().push(id.to_string());
+        });
+
+        let burn_log = Rc::new(RefCell::new(Vec::new()));
+        let b_clone = burn_log.clone();
+        alice_mesh.on_burn_peer_messages(move |id| {
+            b_clone.borrow_mut().push(id.to_string());
+        });
+
+        let (_dave_sk, dave_pk) = generate_kp();
+        let dave_peer = WebRtcPeer::new();
+        alice_mesh
+            .add_peer("dave", dave_pk, dave_peer)
+            .expect("add dave");
+
+        // Put Dave in grace
+        alice_mesh
+            .mark_peer_disconnected_grace("dave", 30_000)
+            .expect("mark grace");
+        assert!(alice_mesh.is_peer_in_grace("dave"));
+        assert!(burn_log.borrow().is_empty());
+
+        // Explicit remove_peer cancels grace and immediately burns
+        alice_mesh.remove_peer("dave").expect("remove dave");
+        assert!(!alice_mesh.is_peer_in_grace("dave"));
+        assert!(alice_mesh.is_peer_departed("dave"));
+        assert!(!alice_mesh.has_peer("dave"));
+        assert_eq!(*burn_log.borrow(), vec!["dave".to_string()]);
+        assert_eq!(*left_log.borrow(), vec!["dave".to_string()]);
+    }
+
+    #[test]
+    fn test_mark_peer_disconnected_grace_not_found() {
+        let (alice_sk, _alice_pk) = generate_kp();
+        let alice_mesh = MeshTopology::new("alice", alice_sk);
+
+        let err = alice_mesh
+            .mark_peer_disconnected_grace("ghost", 5000)
+            .unwrap_err();
+        assert_eq!(err, MeshError::PeerNotFound("ghost".to_string()));
     }
 }
