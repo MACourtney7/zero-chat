@@ -2416,6 +2416,562 @@ async function runTests() {
         print("  PASS: Unified Connectivity Resilience: Per-Peer Roles, Grace Window & Smart ICE verified cleanly.");
     }
 
+    // =========================================================================
+    // TEST 22: WasmCryptoSession Browser Runtime Integration & Blind Dead-Drop (ticket-047)
+    // =========================================================================
+    {
+        print("\n--- Test 22: REQ-047.1 - REQ-047.5: WasmCryptoSession Browser Runtime Integration & Blind Dead-Drop ---");
+
+        // ---------------------------------------------------------------------
+        // Scenario A: Blind Dead-Drop Wire Inspection (No Cleartext SDP / IP Leaks)
+        // ---------------------------------------------------------------------
+        resetToHome();
+        setLocalPeerId("peer-t22-host");
+        await createRoomAsHost();
+
+        const hostCrypto = await ensureCryptoReady();
+        assert(hostCrypto !== null, "Host WasmCryptoSession must be initialized");
+
+        const hostInviteUrl = getActiveHostInviteUrl();
+        assert(hostInviteUrl !== null, "Host must generate invite URL");
+        assert(hostInviteUrl.includes("#payload="), "Invite URL must contain #payload=");
+
+        const hostMatch = hostInviteUrl.match(/payload=([^&]+)/);
+        assert(hostMatch !== null, "Payload match must succeed");
+        const hostPayload = JSON.parse(atob(hostMatch[1].replace(/-/g, "+").replace(/_/g, "/")));
+
+        assert(hostPayload.host_peer_id === "peer-t22-host", "host_peer_id in payload must match");
+        assert(Array.isArray(hostPayload.host_public_key) && hostPayload.host_public_key.length === 32,
+            "host_public_key must be 32-byte X25519 public key");
+        assert(Array.isArray(hostPayload.host_signing_key) && hostPayload.host_signing_key.length === 32,
+            "host_signing_key must be 32-byte Ed25519 public key");
+
+        const assignedJoinerId = hostPayload.assigned_peer_id;
+        const hostEngine = engine;
+        assert(hostEngine.peers.has(assignedJoinerId), "Host must hold offer for assigned peer ID");
+
+        // Joiner prepares dead-drop payload with sealed SDP answer
+        const joinerCrypto = new WasmCryptoSession();
+        const joinerEngine = new ZeroWebRtcEngine(assignedJoinerId);
+        joinerEngine.cryptoSession = joinerCrypto;
+
+        const answerSdp = await joinerEngine.accept_offer_and_create_answer(
+            hostPayload.sdp_offer.sdp,
+            hostPayload.host_peer_id
+        );
+        assert(typeof answerSdp === "string" && answerSdp.length > 0, "Joiner must produce valid SDP answer");
+
+        const sealedSdpJson = joinerCrypto.seal_drop_sdp(
+            hostPayload.host_peer_id,
+            new Uint8Array(hostPayload.host_public_key),
+            new Uint8Array(hostPayload.host_signing_key),
+            answerSdp
+        );
+        const sealedSdpFrame = typeof sealedSdpJson === "string" ? JSON.parse(sealedSdpJson) : sealedSdpJson;
+
+        const dropPayload = {
+            invite_uuid: hostPayload.invite_uuid,
+            token: hostPayload.token,
+            sdp_answer: { sdp: "SEALED" },
+            sealed_sdp_answer: sealedSdpFrame,
+            joiner_public_key: Array.from(joinerCrypto.x25519_public_key_bytes()),
+            joiner_signing_key: Array.from(joinerCrypto.ed25519_public_key_bytes()),
+            joiner_peer_id: assignedJoinerId,
+            peer_id: assignedJoinerId
+        };
+
+        // 1. Assert sdp_answer.sdp === "SEALED"
+        assert(dropPayload.sdp_answer.sdp === "SEALED",
+            `Dead-drop sdp_answer.sdp must be strictly 'SEALED', got: ${dropPayload.sdp_answer.sdp}`);
+
+        // 2. Assert sealed_sdp_answer is present with nonce, ciphertext, signature
+        assert(dropPayload.sealed_sdp_answer !== null && typeof dropPayload.sealed_sdp_answer === "object",
+            "dropPayload.sealed_sdp_answer must be an object");
+        assert(Array.isArray(dropPayload.sealed_sdp_answer.nonce) && dropPayload.sealed_sdp_answer.nonce.length === 12,
+            "sealed_sdp_answer.nonce must be 12 bytes");
+        assert(Array.isArray(dropPayload.sealed_sdp_answer.ciphertext) && dropPayload.sealed_sdp_answer.ciphertext.length > 0,
+            "sealed_sdp_answer.ciphertext must be non-empty array");
+        assert(Array.isArray(dropPayload.sealed_sdp_answer.signature) && dropPayload.sealed_sdp_answer.signature.length === 64,
+            "sealed_sdp_answer.signature must be 64-byte Ed25519 signature");
+
+        // 3. Assert sealed_sdp_answer.ciphertext contains NO cleartext leaks ("v=0", "c=IN", "candidate", host IPs)
+        const ctBytes = new Uint8Array(dropPayload.sealed_sdp_answer.ciphertext);
+        const ctText = String.fromCharCode(...ctBytes);
+        assert(!ctText.includes("v=0"), "sealed_sdp_answer.ciphertext must NOT contain plaintext 'v=0'");
+        assert(!ctText.includes("c=IN"), "sealed_sdp_answer.ciphertext must NOT contain plaintext 'c=IN'");
+        assert(!ctText.includes("candidate"), "sealed_sdp_answer.ciphertext must NOT contain plaintext 'candidate'");
+        assert(!ctText.includes("127.0.0.1") && !ctText.includes("192.168."),
+            "sealed_sdp_answer.ciphertext must NOT contain IP address strings in cleartext");
+
+        // 4. Host opens sealed_sdp_answer and recovers the genuine SDP string
+        const recoveredSdp = hostCrypto.open_drop_sdp(
+            assignedJoinerId,
+            new Uint8Array(dropPayload.joiner_public_key),
+            new Uint8Array(dropPayload.joiner_signing_key),
+            dropPayload.sealed_sdp_answer
+        );
+        assert(recoveredSdp === answerSdp,
+            "Host must successfully decrypt sealed_sdp_answer and recover genuine SDP answer string");
+
+        // Transmit drop payload to establish connection
+        const dropUrl = `https://network.zero-chat.workers.dev/drop/${hostPayload.do_id}/${hostPayload.invite_uuid}`;
+        await fetch(dropUrl, {
+            method: "POST",
+            body: JSON.stringify(dropPayload)
+        });
+        await delay(100);
+
+        assert(hostEngine.openPeerCount === 1, "Host engine must have 1 open peer after sealed dead-drop");
+        assert(joinerEngine.openPeerCount === 1, "Joiner engine must have 1 open peer after sealed dead-drop");
+        print("  PASS: Scenario A: Blind Dead-Drop Wire Inspection (No Cleartext SDP / IP Leaks) verified.");
+
+        // ---------------------------------------------------------------------
+        // Scenario B: Authentic AEAD Ciphertext & Ed25519 Signatures
+        // ---------------------------------------------------------------------
+        let joinerReceivedWireFrame = null;
+        joinerEngine.onMessageCb = async (text) => {
+            try {
+                joinerReceivedWireFrame = JSON.parse(text);
+            } catch (_) {}
+        };
+
+        const chatPlaintext = "Secret authenticated message via ChaCha20-Poly1305";
+        msgInput.value = chatPlaintext;
+        doSendMessage();
+        await delay(50);
+
+        assert(joinerReceivedWireFrame !== null, "Joiner must receive wire frame via DataChannel");
+        assert(joinerReceivedWireFrame.signal && joinerReceivedWireFrame.signal.BroadcastChat,
+            "Wire frame must contain BroadcastChat signal");
+
+        const broadcast = joinerReceivedWireFrame.signal.BroadcastChat;
+        const sealedChat = broadcast.sealed_payload || broadcast.sealed_message;
+        assert(sealedChat !== null && typeof sealedChat === "object", "BroadcastChat must contain sealed_payload");
+
+        // Plaintext vs Ciphertext assertions
+        const expectedPtBytes = new TextEncoder().encode(chatPlaintext);
+        assert(Array.isArray(sealedChat.ciphertext), "sealed_payload.ciphertext must be an array");
+        assert(sealedChat.ciphertext.length === expectedPtBytes.length + 16,
+            `Ciphertext length must equal plaintext.length + 16 (Poly1305 tag overhead), expected ${expectedPtBytes.length + 16}, got ${sealedChat.ciphertext.length}`);
+
+        // High entropy / does not match plaintext ASCII bytes
+        let asciiMatch = true;
+        for (let i = 0; i < expectedPtBytes.length; i++) {
+            if (sealedChat.ciphertext[i] !== expectedPtBytes[i]) {
+                asciiMatch = false;
+                break;
+            }
+        }
+        assert(!asciiMatch, "sealed_payload.ciphertext must NOT match plaintext ASCII bytes");
+
+        // 64-byte Ed25519 signature
+        assert(Array.isArray(sealedChat.signature) && sealedChat.signature.length === 64,
+            `sealed_payload.signature must be a 64-byte Ed25519 signature, got length ${sealedChat.signature ? sealedChat.signature.length : 0}`);
+
+        // 12-byte Nonce
+        assert(Array.isArray(sealedChat.nonce) && sealedChat.nonce.length === 12,
+            `sealed_payload.nonce must be 12 bytes, got ${sealedChat.nonce ? sealedChat.nonce.length : 0}`);
+
+        // Joiner verifies and opens authentic message
+        const openedChatBytes = joinerCrypto.open_from_peer("peer-t22-host", sealedChat);
+        const openedChatText = new TextDecoder().decode(openedChatBytes);
+        assert(openedChatText === chatPlaintext, "Joiner must decrypt authentic wire frame matching sent plaintext");
+        print("  PASS: Scenario B: Authentic AEAD Ciphertext & Ed25519 Signatures verified.");
+
+        // ---------------------------------------------------------------------
+        // Scenario D: Tamper Rejection & Fail-Closed Security
+        // ---------------------------------------------------------------------
+        // Create valid sealed frame from Joiner for Host
+        const validJoinerFrameJson = joinerCrypto.seal_for_peer("peer-t22-host", "Tamper test payload from joiner");
+        const validJoinerFrame = JSON.parse(validJoinerFrameJson);
+
+        const initialBubbleCount = feed.querySelectorAll(".message-bubble").length;
+
+        // Tamper 1: Mutate single byte of ciphertext (re-signed so signature passes, isolating MAC failure)
+        const tamperedCiphertextFrame = JSON.parse(JSON.stringify(validJoinerFrame));
+        tamperedCiphertextFrame.ciphertext[0] ^= 0x55;
+        const toSign1 = new Uint8Array(tamperedCiphertextFrame.nonce.length + tamperedCiphertextFrame.ciphertext.length);
+        toSign1.set(tamperedCiphertextFrame.nonce, 0);
+        toSign1.set(tamperedCiphertextFrame.ciphertext, tamperedCiphertextFrame.nonce.length);
+        tamperedCiphertextFrame.signature = Array.from(joinerCrypto.sign_bytes(toSign1));
+
+        let ctThrow = false;
+        let ctErrMsg = "";
+        try {
+            hostCrypto.open_from_peer(assignedJoinerId, tamperedCiphertextFrame);
+        } catch (e) {
+            ctThrow = true;
+            ctErrMsg = e.message || String(e);
+        }
+        assert(ctThrow, "hostCrypto.open_from_peer must throw on mutated ciphertext byte");
+        assert(ctErrMsg.includes("MAC tag verification failed") || ctErrMsg.includes("DecryptionFailed"),
+            `Mutated ciphertext with valid signature must fail Poly1305 MAC verification, got: ${ctErrMsg}`);
+
+        const tamperedCtMsg = {
+            frame_id: "tamper-ct-frame",
+            ttl: 3,
+            signal: {
+                BroadcastChat: {
+                    message_id: "tamper-ct-msg",
+                    sender_id: assignedJoinerId,
+                    origin_peer_id: assignedJoinerId,
+                    sealed_payload: tamperedCiphertextFrame
+                }
+            }
+        };
+        await window.engine.onMessageCb(JSON.stringify(tamperedCtMsg), assignedJoinerId);
+        assert(feed.querySelectorAll(".message-bubble").length === initialBubbleCount,
+            "Tampered ciphertext must be discarded without adding message bubble to DOM");
+
+        // Tamper 2: Mutate single byte of signature
+        const tamperedSigFrame = JSON.parse(JSON.stringify(validJoinerFrame));
+        tamperedSigFrame.signature[0] ^= 0xaa;
+
+        let sigThrow = false;
+        try {
+            hostCrypto.open_from_peer(assignedJoinerId, tamperedSigFrame);
+        } catch (e) {
+            sigThrow = true;
+        }
+        assert(sigThrow, "hostCrypto.open_from_peer must throw on mutated signature byte");
+
+        const tamperedSigMsg = {
+            frame_id: "tamper-sig-frame",
+            ttl: 3,
+            signal: {
+                BroadcastChat: {
+                    message_id: "tamper-sig-msg",
+                    sender_id: assignedJoinerId,
+                    origin_peer_id: assignedJoinerId,
+                    sealed_payload: tamperedSigFrame
+                }
+            }
+        };
+        await window.engine.onMessageCb(JSON.stringify(tamperedSigMsg), assignedJoinerId);
+        assert(feed.querySelectorAll(".message-bubble").length === initialBubbleCount,
+            "Tampered signature must be discarded without adding message bubble to DOM");
+
+        // Ensure valid message DOES append bubble to DOM
+        const validMsg = {
+            frame_id: "valid-joiner-frame",
+            ttl: 3,
+            signal: {
+                BroadcastChat: {
+                    message_id: "valid-joiner-msg",
+                    sender_id: assignedJoinerId,
+                    origin_peer_id: assignedJoinerId,
+                    sealed_payload: validJoinerFrame
+                }
+            }
+        };
+        await window.engine.onMessageCb(JSON.stringify(validMsg), assignedJoinerId);
+        assert(feed.querySelectorAll(".message-bubble").length === initialBubbleCount + 1,
+            "Genuine uncorrupted sealed message must be decrypted and added to DOM feed");
+        print("  PASS: Scenario D: Tamper Rejection & Fail-Closed Security verified.");
+
+        // Cleanup Scenario A/B/D
+        hostEngine.close();
+        joinerEngine.close();
+        clearPendingInvite();
+
+        // ---------------------------------------------------------------------
+        // Scenario C: 3-Peer Mesh Formation & Host Departure Continuity
+        // ---------------------------------------------------------------------
+        const meshAId = "peer-t22-mesh-A";
+        const meshBId = "peer-t22-mesh-B";
+        const meshCId = "peer-t22-mesh-C";
+
+        const engMeshA = new ZeroWebRtcEngine(meshAId);
+        const engMeshB = new ZeroWebRtcEngine(meshBId);
+        const engMeshC = new ZeroWebRtcEngine(meshCId);
+
+        const cryptoMeshA = new WasmCryptoSession();
+        const cryptoMeshB = new WasmCryptoSession();
+        const cryptoMeshC = new WasmCryptoSession();
+
+        engMeshA.cryptoSession = cryptoMeshA;
+        engMeshB.cryptoSession = cryptoMeshB;
+        engMeshC.cryptoSession = cryptoMeshC;
+
+        engMeshA.receivedChats = [];
+        engMeshB.receivedChats = [];
+        engMeshC.receivedChats = [];
+
+        engMeshA.feed = [];
+        engMeshB.feed = [];
+        engMeshC.feed = [];
+
+        function wireMeshNode(eng, crypto) {
+            eng.onMessageCb = async (text, incomingPeerId) => {
+                let data = null;
+                try { data = JSON.parse(text); } catch (_) {}
+                if (!data || !data.signal) return;
+                const signal = data.signal;
+                const myId = eng.localPeerId;
+
+                // Signed PeerJoined Introduction
+                if (signal.PeerJoined) {
+                    const remotePeerId = signal.PeerJoined.peer_id;
+                    if (remotePeerId !== myId) {
+                        if (signal.PeerJoined.public_key) {
+                            crypto.register_peer(
+                                remotePeerId,
+                                new Uint8Array(signal.PeerJoined.public_key),
+                                signal.PeerJoined.signing_key ? new Uint8Array(signal.PeerJoined.signing_key) : undefined
+                            );
+                        }
+                        const peerObj = eng.peers.get(remotePeerId);
+                        const isOpen = peerObj && peerObj.state === "open" && peerObj.dc && peerObj.dc.readyState === "open";
+                        const isConn = peerObj && peerObj.state === "connecting";
+                        // Deterministic glare tie-breaker
+                        if (!isOpen && !isConn && myId < remotePeerId) {
+                            const offerSdp = await eng.create_peer_offer(remotePeerId);
+                            const sealedOfferJson = crypto.seal_for_peer(remotePeerId, offerSdp);
+                            const relayMsg = {
+                                frame_id: "relay-offer-" + myId + "-" + remotePeerId,
+                                ttl: 3,
+                                signal: {
+                                    RelaySdpOffer: {
+                                        from_peer_id: myId,
+                                        to_peer_id: remotePeerId,
+                                        sealed_offer: JSON.parse(sealedOfferJson)
+                                    }
+                                }
+                            };
+                            eng.send_text(JSON.stringify(relayMsg), incomingPeerId);
+                        }
+                    }
+                }
+
+                // RelaySdpOffer
+                if (signal.RelaySdpOffer) {
+                    const { from_peer_id, to_peer_id, sealed_offer } = signal.RelaySdpOffer;
+                    if (to_peer_id === myId) {
+                        const offerBytes = crypto.open_from_peer(from_peer_id, sealed_offer);
+                        const offerSdp = new TextDecoder().decode(offerBytes);
+                        const answerSdp = await eng.create_peer_answer(from_peer_id, offerSdp);
+                        const sealedAnsJson = crypto.seal_for_peer(from_peer_id, answerSdp);
+                        const relayAns = {
+                            frame_id: "relay-ans-" + myId + "-" + from_peer_id,
+                            ttl: 3,
+                            signal: {
+                                RelaySdpAnswer: {
+                                    from_peer_id: myId,
+                                    to_peer_id: from_peer_id,
+                                    sealed_answer: JSON.parse(sealedAnsJson)
+                                }
+                            }
+                        };
+                        eng.send_text(JSON.stringify(relayAns), incomingPeerId);
+                    } else if (data.ttl > 1) {
+                        const fwd = { ...data, ttl: data.ttl - 1 };
+                        eng.send_text(JSON.stringify(fwd), to_peer_id);
+                    }
+                }
+
+                // RelaySdpAnswer
+                if (signal.RelaySdpAnswer) {
+                    const { from_peer_id, to_peer_id, sealed_answer } = signal.RelaySdpAnswer;
+                    if (to_peer_id === myId) {
+                        const answerBytes = crypto.open_from_peer(from_peer_id, sealed_answer);
+                        const answerSdp = new TextDecoder().decode(answerBytes);
+                        await eng.accept_peer_answer(from_peer_id, answerSdp);
+                    } else if (data.ttl > 1) {
+                        const fwd = { ...data, ttl: data.ttl - 1 };
+                        eng.send_text(JSON.stringify(fwd), to_peer_id);
+                    }
+                }
+
+                // Encrypted BroadcastChat
+                if (signal.BroadcastChat) {
+                    const broadcast = signal.BroadcastChat;
+                    const senderId = broadcast.sender_id || incomingPeerId;
+                    const sealedPayload = broadcast.sealed_payload || broadcast.sealed_message;
+                    const openedBytes = crypto.open_from_peer(senderId, sealedPayload);
+                    const bodyText = new TextDecoder().decode(openedBytes);
+                    eng.receivedChats.push({ from: senderId, text: bodyText });
+                    eng.feed.push({ sender: senderId, text: bodyText });
+                }
+            };
+        }
+
+        wireMeshNode(engMeshA, cryptoMeshA);
+        wireMeshNode(engMeshB, cryptoMeshB);
+        wireMeshNode(engMeshC, cryptoMeshC);
+
+        // Step 1: Connect A <-> B with pairwise keys
+        cryptoMeshA.register_peer(meshBId, cryptoMeshB.x25519_public_key_bytes(), cryptoMeshB.ed25519_public_key_bytes());
+        cryptoMeshB.register_peer(meshAId, cryptoMeshA.x25519_public_key_bytes(), cryptoMeshA.ed25519_public_key_bytes());
+        const offerAB = await engMeshA.create_peer_offer(meshBId);
+        const answerAB = await engMeshB.create_peer_answer(meshAId, offerAB);
+        await engMeshA.accept_peer_answer(meshBId, answerAB);
+        await delay(50);
+        assert(engMeshA.openPeerCount === 1, "A-B link must be open");
+        assert(engMeshB.openPeerCount === 1, "B-A link must be open");
+
+        // Step 2: Connect A <-> C with pairwise keys
+        cryptoMeshA.register_peer(meshCId, cryptoMeshC.x25519_public_key_bytes(), cryptoMeshC.ed25519_public_key_bytes());
+        cryptoMeshC.register_peer(meshAId, cryptoMeshA.x25519_public_key_bytes(), cryptoMeshA.ed25519_public_key_bytes());
+        const offerAC = await engMeshA.create_peer_offer(meshCId);
+        const answerAC = await engMeshC.create_peer_answer(meshAId, offerAC);
+        await engMeshA.accept_peer_answer(meshCId, answerAC);
+        await delay(50);
+        assert(engMeshA.openPeerCount === 2, "A must have 2 open peers (B and C)");
+
+        // Step 3: Host A introduces B and C with authenticated PeerJoined frames
+        const introToB = {
+            frame_id: "intro-A-to-B-for-C",
+            ttl: 3,
+            signal: {
+                PeerJoined: {
+                    peer_id: meshCId,
+                    public_key: Array.from(cryptoMeshC.x25519_public_key_bytes()),
+                    signing_key: Array.from(cryptoMeshC.ed25519_public_key_bytes())
+                }
+            }
+        };
+        const introToC = {
+            frame_id: "intro-A-to-C-for-B",
+            ttl: 3,
+            signal: {
+                PeerJoined: {
+                    peer_id: meshBId,
+                    public_key: Array.from(cryptoMeshB.x25519_public_key_bytes()),
+                    signing_key: Array.from(cryptoMeshB.ed25519_public_key_bytes())
+                }
+            }
+        };
+
+        engMeshA.send_text(JSON.stringify(introToB), meshBId);
+        engMeshA.send_text(JSON.stringify(introToC), meshCId);
+        await delay(100);
+
+        // Assert 3-peer full mesh establishment
+        assert(engMeshA.openPeerCount === 2, `Engine A must hold 2 direct links, got ${engMeshA.openPeerCount}`);
+        assert(engMeshB.openPeerCount === 2, `Engine B must hold 2 direct links, got ${engMeshB.openPeerCount}`);
+        assert(engMeshC.openPeerCount === 2, `Engine C must hold 2 direct links, got ${engMeshC.openPeerCount}`);
+
+        // Helper to send encrypted messages to all open peers
+        function broadcastEncryptedMesh(eng, crypto, text) {
+            for (const [targetId, p] of eng.peers.entries()) {
+                if (p.state === "open" && p.dc && p.dc.readyState === "open") {
+                    const sealedJson = crypto.seal_for_peer(targetId, text);
+                    const envelope = {
+                        frame_id: "msg-" + Math.random(),
+                        ttl: 3,
+                        signal: {
+                            BroadcastChat: {
+                                message_id: "chat-" + Math.random(),
+                                sender_id: eng.localPeerId,
+                                sealed_payload: JSON.parse(sealedJson)
+                            }
+                        }
+                    };
+                    eng.send_text(JSON.stringify(envelope), targetId);
+                }
+            }
+        }
+
+        // All 3 peers exchange encrypted chat messages
+        broadcastEncryptedMesh(engMeshA, cryptoMeshA, "Message from Host A");
+        await delay(50);
+        broadcastEncryptedMesh(engMeshB, cryptoMeshB, "Message from Joiner B");
+        await delay(50);
+        broadcastEncryptedMesh(engMeshC, cryptoMeshC, "Message from Joiner C");
+        await delay(50);
+
+        assert(engMeshA.receivedChats.some(m => m.from === meshBId && m.text === "Message from Joiner B"),
+            "Host A must receive encrypted message from Joiner B");
+        assert(engMeshA.receivedChats.some(m => m.from === meshCId && m.text === "Message from Joiner C"),
+            "Host A must receive encrypted message from Joiner C");
+        assert(engMeshB.receivedChats.some(m => m.from === meshAId && m.text === "Message from Host A"),
+            "Joiner B must receive encrypted message from Host A");
+        assert(engMeshB.receivedChats.some(m => m.from === meshCId && m.text === "Message from Joiner C"),
+            "Joiner B must receive encrypted message from Joiner C");
+        assert(engMeshC.receivedChats.some(m => m.from === meshAId && m.text === "Message from Host A"),
+            "Joiner C must receive encrypted message from Host A");
+        assert(engMeshC.receivedChats.some(m => m.from === meshBId && m.text === "Message from Joiner B"),
+            "Joiner C must receive encrypted message from Joiner B");
+
+        assert(engMeshA.feed.some(m => m.sender === meshBId && m.text === "Message from Joiner B"),
+            "Host A feed must contain decrypted message from Joiner B");
+        assert(engMeshB.feed.some(m => m.sender === meshAId && m.text === "Message from Host A"),
+            "Joiner B feed must contain decrypted message from Host A");
+        assert(engMeshC.feed.some(m => m.sender === meshBId && m.text === "Message from Joiner B"),
+            "Joiner C feed must contain decrypted message from Joiner B");
+
+        // Host A departs
+        engMeshA.close();
+        await delay(50);
+
+        // Verify B and C retain direct DataChannels
+        assert(engMeshB.peers.get(meshCId).state === "open", "B-C DataChannel must remain open after Host A departs");
+        assert(engMeshC.peers.get(meshBId).state === "open", "C-B DataChannel must remain open after Host A departs");
+
+        // B and C continue exchanging encrypted messages
+        broadcastEncryptedMesh(engMeshB, cryptoMeshB, "Encrypted message from B post-host departure");
+        await delay(50);
+        broadcastEncryptedMesh(engMeshC, cryptoMeshC, "Encrypted message from C post-host departure");
+        await delay(50);
+
+        assert(engMeshC.receivedChats.some(m => m.from === meshBId && m.text === "Encrypted message from B post-host departure"),
+            "C must receive B's encrypted message after Host A departs");
+        assert(engMeshB.receivedChats.some(m => m.from === meshCId && m.text === "Encrypted message from C post-host departure"),
+            "B must receive C's encrypted message after Host A departs");
+
+        assert(engMeshC.feed.some(m => m.sender === meshBId && m.text === "Encrypted message from B post-host departure"),
+            "C feed must contain decrypted post-departure message from B");
+        assert(engMeshB.feed.some(m => m.sender === meshCId && m.text === "Encrypted message from C post-host departure"),
+            "B feed must contain decrypted post-departure message from C");
+
+        engMeshB.close();
+        engMeshC.close();
+        print("  PASS: Scenario C: 3-Peer Mesh Formation & Host Departure Continuity verified.");
+
+        // ---------------------------------------------------------------------
+        // Scenario E: Burn All & Teardown Verification
+        // ---------------------------------------------------------------------
+        await ensureCryptoReady();
+        const preBurnCrypto = window.getCryptoSession ? window.getCryptoSession() : window.cryptoSession;
+        assert(preBurnCrypto !== null, "Crypto session must be present prior to resetToHome()");
+
+        // Register a dummy peer to verify session wiping
+        const dummyKey = new Uint8Array(32).fill(0x77);
+        preBurnCrypto.register_peer("peer-burn-dummy", dummyKey, dummyKey);
+        window.peerPublicKeys.set("peer-burn-dummy", { x25519: Array.from(dummyKey), ed25519: Array.from(dummyKey) });
+        assert(preBurnCrypto.has_peer_session("peer-burn-dummy"), "Pre-burn session must have registered peer");
+
+        let burnAllExecuted = false;
+        const origBurnAll = preBurnCrypto.burn_all.bind(preBurnCrypto);
+        preBurnCrypto.burn_all = function() {
+            burnAllExecuted = true;
+            return origBurnAll();
+        };
+
+        resetToHome();
+
+        assert(burnAllExecuted, "cryptoSession.burn_all() must be executed on resetToHome()");
+        assert(!preBurnCrypto.has_peer_session("peer-burn-dummy"),
+            "Burned session peerSessions must be empty");
+        assert(preBurnCrypto.x25519_public_key_bytes().every(b => b === 0),
+            "Burned session X25519 keys must be zeroized in memory");
+        assert(preBurnCrypto.ed25519_public_key_bytes().every(b => b === 0),
+            "Burned session Ed25519 keys must be zeroized in memory");
+
+        const postBurnCrypto = window.getCryptoSession ? window.getCryptoSession() : window.cryptoSession;
+        assert(postBurnCrypto !== null, "Fresh cryptoSession must be prepared after resetToHome()");
+        assert(postBurnCrypto !== preBurnCrypto, "cryptoSession must be a new instance after resetToHome()");
+        assert(!postBurnCrypto.x25519_public_key_bytes().every(b => b === 0),
+            "Fresh session must have a new non-zero X25519 public key");
+        assert(!postBurnCrypto.ed25519_public_key_bytes().every(b => b === 0),
+            "Fresh session must have a new non-zero Ed25519 public key");
+        assert(window.peerPublicKeys.size === 0,
+            "window.peerPublicKeys must be cleared on resetToHome()");
+        print("  PASS: Scenario E: Burn All & Teardown Verification verified.");
+
+        print("  PASS: WasmCryptoSession, blind dead-drop SDP, authenticated 3-peer mesh & tamper rejection verified cleanly.");
+    }
+
     print("\n===============================================================================");
     print("ALL BROWSER HEADLESS MESH TESTS PASSED SUCCESSFULLY!");
     print("===============================================================================");
