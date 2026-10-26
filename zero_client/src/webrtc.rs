@@ -71,17 +71,6 @@ impl PeerLifecycleState {
         *self = next;
         Ok(next)
     }
-
-    /// Maps a `web_sys::RtcDataChannelState` to `PeerLifecycleState`.
-    pub fn from_rtc_data_channel_state(state: web_sys::RtcDataChannelState) -> Self {
-        match state {
-            web_sys::RtcDataChannelState::Connecting => Self::Connecting,
-            web_sys::RtcDataChannelState::Open => Self::Open,
-            web_sys::RtcDataChannelState::Closing => Self::Closing,
-            web_sys::RtcDataChannelState::Closed => Self::Closed,
-            _ => Self::Closed,
-        }
-    }
 }
 
 impl fmt::Display for PeerLifecycleState {
@@ -264,16 +253,6 @@ pub fn validate_sdp_answer(sdp: &str) -> Result<SdpAnswer, WebRtcError> {
     })
 }
 
-#[cfg(target_arch = "wasm32")]
-fn strip_end_of_candidates_for_browser(sdp: &str) -> String {
-    let lines: Vec<&str> = sdp
-        .lines()
-        .map(|l| l.trim_end_matches('\r'))
-        .filter(|l| !l.is_empty() && *l != "a=end-of-candidates")
-        .collect();
-    format!("{}\r\n", lines.join("\r\n"))
-}
-
 /// Message payload transmitted over the WebRTC data channel.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DataChannelMessage {
@@ -298,24 +277,6 @@ struct PeerSessionInner {
     state_callbacks: Vec<StateCallback>,
     outbound_queue: Vec<DataChannelMessage>,
     paired_peer: Option<Weak<RefCell<PeerSessionInner>>>,
-    #[cfg(target_arch = "wasm32")]
-    peer_connection: Option<web_sys::RtcPeerConnection>,
-    #[cfg(target_arch = "wasm32")]
-    data_channel: Option<web_sys::RtcDataChannel>,
-    #[cfg(target_arch = "wasm32")]
-    ice_gathering_resolver: Option<js_sys::Function>,
-    #[cfg(target_arch = "wasm32")]
-    pc_onicecandidate: Option<Closure<dyn FnMut(web_sys::RtcPeerConnectionIceEvent)>>,
-    #[cfg(target_arch = "wasm32")]
-    pc_onicegatheringstatechange: Option<Closure<dyn FnMut(web_sys::Event)>>,
-    #[cfg(target_arch = "wasm32")]
-    pc_ondatachannel: Option<Closure<dyn FnMut(web_sys::RtcDataChannelEvent)>>,
-    #[cfg(target_arch = "wasm32")]
-    dc_onopen: Option<Closure<dyn FnMut(web_sys::Event)>>,
-    #[cfg(target_arch = "wasm32")]
-    dc_onclose: Option<Closure<dyn FnMut(web_sys::Event)>>,
-    #[cfg(target_arch = "wasm32")]
-    dc_onmessage: Option<Closure<dyn FnMut(web_sys::MessageEvent)>>,
 }
 
 impl PeerSessionInner {
@@ -333,55 +294,7 @@ impl PeerSessionInner {
             state_callbacks: Vec::new(),
             outbound_queue: Vec::new(),
             paired_peer: None,
-            #[cfg(target_arch = "wasm32")]
-            peer_connection: None,
-            #[cfg(target_arch = "wasm32")]
-            data_channel: None,
-            #[cfg(target_arch = "wasm32")]
-            ice_gathering_resolver: None,
-            #[cfg(target_arch = "wasm32")]
-            pc_onicecandidate: None,
-            #[cfg(target_arch = "wasm32")]
-            pc_onicegatheringstatechange: None,
-            #[cfg(target_arch = "wasm32")]
-            pc_ondatachannel: None,
-            #[cfg(target_arch = "wasm32")]
-            dc_onopen: None,
-            #[cfg(target_arch = "wasm32")]
-            dc_onclose: None,
-            #[cfg(target_arch = "wasm32")]
-            dc_onmessage: None,
         }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn cleanup_wasm_handles(&mut self) {
-        if let Some(dc) = self.data_channel.take() {
-            dc.set_onopen(None);
-            dc.set_onclose(None);
-            dc.set_onmessage(None);
-            dc.close();
-        }
-        if let Some(pc) = self.peer_connection.take() {
-            pc.set_onicecandidate(None);
-            pc.set_onicegatheringstatechange(None);
-            pc.set_ondatachannel(None);
-            pc.close();
-        }
-        self.ice_gathering_resolver = None;
-        self.dc_onopen = None;
-        self.dc_onclose = None;
-        self.dc_onmessage = None;
-        self.pc_onicecandidate = None;
-        self.pc_onicegatheringstatechange = None;
-        self.pc_ondatachannel = None;
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-impl Drop for PeerSessionInner {
-    fn drop(&mut self) {
-        self.cleanup_wasm_handles();
     }
 }
 
@@ -494,46 +407,38 @@ impl WebRtcPeer {
     pub async fn create_offer(&self) -> Result<SdpOffer, WebRtcError> {
         self.set_state_and_notify(PeerLifecycleState::Connecting)?;
 
-        #[cfg(target_arch = "wasm32")]
+        let config = self.config();
+        let base_sdp = [
+            "v=0",
+            "o=- 4611731400430051336 2 IN IP4 127.0.0.1",
+            "s=-",
+            "t=0 0",
+            "a=group:BUNDLE 0",
+            "a=msid-semantic: WMS",
+            "m=application 9 UDP/DTLS/SCTP webrtc-datachannel",
+            "c=IN IP4 0.0.0.0",
+            "a=ice-ufrag:zeroalice",
+            "a=ice-pwd:zeroalicepassword12345678",
+            "a=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF",
+            "a=setup:actpass",
+            "a=mid:0",
+            &format!("a=dcmap:0 label=\"{}\" ordered={}", config.label, config.ordered),
+            "a=sctp-port:5000",
+            "a=max-message-size:262144",
+        ]
+        .join("\r\n");
+
+        let candidate = "a=candidate:1 1 UDP 2130706431 127.0.0.1 50000 typ host".to_string();
         {
-            self.create_offer_wasm().await
+            let mut inner = self.inner.borrow_mut();
+            inner.local_candidates.clear();
+            inner.local_candidates.push(candidate.clone());
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let config = self.config();
-            let base_sdp = [
-                "v=0",
-                "o=- 4611731400430051336 2 IN IP4 127.0.0.1",
-                "s=-",
-                "t=0 0",
-                "a=group:BUNDLE 0",
-                "a=msid-semantic: WMS",
-                "m=application 9 UDP/DTLS/SCTP webrtc-datachannel",
-                "c=IN IP4 0.0.0.0",
-                "a=ice-ufrag:zeroalice",
-                "a=ice-pwd:zeroalicepassword12345678",
-                "a=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF",
-                "a=setup:actpass",
-                "a=mid:0",
-                &format!("a=dcmap:0 label=\"{}\" ordered={}", config.label, config.ordered),
-                "a=sctp-port:5000",
-                "a=max-message-size:262144",
-            ]
-            .join("\r\n");
-
-            let candidate = "a=candidate:1 1 UDP 2130706431 127.0.0.1 50000 typ host".to_string();
-            {
-                let mut inner = self.inner.borrow_mut();
-                inner.local_candidates.clear();
-                inner.local_candidates.push(candidate.clone());
-            }
-
-            let bundled = bundle_sdp_with_candidates(&base_sdp, &[candidate])?;
-            let offer = validate_sdp_offer(&bundled)?;
-            self.inner.borrow_mut().local_offer = Some(offer.clone());
-            Ok(offer)
-        }
+        let bundled = bundle_sdp_with_candidates(&base_sdp, &[candidate])?;
+        let offer = validate_sdp_offer(&bundled)?;
+        self.inner.borrow_mut().local_offer = Some(offer.clone());
+        Ok(offer)
     }
 
     /// Accepts a remote SDP offer, sets the remote description, gathers local ICE candidates,
@@ -546,63 +451,46 @@ impl WebRtcPeer {
         self.set_state_and_notify(PeerLifecycleState::Connecting)?;
         self.inner.borrow_mut().remote_offer = Some(validated_offer);
 
-        #[cfg(target_arch = "wasm32")]
+        let config = self.config();
+        let base_sdp = [
+            "v=0",
+            "o=- 8923748923748923741 2 IN IP4 127.0.0.1",
+            "s=-",
+            "t=0 0",
+            "a=group:BUNDLE 0",
+            "a=msid-semantic: WMS",
+            "m=application 9 UDP/DTLS/SCTP webrtc-datachannel",
+            "c=IN IP4 0.0.0.0",
+            "a=ice-ufrag:zerobob",
+            "a=ice-pwd:zerobobpassword1234567890",
+            "a=fingerprint:sha-256 FF:EE:DD:CC:BB:AA:99:88:77:66:55:44:33:22:11:00:FF:EE:DD:CC:BB:AA:99:88:77:66:55:44:33:22:11:00",
+            "a=setup:active",
+            "a=mid:0",
+            &format!("a=dcmap:0 label=\"{}\" ordered={}", config.label, config.ordered),
+            "a=sctp-port:5000",
+            "a=max-message-size:262144",
+        ]
+        .join("\r\n");
+
+        let candidate = "a=candidate:1 1 UDP 2130706431 127.0.0.1 50001 typ host".to_string();
         {
-            self.accept_offer_and_create_answer_wasm(offer_sdp).await
+            let mut inner = self.inner.borrow_mut();
+            inner.local_candidates.clear();
+            inner.local_candidates.push(candidate.clone());
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let config = self.config();
-            let base_sdp = [
-                "v=0",
-                "o=- 8923748923748923741 2 IN IP4 127.0.0.1",
-                "s=-",
-                "t=0 0",
-                "a=group:BUNDLE 0",
-                "a=msid-semantic: WMS",
-                "m=application 9 UDP/DTLS/SCTP webrtc-datachannel",
-                "c=IN IP4 0.0.0.0",
-                "a=ice-ufrag:zerobob",
-                "a=ice-pwd:zerobobpassword1234567890",
-                "a=fingerprint:sha-256 FF:EE:DD:CC:BB:AA:99:88:77:66:55:44:33:22:11:00:FF:EE:DD:CC:BB:AA:99:88:77:66:55:44:33:22:11:00",
-                "a=setup:active",
-                "a=mid:0",
-                &format!("a=dcmap:0 label=\"{}\" ordered={}", config.label, config.ordered),
-                "a=sctp-port:5000",
-                "a=max-message-size:262144",
-            ]
-            .join("\r\n");
-
-            let candidate = "a=candidate:1 1 UDP 2130706431 127.0.0.1 50001 typ host".to_string();
-            {
-                let mut inner = self.inner.borrow_mut();
-                inner.local_candidates.clear();
-                inner.local_candidates.push(candidate.clone());
-            }
-
-            let bundled = bundle_sdp_with_candidates(&base_sdp, &[candidate])?;
-            let answer = validate_sdp_answer(&bundled)?;
-            self.inner.borrow_mut().local_answer = Some(answer.clone());
-            Ok(answer)
-        }
+        let bundled = bundle_sdp_with_candidates(&base_sdp, &[candidate])?;
+        let answer = validate_sdp_answer(&bundled)?;
+        self.inner.borrow_mut().local_answer = Some(answer.clone());
+        Ok(answer)
     }
 
     /// Applies the remote SDP answer on the offering peer.
     pub async fn apply_answer(&self, answer_sdp: &str) -> Result<(), WebRtcError> {
         let validated_answer = validate_sdp_answer(answer_sdp)?;
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.apply_answer_wasm(answer_sdp, validated_answer).await
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.inner.borrow_mut().remote_answer = Some(validated_answer);
-            self.set_state_and_notify(PeerLifecycleState::Open)?;
-            Ok(())
-        }
+        self.inner.borrow_mut().remote_answer = Some(validated_answer);
+        self.set_state_and_notify(PeerLifecycleState::Open)?;
+        Ok(())
     }
 
     /// Sends a UTF-8 text message over the open data channel.
@@ -611,10 +499,6 @@ impl WebRtcPeer {
             let mut inner = self.inner.borrow_mut();
             if inner.state != PeerLifecycleState::Open {
                 return Err(WebRtcError::ChannelNotOpen(inner.state));
-            }
-            #[cfg(target_arch = "wasm32")]
-            if let Some(ref dc) = inner.data_channel {
-                dc.send_with_str(text).map_err(WebRtcError::from_js_value)?;
             }
             inner
                 .outbound_queue
@@ -638,11 +522,6 @@ impl WebRtcPeer {
             let mut inner = self.inner.borrow_mut();
             if inner.state != PeerLifecycleState::Open {
                 return Err(WebRtcError::ChannelNotOpen(inner.state));
-            }
-            #[cfg(target_arch = "wasm32")]
-            if let Some(ref dc) = inner.data_channel {
-                dc.send_with_u8_array(bytes)
-                    .map_err(WebRtcError::from_js_value)?;
             }
             inner
                 .outbound_queue
@@ -685,10 +564,6 @@ impl WebRtcPeer {
         if current != PeerLifecycleState::Closing {
             self.set_state_and_notify(PeerLifecycleState::Closing)?;
         }
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.inner.borrow_mut().cleanup_wasm_handles();
-        }
         self.inner.borrow_mut().paired_peer = None;
         self.set_state_and_notify(PeerLifecycleState::Closed)?;
         Ok(())
@@ -718,260 +593,6 @@ impl WebRtcPeer {
         if self.state() != PeerLifecycleState::Open {
             self.set_state_and_notify(PeerLifecycleState::Open)?;
         }
-        Ok(())
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn attach_data_channel_callbacks(&self, dc: &web_sys::RtcDataChannel) {
-        dc.set_binary_type(web_sys::RtcDataChannelType::Arraybuffer);
-
-        let peer_open = self.clone();
-        let onopen = Closure::wrap(Box::new(move |_event: web_sys::Event| {
-            let _ = peer_open.set_state_and_notify(PeerLifecycleState::Open);
-        }) as Box<dyn FnMut(web_sys::Event)>);
-        dc.set_onopen(Some(onopen.as_ref().unchecked_ref()));
-
-        let peer_close = self.clone();
-        let onclose = Closure::wrap(Box::new(move |_event: web_sys::Event| {
-            let _ = peer_close.set_state_and_notify(PeerLifecycleState::Closed);
-        }) as Box<dyn FnMut(web_sys::Event)>);
-        dc.set_onclose(Some(onclose.as_ref().unchecked_ref()));
-
-        let peer_msg = self.clone();
-        let onmessage = Closure::wrap(Box::new(move |event: web_sys::MessageEvent| {
-            let data = event.data();
-            if let Some(text) = data.as_string() {
-                peer_msg.receive_text(&text);
-            } else if data.is_instance_of::<js_sys::ArrayBuffer>() {
-                let array = js_sys::Uint8Array::new(&data);
-                peer_msg.receive_binary(&array.to_vec());
-            } else if data.is_instance_of::<js_sys::Uint8Array>() {
-                let array = js_sys::Uint8Array::from(data);
-                peer_msg.receive_binary(&array.to_vec());
-            }
-        }) as Box<dyn FnMut(web_sys::MessageEvent)>);
-        dc.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
-
-        let mut inner = self.inner.borrow_mut();
-        inner.dc_onopen = Some(onopen);
-        inner.dc_onclose = Some(onclose);
-        inner.dc_onmessage = Some(onmessage);
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn attach_ice_gathering_callbacks(&self, pc: &web_sys::RtcPeerConnection) -> js_sys::Promise {
-        let inner_rc = self.inner.clone();
-        let ice_promise = js_sys::Promise::new(&mut |resolve, _reject| {
-            inner_rc.borrow_mut().ice_gathering_resolver = Some(resolve);
-        });
-
-        let inner_for_cand = self.inner.clone();
-        let onicecandidate =
-            Closure::wrap(Box::new(move |event: web_sys::RtcPeerConnectionIceEvent| {
-                if let Some(candidate) = event.candidate() {
-                    let cand_str = candidate.candidate();
-                    if !cand_str.trim().is_empty() {
-                        inner_for_cand.borrow_mut().local_candidates.push(cand_str);
-                    }
-                } else {
-                    let resolver = inner_for_cand.borrow_mut().ice_gathering_resolver.take();
-                    if let Some(resolve) = resolver {
-                        let _ = resolve.call0(&JsValue::NULL);
-                    }
-                }
-            })
-                as Box<dyn FnMut(web_sys::RtcPeerConnectionIceEvent)>);
-        pc.set_onicecandidate(Some(onicecandidate.as_ref().unchecked_ref()));
-
-        let inner_for_state = self.inner.clone();
-        let pc_clone = pc.clone();
-        let onicegatheringstatechange = Closure::wrap(Box::new(move |_event: web_sys::Event| {
-            if pc_clone.ice_gathering_state() == web_sys::RtcIceGatheringState::Complete {
-                let resolver = inner_for_state.borrow_mut().ice_gathering_resolver.take();
-                if let Some(resolve) = resolver {
-                    let _ = resolve.call0(&JsValue::NULL);
-                }
-            }
-        }) as Box<dyn FnMut(web_sys::Event)>);
-        pc.set_onicegatheringstatechange(Some(onicegatheringstatechange.as_ref().unchecked_ref()));
-
-        let mut inner = self.inner.borrow_mut();
-        inner.local_candidates.clear();
-        inner.pc_onicecandidate = Some(onicecandidate);
-        inner.pc_onicegatheringstatechange = Some(onicegatheringstatechange);
-
-        ice_promise
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    async fn create_offer_wasm(&self) -> Result<SdpOffer, WebRtcError> {
-        use wasm_bindgen_futures::JsFuture;
-
-        let config = self.config();
-        self.inner.borrow_mut().cleanup_wasm_handles();
-
-        let rtc_config = web_sys::RtcConfiguration::new();
-        let pc = web_sys::RtcPeerConnection::new_with_configuration(&rtc_config)
-            .map_err(WebRtcError::from_js_value)?;
-
-        let dc_init = web_sys::RtcDataChannelInit::new();
-        dc_init.set_ordered(config.ordered);
-        let dc = pc.create_data_channel_with_data_channel_dict(&config.label, &dc_init);
-
-        self.attach_data_channel_callbacks(&dc);
-        let ice_promise = self.attach_ice_gathering_callbacks(&pc);
-
-        {
-            let mut inner = self.inner.borrow_mut();
-            inner.peer_connection = Some(pc.clone());
-            inner.data_channel = Some(dc);
-        }
-
-        let offer_js = JsFuture::from(pc.create_offer())
-            .await
-            .map_err(WebRtcError::from_js_value)?;
-        let offer_sdp = js_sys::Reflect::get(&offer_js, &JsValue::from_str("sdp"))
-            .map_err(WebRtcError::from_js_value)?
-            .as_string()
-            .ok_or_else(|| {
-                WebRtcError::InvalidSdp("Browser offer missing sdp field".to_string())
-            })?;
-
-        let local_desc = web_sys::RtcSessionDescriptionInit::new(web_sys::RtcSdpType::Offer);
-        local_desc.set_sdp(&offer_sdp);
-        JsFuture::from(pc.set_local_description(&local_desc))
-            .await
-            .map_err(WebRtcError::from_js_value)?;
-
-        if pc.ice_gathering_state() != web_sys::RtcIceGatheringState::Complete {
-            JsFuture::from(ice_promise)
-                .await
-                .map_err(WebRtcError::from_js_value)?;
-        }
-
-        let current_sdp = pc.local_description().map(|d| d.sdp()).unwrap_or(offer_sdp);
-        let mut candidates = self.inner.borrow().local_candidates.clone();
-        if extract_ice_candidates(&current_sdp).is_empty() && candidates.is_empty() {
-            candidates.push("a=candidate:1 1 UDP 2130706431 127.0.0.1 9 typ host".to_string());
-        }
-
-        let bundled = bundle_sdp_with_candidates(&current_sdp, &candidates)?;
-        let validated = validate_sdp_offer(&bundled)?;
-        self.inner.borrow_mut().local_offer = Some(validated.clone());
-        Ok(validated)
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    async fn accept_offer_and_create_answer_wasm(
-        &self,
-        offer_sdp: &str,
-    ) -> Result<SdpAnswer, WebRtcError> {
-        use wasm_bindgen_futures::JsFuture;
-
-        self.inner.borrow_mut().cleanup_wasm_handles();
-
-        let rtc_config = web_sys::RtcConfiguration::new();
-        let pc = web_sys::RtcPeerConnection::new_with_configuration(&rtc_config)
-            .map_err(WebRtcError::from_js_value)?;
-
-        let peer_for_dc = self.clone();
-        let ondatachannel = Closure::wrap(Box::new(move |event: web_sys::RtcDataChannelEvent| {
-            let dc = event.channel();
-            peer_for_dc.attach_data_channel_callbacks(&dc);
-            let is_open = dc.ready_state() == web_sys::RtcDataChannelState::Open;
-            peer_for_dc.inner.borrow_mut().data_channel = Some(dc);
-            if is_open {
-                let _ = peer_for_dc.set_state_and_notify(PeerLifecycleState::Open);
-            }
-        })
-            as Box<dyn FnMut(web_sys::RtcDataChannelEvent)>);
-        pc.set_ondatachannel(Some(ondatachannel.as_ref().unchecked_ref()));
-
-        let ice_promise = self.attach_ice_gathering_callbacks(&pc);
-
-        {
-            let mut inner = self.inner.borrow_mut();
-            inner.pc_ondatachannel = Some(ondatachannel);
-            inner.peer_connection = Some(pc.clone());
-        }
-
-        let browser_offer_sdp = strip_end_of_candidates_for_browser(offer_sdp);
-        let remote_desc = web_sys::RtcSessionDescriptionInit::new(web_sys::RtcSdpType::Offer);
-        remote_desc.set_sdp(&browser_offer_sdp);
-        JsFuture::from(pc.set_remote_description(&remote_desc))
-            .await
-            .map_err(WebRtcError::from_js_value)?;
-
-        let answer_js = JsFuture::from(pc.create_answer())
-            .await
-            .map_err(WebRtcError::from_js_value)?;
-        let answer_sdp = js_sys::Reflect::get(&answer_js, &JsValue::from_str("sdp"))
-            .map_err(WebRtcError::from_js_value)?
-            .as_string()
-            .ok_or_else(|| {
-                WebRtcError::InvalidSdp("Browser answer missing sdp field".to_string())
-            })?;
-
-        let local_desc = web_sys::RtcSessionDescriptionInit::new(web_sys::RtcSdpType::Answer);
-        local_desc.set_sdp(&answer_sdp);
-        JsFuture::from(pc.set_local_description(&local_desc))
-            .await
-            .map_err(WebRtcError::from_js_value)?;
-
-        if pc.ice_gathering_state() != web_sys::RtcIceGatheringState::Complete {
-            JsFuture::from(ice_promise)
-                .await
-                .map_err(WebRtcError::from_js_value)?;
-        }
-
-        let current_sdp = pc
-            .local_description()
-            .map(|d| d.sdp())
-            .unwrap_or(answer_sdp);
-        let mut candidates = self.inner.borrow().local_candidates.clone();
-        if extract_ice_candidates(&current_sdp).is_empty() && candidates.is_empty() {
-            candidates.push("a=candidate:1 1 UDP 2130706431 127.0.0.1 9 typ host".to_string());
-        }
-
-        let bundled = bundle_sdp_with_candidates(&current_sdp, &candidates)?;
-        let validated = validate_sdp_answer(&bundled)?;
-        self.inner.borrow_mut().local_answer = Some(validated.clone());
-        Ok(validated)
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    async fn apply_answer_wasm(
-        &self,
-        answer_sdp: &str,
-        validated_answer: SdpAnswer,
-    ) -> Result<(), WebRtcError> {
-        use wasm_bindgen_futures::JsFuture;
-
-        let pc = self.inner.borrow().peer_connection.clone().ok_or_else(|| {
-            WebRtcError::DomException("PeerConnection not initialized on offerer".to_string())
-        })?;
-
-        let browser_answer_sdp = strip_end_of_candidates_for_browser(answer_sdp);
-        let remote_desc = web_sys::RtcSessionDescriptionInit::new(web_sys::RtcSdpType::Answer);
-        remote_desc.set_sdp(&browser_answer_sdp);
-        JsFuture::from(pc.set_remote_description(&remote_desc))
-            .await
-            .map_err(WebRtcError::from_js_value)?;
-
-        let is_dc_open = {
-            let mut inner = self.inner.borrow_mut();
-            inner.remote_answer = Some(validated_answer);
-            inner
-                .data_channel
-                .as_ref()
-                .map(|dc| dc.ready_state() == web_sys::RtcDataChannelState::Open)
-                .unwrap_or(false)
-        };
-
-        if is_dc_open {
-            self.set_state_and_notify(PeerLifecycleState::Open)?;
-        }
-
         Ok(())
     }
 }
