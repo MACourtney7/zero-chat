@@ -305,6 +305,8 @@ impl MeshTopology {
                     signal: MeshRelaySignal::PeerJoined {
                         peer_id: existing_id,
                         public_key: existing_pk,
+                        signing_key: None,
+                        signature: None,
                     },
                 }) {
                     let _ = rtc_peer.send_text(&msg_to_new);
@@ -316,6 +318,8 @@ impl MeshTopology {
                     signal: MeshRelaySignal::PeerJoined {
                         peer_id: peer_id.to_string(),
                         public_key,
+                        signing_key: None,
+                        signature: None,
                     },
                 }) {
                     let _ = existing_rtc.send_text(&msg_to_existing);
@@ -679,6 +683,8 @@ impl MeshTopology {
                 MeshRelaySignal::PeerJoined {
                     peer_id,
                     public_key,
+                    signing_key: _,
+                    signature: _,
                 } => {
                     if peer_id == self.local_peer_id() {
                         return Ok(());
@@ -1763,6 +1769,7 @@ mod tests {
                 sealed_offer: SealedFrame {
                     nonce: [0u8; 12],
                     ciphertext: vec![1, 2, 3],
+                    signature: None,
                 },
             },
         };

@@ -4665,6 +4665,8 @@ fn test_req_031_rehandshake_keeps_open_link() {
         signal: MeshRelaySignal::PeerJoined {
             peer_id: "charlie".to_string(),
             public_key: charlie_pk,
+            signing_key: None,
+            signature: None,
         },
     };
     let re_intro_json = to_json_string(&re_intro).expect("json");

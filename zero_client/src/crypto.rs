@@ -3,14 +3,18 @@
 //! Provides per-message symmetric payload sealing and opening over WebRTC DataChannels
 //! using X25519 shared secret derivation and ChaCha20-Poly1305 AEAD, satisfying REQ-005.2 and REQ-005.3.
 
+use std::collections::HashMap;
 use std::fmt;
+use wasm_bindgen::prelude::*;
 use zero_protocol::{
-    crypto::{chacha20poly1305, x25519},
+    crypto::{
+        burner::BurnerKeybundle, chacha20poly1305, ed25519::verify_ed25519_signature, x25519,
+    },
     envelope::{ChatMessage, ProtocolError, SealedFrame},
     from_json_str, to_json_string,
 };
 
-pub use zero_protocol::crypto::{KEY_LEN, NONCE_LEN, TAG_LEN};
+pub use zero_protocol::crypto::{KEY_LEN, NONCE_LEN, SIGNATURE_LEN, TAG_LEN};
 
 /// Errors encountered during payload sealing, opening, key derivation, or deserialization.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,21 +167,9 @@ pub fn open_chat_payload(
     crypto.open_message(message)
 }
 
-/// Generates a random v4 UUID for messages conforming to RFC 4122.
+/// Generates a random v4 UUID for messages conforming to RFC 4122 using CSPRNG.
 pub fn generate_message_uuid() -> Result<String, CryptoError> {
-    let keypair = x25519::X25519Keypair::generate().map_err(CryptoError::Protocol)?;
-    let mut bytes = [0u8; 16];
-    bytes.copy_from_slice(&keypair.private_key_bytes()[..16]);
-    bytes[6] = (bytes[6] & 0x0f) | 0x40; // RFC 4122 v4
-    bytes[8] = (bytes[8] & 0x3f) | 0x80; // Variant 1
-    Ok(format!(
-        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        bytes[0], bytes[1], bytes[2], bytes[3],
-        bytes[4], bytes[5],
-        bytes[6], bytes[7],
-        bytes[8], bytes[9],
-        bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
-    ))
+    zero_protocol::crypto::generate_uuid_v4().map_err(CryptoError::Protocol)
 }
 
 /// Returns current millisecond timestamp (WASM & native compatible).
@@ -203,6 +195,244 @@ pub fn serialize_message(message: &ChatMessage) -> Result<String, CryptoError> {
 /// Deserializes a `ChatMessage` from a JSON string.
 pub fn deserialize_message(json: &str) -> Result<ChatMessage, CryptoError> {
     from_json_str(json).map_err(|e| CryptoError::Serialization(e.to_string()))
+}
+
+/// Helper to construct a `JsValue` error message for WASM runtime while avoiding
+/// unsupported runtime panics on native test targets.
+#[inline]
+fn js_error(msg: impl fmt::Display) -> JsValue {
+    #[cfg(all(target_family = "wasm", not(target_os = "wasi")))]
+    {
+        JsValue::from_str(&msg.to_string())
+    }
+    #[cfg(not(all(target_family = "wasm", not(target_os = "wasi"))))]
+    {
+        let _ = msg;
+        JsValue::NULL
+    }
+}
+
+/// Internal peer session tracking symmetric session crypto and optional peer Ed25519 public key.
+struct PeerCryptoEntry {
+    crypto: ChatSessionCrypto,
+    ed25519_public: Option<[u8; KEY_LEN]>,
+}
+
+/// WASM cryptographic session manager exposing BurnerKeybundle, pairwise peer sessions,
+/// authenticated frame sealing/opening, and blind dead-drop SDP encryption to JavaScript.
+#[wasm_bindgen]
+pub struct WasmCryptoSession {
+    bundle: BurnerKeybundle,
+    peer_sessions: HashMap<String, PeerCryptoEntry>,
+}
+
+#[wasm_bindgen]
+impl WasmCryptoSession {
+    /// Generates a fresh ephemeral BurnerKeybundle (X25519 + Ed25519) and empty peer sessions.
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Result<WasmCryptoSession, JsValue> {
+        let bundle = BurnerKeybundle::generate().map_err(js_error)?;
+        Ok(WasmCryptoSession {
+            bundle,
+            peer_sessions: HashMap::new(),
+        })
+    }
+
+    /// Returns the 32-byte X25519 public key bytes.
+    pub fn x25519_public_key_bytes(&self) -> Vec<u8> {
+        self.bundle.x25519_public_key().to_vec()
+    }
+
+    /// Returns the 32-byte Ed25519 public verifying key bytes.
+    pub fn ed25519_public_key_bytes(&self) -> Vec<u8> {
+        self.bundle.ed25519_public_key().to_vec()
+    }
+
+    /// Registers a peer session by deriving the pairwise X25519 shared secret
+    /// and storing the optional Ed25519 public key for signature verification.
+    pub fn register_peer(
+        &mut self,
+        peer_id: &str,
+        peer_x25519_pub: &[u8],
+        peer_ed25519_pub: Option<Vec<u8>>,
+    ) -> Result<(), JsValue> {
+        if peer_x25519_pub.len() != KEY_LEN {
+            return Err(js_error(format!(
+                "Invalid X25519 public key length: expected {}, got {}",
+                KEY_LEN,
+                peer_x25519_pub.len()
+            )));
+        }
+        let mut x25519_arr = [0u8; KEY_LEN];
+        x25519_arr.copy_from_slice(peer_x25519_pub);
+
+        let ed25519_public = match peer_ed25519_pub {
+            Some(bytes) => {
+                if bytes.len() != KEY_LEN {
+                    return Err(js_error(format!(
+                        "Invalid Ed25519 public key length: expected {}, got {}",
+                        KEY_LEN,
+                        bytes.len()
+                    )));
+                }
+                let mut ed_arr = [0u8; KEY_LEN];
+                ed_arr.copy_from_slice(&bytes);
+                Some(ed_arr)
+            }
+            None => None,
+        };
+
+        let crypto = ChatSessionCrypto::from_keypair_and_peer_public(
+            self.bundle.x25519.private_key_bytes(),
+            &x25519_arr,
+        );
+
+        self.peer_sessions.insert(
+            peer_id.to_string(),
+            PeerCryptoEntry {
+                crypto,
+                ed25519_public,
+            },
+        );
+        Ok(())
+    }
+
+    /// Checks if a session crypto entry exists for `peer_id`.
+    pub fn has_peer_session(&self, peer_id: &str) -> bool {
+        self.peer_sessions.contains_key(peer_id)
+    }
+
+    /// Removes and drops the session crypto entry for `peer_id`, zeroizing its shared secret.
+    pub fn remove_peer(&mut self, peer_id: &str) {
+        self.peer_sessions.remove(peer_id);
+    }
+
+    /// Seals `plaintext` for `peer_id` using ChaCha20-Poly1305, signs (nonce || ciphertext)
+    /// with self Ed25519 signing key, and returns the JSON-serialized SealedFrame.
+    pub fn seal_for_peer(&self, peer_id: &str, plaintext: &[u8]) -> Result<String, JsValue> {
+        let entry = self
+            .peer_sessions
+            .get(peer_id)
+            .ok_or_else(|| js_error(format!("No peer session found for '{peer_id}'")))?;
+
+        let mut frame = entry.crypto.seal_raw(plaintext).map_err(js_error)?;
+
+        let mut to_sign = Vec::with_capacity(frame.nonce.len() + frame.ciphertext.len());
+        to_sign.extend_from_slice(&frame.nonce);
+        to_sign.extend_from_slice(&frame.ciphertext);
+
+        let sig = self.bundle.ed25519.sign(&to_sign);
+        frame.signature = Some(sig.to_vec());
+
+        to_json_string(&frame).map_err(js_error)
+    }
+
+    /// Deserializes SealedFrame from JSON, verifies the Ed25519 signature if peer has
+    /// ed25519_public and frame has signature, decrypts ciphertext, and returns plaintext bytes.
+    pub fn open_from_peer(
+        &self,
+        peer_id: &str,
+        sealed_frame_json: &str,
+    ) -> Result<Vec<u8>, JsValue> {
+        let frame: SealedFrame = from_json_str(sealed_frame_json)
+            .map_err(|e| js_error(format!("Invalid SealedFrame JSON: {e}")))?;
+
+        let entry = self
+            .peer_sessions
+            .get(peer_id)
+            .ok_or_else(|| js_error(format!("No peer session found for '{peer_id}'")))?;
+
+        if let (Some(ed_pub), Some(sig)) = (entry.ed25519_public.as_ref(), frame.signature.as_ref())
+        {
+            let sig_arr: [u8; SIGNATURE_LEN] = sig
+                .as_slice()
+                .try_into()
+                .map_err(|_| js_error("Invalid Ed25519 signature length (expected 64 bytes)"))?;
+
+            let mut to_verify = Vec::with_capacity(frame.nonce.len() + frame.ciphertext.len());
+            to_verify.extend_from_slice(&frame.nonce);
+            to_verify.extend_from_slice(&frame.ciphertext);
+
+            verify_ed25519_signature(ed_pub, &to_verify, &sig_arr)
+                .map_err(|e| js_error(format!("Ed25519 signature verification failed: {e}")))?;
+        }
+
+        entry.crypto.open_raw(&frame).map_err(js_error)
+    }
+
+    /// Registers the host peer session, seals the SDP plaintext into a signed SealedFrame,
+    /// and returns the JSON string representation for `DropPayload.sealed_sdp_answer`.
+    pub fn seal_drop_sdp(
+        &mut self,
+        host_peer_id: &str,
+        host_x25519_pub: &[u8],
+        host_ed25519_pub: Option<Vec<u8>>,
+        sdp_plaintext: &str,
+    ) -> Result<String, JsValue> {
+        self.register_peer(host_peer_id, host_x25519_pub, host_ed25519_pub)?;
+        self.seal_for_peer(host_peer_id, sdp_plaintext.as_bytes())
+    }
+
+    /// Registers the joiner peer session on the host, decrypts the sealed SDP JSON frame,
+    /// verifies signature, and returns the plaintext SDP string.
+    pub fn open_drop_sdp(
+        &mut self,
+        joiner_peer_id: &str,
+        joiner_x25519_pub: &[u8],
+        joiner_ed25519_pub: Option<Vec<u8>>,
+        sealed_frame_json: &str,
+    ) -> Result<String, JsValue> {
+        self.register_peer(joiner_peer_id, joiner_x25519_pub, joiner_ed25519_pub)?;
+        let plaintext_bytes = self.open_from_peer(joiner_peer_id, sealed_frame_json)?;
+        String::from_utf8(plaintext_bytes)
+            .map_err(|e| js_error(format!("Decrypted SDP is not valid UTF-8: {e}")))
+    }
+
+    /// Signs arbitrary bytes with self Ed25519 signing key.
+    pub fn sign_bytes(&self, data: &[u8]) -> Vec<u8> {
+        self.bundle.ed25519.sign(data).to_vec()
+    }
+
+    /// Verifies signature over `data` using `peer_id`'s registered Ed25519 public key.
+    pub fn verify_peer_signature(
+        &self,
+        peer_id: &str,
+        data: &[u8],
+        sig: &[u8],
+    ) -> Result<bool, JsValue> {
+        let entry = self
+            .peer_sessions
+            .get(peer_id)
+            .ok_or_else(|| js_error(format!("No peer session found for '{peer_id}'")))?;
+
+        let ed_pub = match &entry.ed25519_public {
+            Some(pubkey) => pubkey,
+            None => return Ok(false),
+        };
+
+        let sig_arr: [u8; SIGNATURE_LEN] = match sig.try_into() {
+            Ok(arr) => arr,
+            Err(_) => return Ok(false),
+        };
+
+        match verify_ed25519_signature(ed_pub, data, &sig_arr) {
+            Ok(()) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
+    /// Computes HMAC-SHA256 hex string token for invite authentication.
+    pub fn compute_hmac_hex(secret: &[u8], invite_uuid: &str) -> Result<String, JsValue> {
+        zero_protocol::crypto::hmac_sha256::compute_invite_token(secret, invite_uuid)
+            .map(|token| token.hmac_hex)
+            .map_err(js_error)
+    }
+
+    /// Clears all peer sessions and zeroizes key material in memory.
+    pub fn burn_all(&mut self) {
+        self.peer_sessions.clear();
+        self.bundle.zeroize();
+    }
 }
 
 #[cfg(test)]
@@ -503,5 +733,176 @@ mod tests {
             CryptoError::Serialization("json err".to_string()).to_string(),
             "Serialization error: json err"
         );
+    }
+
+    #[test]
+    fn test_wasm_crypto_session_keys_and_registration() {
+        let mut alice = WasmCryptoSession::new().expect("alice session");
+        let bob = WasmCryptoSession::new().expect("bob session");
+
+        let alice_x = alice.x25519_public_key_bytes();
+        let alice_ed = alice.ed25519_public_key_bytes();
+        let bob_x = bob.x25519_public_key_bytes();
+        let bob_ed = bob.ed25519_public_key_bytes();
+
+        assert_eq!(alice_x.len(), KEY_LEN);
+        assert_eq!(alice_ed.len(), KEY_LEN);
+        assert_eq!(bob_x.len(), KEY_LEN);
+        assert_eq!(bob_ed.len(), KEY_LEN);
+
+        assert!(!alice.has_peer_session("bob"));
+        alice
+            .register_peer("bob", &bob_x, Some(bob_ed.clone()))
+            .expect("register bob");
+        assert!(alice.has_peer_session("bob"));
+
+        // Reject invalid key lengths
+        let invalid_key = vec![0u8; 16];
+        assert!(alice.register_peer("bad_peer", &invalid_key, None).is_err());
+        assert!(alice
+            .register_peer("bad_peer", &bob_x, Some(invalid_key))
+            .is_err());
+
+        // Remove peer
+        alice.remove_peer("bob");
+        assert!(!alice.has_peer_session("bob"));
+    }
+
+    #[test]
+    fn test_wasm_crypto_session_sealing_and_opening_roundtrip() {
+        let mut alice = WasmCryptoSession::new().expect("alice session");
+        let mut bob = WasmCryptoSession::new().expect("bob session");
+
+        alice
+            .register_peer(
+                "bob",
+                &bob.x25519_public_key_bytes(),
+                Some(bob.ed25519_public_key_bytes()),
+            )
+            .expect("register bob on alice");
+
+        bob.register_peer(
+            "alice",
+            &alice.x25519_public_key_bytes(),
+            Some(alice.ed25519_public_key_bytes()),
+        )
+        .expect("register alice on bob");
+
+        let msg = b"Encrypted and Ed25519-signed WASM payload";
+        let sealed_json = alice.seal_for_peer("bob", msg).expect("seal for bob");
+
+        let decrypted = bob
+            .open_from_peer("alice", &sealed_json)
+            .expect("open from alice");
+        assert_eq!(decrypted, msg);
+
+        // Tamper with ciphertext
+        let mut frame: SealedFrame = from_json_str(&sealed_json).unwrap();
+        frame.ciphertext[0] ^= 0xff;
+        let tampered_json = to_json_string(&frame).unwrap();
+        assert!(bob.open_from_peer("alice", &tampered_json).is_err());
+
+        // Tamper with signature
+        let mut frame_bad_sig: SealedFrame = from_json_str(&sealed_json).unwrap();
+        if let Some(ref mut sig) = frame_bad_sig.signature {
+            sig[0] ^= 0x01;
+        }
+        let bad_sig_json = to_json_string(&frame_bad_sig).unwrap();
+        assert!(bob.open_from_peer("alice", &bad_sig_json).is_err());
+    }
+
+    #[test]
+    fn test_wasm_crypto_session_seal_and_open_drop_sdp() {
+        let mut host = WasmCryptoSession::new().expect("host session");
+        let mut joiner = WasmCryptoSession::new().expect("joiner session");
+
+        let host_x = host.x25519_public_key_bytes();
+        let host_ed = host.ed25519_public_key_bytes();
+        let joiner_x = joiner.x25519_public_key_bytes();
+        let joiner_ed = joiner.ed25519_public_key_bytes();
+
+        let sdp_content =
+            "v=0\r\no=- 123456 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=crypto-bridge\r\n";
+
+        // Joiner seals SDP for host
+        let sealed_sdp_json = joiner
+            .seal_drop_sdp("host-id", &host_x, Some(host_ed), sdp_content)
+            .expect("joiner seal drop sdp");
+
+        // Host opens SDP from joiner
+        let opened_sdp = host
+            .open_drop_sdp("joiner-id", &joiner_x, Some(joiner_ed), &sealed_sdp_json)
+            .expect("host open drop sdp");
+
+        assert_eq!(opened_sdp, sdp_content);
+
+        // Tampered SDP fails
+        let mut frame: SealedFrame = from_json_str(&sealed_sdp_json).unwrap();
+        frame.ciphertext[2] ^= 0xaa;
+        let tampered_json = to_json_string(&frame).unwrap();
+        assert!(host
+            .open_drop_sdp("joiner-id", &joiner_x, None, &tampered_json)
+            .is_err());
+    }
+
+    #[test]
+    fn test_wasm_crypto_session_sign_and_verify() {
+        let alice = WasmCryptoSession::new().expect("alice session");
+        let mut bob = WasmCryptoSession::new().expect("bob session");
+
+        bob.register_peer(
+            "alice",
+            &alice.x25519_public_key_bytes(),
+            Some(alice.ed25519_public_key_bytes()),
+        )
+        .expect("register alice");
+
+        let data = b"Arbitrary binary protocol message to authenticate";
+        let sig = alice.sign_bytes(data);
+        assert_eq!(sig.len(), SIGNATURE_LEN);
+
+        let valid = bob
+            .verify_peer_signature("alice", data, &sig)
+            .expect("verify signature");
+        assert!(valid);
+
+        let invalid_data = b"Tampered data";
+        let invalid = bob
+            .verify_peer_signature("alice", invalid_data, &sig)
+            .expect("verify invalid data");
+        assert!(!invalid);
+
+        let invalid_sig_len = vec![0u8; 32];
+        let bad_len_result = bob
+            .verify_peer_signature("alice", data, &invalid_sig_len)
+            .expect("bad sig len returns false");
+        assert!(!bad_len_result);
+    }
+
+    #[test]
+    fn test_wasm_crypto_session_compute_hmac_hex() {
+        let secret = b"super_secret_key_32_bytes_value!";
+        let uuid = "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d";
+        let token = WasmCryptoSession::compute_hmac_hex(secret, uuid).expect("compute hmac");
+        assert_eq!(token.len(), 64);
+
+        // Verify against zero_protocol directly
+        let expected =
+            zero_protocol::crypto::hmac_sha256::compute_invite_token(secret, uuid).unwrap();
+        assert_eq!(token, expected.hmac_hex);
+    }
+
+    #[test]
+    fn test_wasm_crypto_session_burn_all() {
+        let mut alice = WasmCryptoSession::new().expect("alice session");
+        let bob = WasmCryptoSession::new().expect("bob session");
+
+        alice
+            .register_peer("bob", &bob.x25519_public_key_bytes(), None)
+            .expect("register bob");
+        assert!(alice.has_peer_session("bob"));
+
+        alice.burn_all();
+        assert!(!alice.has_peer_session("bob"));
     }
 }

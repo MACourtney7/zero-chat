@@ -1,10 +1,16 @@
 use zero_protocol::crypto::{
-    chacha20poly1305::{generate_nonce, open_payload, seal_payload, seal_payload_with_nonce},
+    burner::BurnerKeybundle,
+    chacha20poly1305::{
+        generate_nonce, open_payload, open_with_shared_secret, seal_payload,
+        seal_payload_with_nonce, seal_with_shared_secret,
+    },
+    ed25519::{verify_ed25519_signature, Ed25519Keypair},
     hmac_sha256::{
         compute_hmac_sha256, compute_invite_token, verify_hmac_sha256, verify_invite_token,
     },
+    uuid::{generate_random_bytes_16, generate_uuid_v4},
     x25519::{derive_shared_secret, X25519Keypair},
-    KEY_LEN, NONCE_LEN, TAG_LEN,
+    KEY_LEN, NONCE_LEN, SIGNATURE_LEN, TAG_LEN,
 };
 use zero_protocol::envelope::{
     from_json_bytes, from_json_str, to_json_bytes, to_json_string, ChatMessage, DropPayload,
@@ -29,6 +35,7 @@ fn test_invite_payload_roundtrip_serialization() {
         guest_private_key: Some([0x22; 32]),
         host_peer_id: Some("host-peer-alice".to_string()),
         assigned_peer_id: Some("guest-peer-bob".to_string()),
+        host_signing_key: Some([0x33; 32]),
     };
 
     let json_str = to_json_string(&payload).expect("serialize to JSON string");
@@ -59,6 +66,7 @@ fn test_invite_payload_backward_compatibility() {
     assert_eq!(decoded.guest_private_key, None);
     assert_eq!(decoded.host_peer_id, None);
     assert_eq!(decoded.assigned_peer_id, None);
+    assert_eq!(decoded.host_signing_key, None);
 }
 
 #[test]
@@ -71,6 +79,13 @@ fn test_drop_payload_roundtrip_serialization() {
         },
         joiner_public_key: [0x33; 32],
         joiner_peer_id: Some("joiner-peer-charlie".to_string()),
+        joiner_signing_key: Some([0x44; 32]),
+        sealed_sdp_answer: Some(SealedFrame {
+            nonce: [0x01; 12],
+            ciphertext: vec![1, 2, 3, 4],
+            signature: None,
+        }),
+        signature: Some(vec![0x55; 64]),
     };
 
     let json_str = to_json_string(&payload).expect("serialize DropPayload to string");
@@ -98,6 +113,9 @@ fn test_drop_payload_backward_compatibility() {
     let decoded: DropPayload =
         from_json_str(&legacy_json).expect("deserialize legacy drop payload");
     assert_eq!(decoded.joiner_peer_id, None);
+    assert_eq!(decoded.joiner_signing_key, None);
+    assert_eq!(decoded.sealed_sdp_answer, None);
+    assert_eq!(decoded.signature, None);
 }
 
 #[test]
@@ -110,6 +128,7 @@ fn test_chat_message_roundtrip_serialization() {
         sealed: Some(SealedFrame {
             nonce: [0x01; 12],
             ciphertext: vec![0xaa, 0xbb, 0xcc, 0xdd],
+            signature: None,
         }),
     };
 
@@ -132,6 +151,8 @@ fn test_mesh_relay_message_roundtrip_serialization() {
             signal: MeshRelaySignal::PeerJoined {
                 peer_id: "peer-charlie".to_string(),
                 public_key: [0x44; 32],
+                signing_key: Some([0x55; 32]),
+                signature: Some(vec![0x66; 64]),
             },
         },
         MeshRelayMessage {
@@ -143,6 +164,7 @@ fn test_mesh_relay_message_roundtrip_serialization() {
                 sealed_offer: SealedFrame {
                     nonce: [0x02; 12],
                     ciphertext: vec![1, 2, 3, 4],
+                    signature: None,
                 },
             },
         },
@@ -155,6 +177,7 @@ fn test_mesh_relay_message_roundtrip_serialization() {
                 sealed_answer: SealedFrame {
                     nonce: [0x03; 12],
                     ciphertext: vec![5, 6, 7, 8],
+                    signature: None,
                 },
             },
         },
@@ -168,6 +191,7 @@ fn test_mesh_relay_message_roundtrip_serialization() {
                 sealed_message: SealedFrame {
                     nonce: [0x04; 12],
                     ciphertext: vec![9, 10, 11, 12],
+                    signature: None,
                 },
             },
         },
@@ -347,4 +371,247 @@ fn test_chacha20poly1305_rejects_tampered_ciphertext_nonce_and_wrong_key() {
     let wrong_key = [0x99u8; KEY_LEN];
     let err_key = open_payload(&wrong_key, &sealed).unwrap_err();
     assert!(matches!(err_key, ProtocolError::DecryptionError(_)));
+}
+
+// ============================================================================
+// REQ-046: Option B Burner Keybundle, Ed25519, Blind Dead-Drop & Extensions
+// ============================================================================
+
+#[test]
+fn test_burner_keybundle_generation_and_zeroize() {
+    let mut bundle = BurnerKeybundle::generate().expect("generate BurnerKeybundle");
+
+    // Public keys are populated and non-zero
+    assert_ne!(bundle.x25519_public_key(), [0u8; KEY_LEN]);
+    assert_ne!(bundle.ed25519_public_key(), [0u8; KEY_LEN]);
+    assert_eq!(
+        bundle.x25519_public_key(),
+        *bundle.x25519.public_key_bytes()
+    );
+    assert_eq!(
+        bundle.ed25519_public_key(),
+        *bundle.ed25519.public_key_bytes()
+    );
+
+    // Sign message with Ed25519
+    let msg = b"Ephemeral identity proof";
+    let sig = bundle.ed25519.sign(msg);
+    assert_eq!(sig.len(), SIGNATURE_LEN);
+
+    // Verify signature with correct public key
+    verify_ed25519_signature(&bundle.ed25519_public_key(), msg, &sig)
+        .expect("signature must verify against keybundle public key");
+
+    // Verify signature fails with wrong public key
+    let wrong_key = [0x77u8; KEY_LEN];
+    let err_wrong_key = verify_ed25519_signature(&wrong_key, msg, &sig).unwrap_err();
+    assert_eq!(err_wrong_key, ProtocolError::InvalidHmacSignature);
+
+    // Verify signature fails with altered message
+    let err_tampered_msg =
+        verify_ed25519_signature(&bundle.ed25519_public_key(), b"Tampered message", &sig)
+            .unwrap_err();
+    assert_eq!(err_tampered_msg, ProtocolError::InvalidHmacSignature);
+
+    // Test zeroization
+    bundle.zeroize();
+    assert_eq!(bundle.x25519.private_key, [0u8; KEY_LEN]);
+    assert_eq!(bundle.ed25519.seed, [0u8; KEY_LEN]);
+}
+
+#[test]
+fn test_blind_dead_drop_sdp_encryption_and_tamper_rejection() {
+    // 1. Host creates ephemeral keybundle and derives invite parameters
+    let host_bundle = BurnerKeybundle::generate().expect("generate host keybundle");
+    let host_pub = host_bundle.x25519_public_key();
+
+    // 2. Joiner opens invite URL with host_pub, generates joiner keybundle
+    let joiner_bundle = BurnerKeybundle::generate().expect("generate joiner keybundle");
+    let joiner_pub = joiner_bundle.x25519_public_key();
+
+    // Pairwise shared secret derivation
+    let joiner_shared_secret =
+        derive_shared_secret(joiner_bundle.x25519.private_key_bytes(), &host_pub);
+    let host_shared_secret =
+        derive_shared_secret(host_bundle.x25519.private_key_bytes(), &joiner_pub);
+    assert_eq!(joiner_shared_secret, host_shared_secret);
+
+    // 3. Joiner seals WebRTC SDP answer with shared secret
+    let raw_sdp = "v=0\r\no=- 4829104 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=sendrecv";
+    let sealed_frame = seal_with_shared_secret(&joiner_shared_secret, raw_sdp.as_bytes())
+        .expect("seal SDP with shared secret");
+
+    // Construct DropPayload
+    let drop = DropPayload {
+        invite_uuid: "550e8400-e29b-41d4-a716-446655440000".to_string(),
+        token: "feedbeef".repeat(8),
+        sdp_answer: SdpAnswer {
+            sdp: "SEALED".to_string(),
+        },
+        joiner_public_key: joiner_pub,
+        joiner_peer_id: Some("joiner-bob".to_string()),
+        joiner_signing_key: Some(joiner_bundle.ed25519_public_key()),
+        sealed_sdp_answer: Some(sealed_frame.clone()),
+        signature: None,
+    };
+
+    // 4. Host receives DropPayload and decrypts sealed_sdp_answer
+    let host_derived = derive_shared_secret(
+        host_bundle.x25519.private_key_bytes(),
+        &drop.joiner_public_key,
+    );
+    assert_eq!(host_derived, host_shared_secret);
+
+    let decrypted_bytes =
+        open_with_shared_secret(&host_derived, drop.sealed_sdp_answer.as_ref().unwrap())
+            .expect("host must decrypt sealed SDP successfully");
+    let decrypted_sdp = String::from_utf8(decrypted_bytes).expect("valid UTF-8 SDP");
+    assert_eq!(decrypted_sdp, raw_sdp);
+
+    // 5. Tamper rejection - corrupted ciphertext returns DecryptionError
+    let mut tampered_frame = sealed_frame.clone();
+    tampered_frame.ciphertext[0] ^= 0xff;
+    let err = open_with_shared_secret(&host_derived, &tampered_frame).unwrap_err();
+    assert!(matches!(err, ProtocolError::DecryptionError(_)));
+
+    // 6. Tamper rejection - corrupted nonce returns DecryptionError
+    let mut tampered_nonce = sealed_frame;
+    tampered_nonce.nonce[0] ^= 0x55;
+    let err_nonce = open_with_shared_secret(&host_derived, &tampered_nonce).unwrap_err();
+    assert!(matches!(err_nonce, ProtocolError::DecryptionError(_)));
+}
+
+#[test]
+fn test_signed_sealed_frame_authenticity() {
+    let alice_ed = Ed25519Keypair::generate().expect("generate Alice Ed25519");
+    let mallory_ed = Ed25519Keypair::generate().expect("generate Mallory Ed25519");
+    let key = [0x5au8; KEY_LEN];
+
+    let plaintext = b"Authenticated P2P payload";
+    let mut sealed = seal_payload(&key, plaintext).expect("seal payload");
+
+    // Sign (nonce || ciphertext) with Alice's signing key
+    let mut to_sign = Vec::with_capacity(NONCE_LEN + sealed.ciphertext.len());
+    to_sign.extend_from_slice(&sealed.nonce);
+    to_sign.extend_from_slice(&sealed.ciphertext);
+
+    let sig = alice_ed.sign(&to_sign);
+    sealed.signature = Some(sig.to_vec());
+
+    // Alice's public key verifies successfully
+    let sig_arr: [u8; SIGNATURE_LEN] = sealed
+        .signature
+        .as_ref()
+        .unwrap()
+        .as_slice()
+        .try_into()
+        .unwrap();
+    verify_ed25519_signature(alice_ed.public_key_bytes(), &to_sign, &sig_arr)
+        .expect("Alice's signature must verify");
+
+    // Mallory's public key fails verification
+    let err_mallory =
+        verify_ed25519_signature(mallory_ed.public_key_bytes(), &to_sign, &sig_arr).unwrap_err();
+    assert_eq!(err_mallory, ProtocolError::InvalidHmacSignature);
+
+    // Tampered payload fails verification
+    let mut tampered_to_sign = to_sign.clone();
+    tampered_to_sign[0] ^= 0x01;
+    let err_tamper =
+        verify_ed25519_signature(alice_ed.public_key_bytes(), &tampered_to_sign, &sig_arr)
+            .unwrap_err();
+    assert_eq!(err_tamper, ProtocolError::InvalidHmacSignature);
+}
+
+#[test]
+fn test_backward_compatible_envelopes() {
+    // 1. Legacy InvitePayload without host_signing_key
+    let legacy_invite = r#"{
+        "do_id": "do-xyz",
+        "invite_uuid": "inv-001",
+        "token": "tok-001",
+        "sdp_offer": { "sdp": "v=0\r\n" },
+        "host_public_key": [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+    }"#;
+    let decoded_invite: InvitePayload =
+        from_json_str(legacy_invite).expect("deserialize legacy InvitePayload");
+    assert_eq!(decoded_invite.host_signing_key, None);
+    assert_eq!(decoded_invite.guest_private_key, None);
+    assert_eq!(decoded_invite.host_peer_id, None);
+    assert_eq!(decoded_invite.assigned_peer_id, None);
+
+    // 2. Legacy DropPayload without joiner_signing_key, sealed_sdp_answer, signature
+    let legacy_drop = r#"{
+        "invite_uuid": "inv-001",
+        "token": "tok-001",
+        "sdp_answer": { "sdp": "v=0\r\n" },
+        "joiner_public_key": [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+    }"#;
+    let decoded_drop: DropPayload =
+        from_json_str(legacy_drop).expect("deserialize legacy DropPayload");
+    assert_eq!(decoded_drop.joiner_signing_key, None);
+    assert_eq!(decoded_drop.sealed_sdp_answer, None);
+    assert_eq!(decoded_drop.signature, None);
+    assert_eq!(decoded_drop.joiner_peer_id, None);
+
+    // 3. Legacy SealedFrame without signature
+    let legacy_sealed = r#"{
+        "nonce": [1,2,3,4,5,6,7,8,9,10,11,12],
+        "ciphertext": [99, 100, 101]
+    }"#;
+    let decoded_sealed: SealedFrame =
+        from_json_str(legacy_sealed).expect("deserialize legacy SealedFrame");
+    assert_eq!(decoded_sealed.signature, None);
+
+    // 4. Legacy PeerJoined without signing_key and signature
+    let legacy_peer_joined = r#"{
+        "PeerJoined": {
+            "peer_id": "legacy-peer-1",
+            "public_key": [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2]
+        }
+    }"#;
+    let decoded_signal: MeshRelaySignal =
+        from_json_str(legacy_peer_joined).expect("deserialize legacy PeerJoined");
+    if let MeshRelaySignal::PeerJoined {
+        peer_id,
+        public_key,
+        signing_key,
+        signature,
+    } = decoded_signal
+    {
+        assert_eq!(peer_id, "legacy-peer-1");
+        assert_eq!(public_key, [2u8; 32]);
+        assert_eq!(signing_key, None);
+        assert_eq!(signature, None);
+    } else {
+        panic!("expected PeerJoined variant");
+    }
+}
+
+#[test]
+fn test_generate_random_bytes_16_and_uuid_v4() {
+    let bytes1 = generate_random_bytes_16().expect("generate 16 random bytes");
+    let bytes2 = generate_random_bytes_16().expect("generate second 16 random bytes");
+    assert_ne!(bytes1, [0u8; 16]);
+    assert_ne!(bytes1, bytes2);
+
+    let uuid1 = generate_uuid_v4().expect("generate uuid v4");
+    let uuid2 = generate_uuid_v4().expect("generate second uuid v4");
+    assert_ne!(uuid1, uuid2);
+    assert_eq!(uuid1.len(), 36);
+
+    // Check UUID v4 format: 8-4-4-4-12
+    let parts: Vec<&str> = uuid1.split('-').collect();
+    assert_eq!(parts.len(), 5);
+    assert_eq!(parts[0].len(), 8);
+    assert_eq!(parts[1].len(), 4);
+    assert_eq!(parts[2].len(), 4);
+    assert_eq!(parts[3].len(), 4);
+    assert_eq!(parts[4].len(), 12);
+
+    // Version 4 check: 13th character is '4' (parts[2].chars().next())
+    assert!(parts[2].starts_with('4'));
+    // Variant 1 check: 17th character is '8', '9', 'a', or 'b'
+    let variant_char = parts[3].chars().next().unwrap();
+    assert!(matches!(variant_char, '8' | '9' | 'a' | 'b'));
 }

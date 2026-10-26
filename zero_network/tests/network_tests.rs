@@ -21,6 +21,9 @@ fn sample_drop_payload(invite_uuid: &str, token: &str) -> DropPayload {
         },
         joiner_public_key: *joiner_kp.public_key_bytes(),
         joiner_peer_id: None,
+        joiner_signing_key: None,
+        sealed_sdp_answer: None,
+        signature: None,
     }
 }
 
@@ -296,6 +299,9 @@ fn test_dead_drop_preserves_joiner_peer_id_to_host_websocket() {
         },
         joiner_public_key: *joiner_kp.public_key_bytes(),
         joiner_peer_id: Some("peer-bob-assigned-123".to_string()),
+        joiner_signing_key: None,
+        sealed_sdp_answer: None,
+        signature: None,
     };
     let body_bytes = to_json_bytes(&payload).expect("serialize DropPayload");
 
