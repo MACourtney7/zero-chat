@@ -326,8 +326,8 @@
             }
             const targetEng = eng || engine;
             if (targetEng) {
-                if (!targetEng.cryptoSession && typeof WasmCryptoSession === "function") {
-                    targetEng.cryptoSession = new WasmCryptoSession();
+                if (!targetEng.cryptoSession) {
+                    targetEng.cryptoSession = cryptoSession || (typeof WasmCryptoSession === "function" ? new WasmCryptoSession() : null);
                 }
                 if (targetEng.cryptoSession) {
                     cryptoSession = targetEng.cryptoSession;
@@ -3130,6 +3130,7 @@
             try {
                 const crypto = await ensureCryptoReady();
                 engine = new ZeroWebRtcEngine(localPeerId);
+                engine.cryptoSession = crypto;
                 window.engine = engine;
                 initEngineListeners();
 
@@ -3341,6 +3342,7 @@
                 const crypto = await ensureCryptoReady();
                 localPeerId = invite.assigned_peer_id || ("peer-" + Math.random().toString(36).slice(2, 8));
                 engine = new ZeroWebRtcEngine(localPeerId);
+                engine.cryptoSession = crypto;
                 window.engine = engine;
                 initEngineListeners();
 
