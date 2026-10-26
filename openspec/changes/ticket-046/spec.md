@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-046"
 title: "Option B Burner Keybundle (Ed25519 + X25519 + ChaCha20-Poly1305), Blind Dead-Drop Signaling & WASM Crypto Bridge"
-state: "PLANNING"
+state: "IN_PROGRESS"
 created_at: "2026-10-26T11:15:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-046/main"
