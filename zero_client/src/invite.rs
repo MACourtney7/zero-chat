@@ -4,7 +4,6 @@ use base64::engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD};
 use base64::Engine;
 use std::fmt;
 use zero_protocol::crypto::hmac_sha256::{compute_invite_token, verify_invite_token};
-use zero_protocol::crypto::x25519::X25519Keypair;
 use zero_protocol::{from_json_str, to_json_string, InvitePayload, ProtocolError, SdpOffer};
 
 /// Errors encountered during invite creation, fragment packaging, unpacking, or verification.
@@ -38,25 +37,9 @@ impl From<ProtocolError> for InviteError {
 }
 
 /// Generates a valid RFC 4122 v4 UUID (`xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`)
-/// using cryptographically secure random bytes from `zero_protocol`'s `X25519Keypair::generate`.
+/// using direct CSPRNG random bytes from `zero_protocol::crypto::generate_uuid_v4`.
 pub fn generate_uuid_v4() -> Result<String, InviteError> {
-    let keypair = X25519Keypair::generate()?;
-    let mut bytes = [0u8; 16];
-    bytes.copy_from_slice(&keypair.private_key_bytes()[..16]);
-    // Set version to 4 (0100 in high 4 bits of time_hi_and_version)
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    // Set variant to RFC 4122 (10 in high 2 bits of clock_seq_hi_and_reserved)
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-
-    let hex_str = hex::encode(bytes);
-    Ok(format!(
-        "{}-{}-{}-{}-{}",
-        &hex_str[0..8],
-        &hex_str[8..12],
-        &hex_str[12..16],
-        &hex_str[16..20],
-        &hex_str[20..32],
-    ))
+    zero_protocol::crypto::generate_uuid_v4().map_err(InviteError::Protocol)
 }
 
 /// Generates an offline invite payload with an HMAC-SHA256 verification token.
@@ -87,6 +70,7 @@ pub fn create_offline_invite(
         guest_private_key,
         host_peer_id: None,
         assigned_peer_id: None,
+        host_signing_key: None,
     })
 }
 

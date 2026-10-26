@@ -215,6 +215,9 @@ pub async fn execute_joiner_autodrop(
         sdp_answer,
         joiner_public_key,
         joiner_peer_id: None,
+        joiner_signing_key: None,
+        sealed_sdp_answer: None,
+        signature: None,
     };
 
     let endpoint_url = format!("{clean_base}/drop/{}/{}", invite.do_id, invite.invite_uuid);
@@ -631,6 +634,9 @@ mod tests {
                 },
                 joiner_public_key: [3u8; 32],
                 joiner_peer_id: None,
+                joiner_signing_key: None,
+                sealed_sdp_answer: None,
+                signature: None,
             };
 
             // 1. Success on normal URL
@@ -692,6 +698,7 @@ mod tests {
                 guest_private_key: None,
                 host_peer_id: None,
                 assigned_peer_id: None,
+                host_signing_key: None,
             };
 
             let drop =
@@ -763,6 +770,9 @@ mod tests {
                 sdp_answer: answer,
                 joiner_public_key: [8u8; 32],
                 joiner_peer_id: None,
+                joiner_signing_key: None,
+                sealed_sdp_answer: None,
+                signature: None,
             };
             let drop_json = to_json_string(&drop).expect("serialize drop");
 
