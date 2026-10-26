@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.21.0"
+version: "1.22.0"
 milestone: "option-b-crypto-modernization"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-26T20:35:00Z"
+updated_at: "2026-10-26T22:15:00Z"
 ---
 ```
 
@@ -128,6 +128,10 @@ updated_at: "2026-10-26T20:35:00Z"
     - **Blind Dead-Drop Handshake**: Joiners seal WebRTC SDP answers into `sealed_sdp_answer: Option<SealedFrame>` using the Host's pre-distributed X25519 public key before POSTing `DropPayload` with dummy `sdp_answer: { sdp: "SEALED" }`. The Cloudflare Worker signaling relay is 100% blind to WebRTC SDP parameters, codecs, internal IP addresses, and ICE candidates. Hosts verify and decrypt incoming dead-drops via `cryptoSession.open_drop_sdp(...)`.
     - **Signed Multi-Peer Mesh Introductions**: `PeerJoined` introduces existing participants to newly joined peers using real X25519 and Ed25519 public keys. Receiving nodes register pairwise sessions prior to in-band relay handshakes, preventing glare or unregistered peer exceptions.
     - **End-to-End Encrypted Relay & Per-Peer Sealed Chat**: `RelaySdpOffer` and `RelaySdpAnswer` are sealed end-to-end; intermediate mesh nodes forward frames without decryption. `BroadcastChat` is uniquely sealed per connected peer with ChaCha20-Poly1305 AEAD ciphertext and 64-byte Ed25519 signatures. Corrupted MAC tags or forged signatures fail closed and are discarded without mutating the DOM.
+24. **Consolidated High-Assurance Pure-Rust Core & Lean WASM Footprint**:
+    - **Clean Separation of Concerns**: The Rust client (`zero_client`) operates strictly as a pure-Rust/WASM Cryptography, Protocol & Pure-State library without legacy DOM templates, unconfigured `web-sys` browser RTC closures, or heavy web-sys dependencies.
+    - **Optimized Binary Size**: Stripping 45+ unused DOM feature flags reduces the compiled release WASM binary (`dist/pkg/zero_client_bg.wasm`) to ~844KB (a 35% reduction from 1.3MB) for rapid cold-start loading.
+    - **Pure-State Mesh Topology**: `MeshTopology` implements per-peer role tracking (`PeerRole::{Inviter, Joiner, Mesh}`) and two-stage transient disconnect grace periods (`mark_peer_disconnected_grace`, `recover_peer`, `expire_peer_grace`), preventing premature message burning during cellular handoffs and background tab freezes while ensuring explicit `PeerLeftAndBurn` signals immediately purge without delay.
 
 ---
 
@@ -150,18 +154,16 @@ zero_chat/
 │           ├── lib.rs
 │           ├── crypto.rs           # HMAC-SHA256, X25519, ChaCha20-Poly1305
 │           └── envelope.rs         # Signaling, chat, and mesh relay envelopes
-├── zero_client/                    # Pure Rust WASM client & WebRTC engine
-│   ├── Cargo.toml
-│   ├── index.html                  # Zero-npm HTML/CSS web frontend
+├── zero_client/                    # Pure-Rust WASM Cryptography, Protocol & Pure-State library
+│   ├── Cargo.toml                  # Lean WASM configuration (zero DOM feature flags)
+│   ├── index.html                  # Zero-npm HTML/CSS web frontend & WebRTC orchestrator
 │   ├── style.css                   # Glassmorphic dark-mode styling
 │   └── src/
-│       ├── lib.rs
-│       ├── webrtc.rs               # RtcPeerConnection & RtcDataChannel engine
-│       ├── invite.rs               # Offline HMAC invite generation & fragment packing
-│       ├── bootstrap.rs            # Joiner auto-drop & edge disconnect logic
-│       ├── crypto.rs               # Per-message payload encryption & zeroization
-│       ├── mesh.rs                 # In-band gossip signaling & multi-peer mesh
-│       └── ui.rs                   # Ephemeral DOM rendering & presence badges
+│       ├── lib.rs                  # Clean public surface (WasmCryptoSession, crypto, invite, mesh, webrtc)
+│       ├── crypto.rs               # WasmCryptoSession & ChaCha20-Poly1305 AEAD sealing
+│       ├── invite.rs               # Offline HMAC invite generation & URL fragment packing
+│       ├── mesh.rs                 # Pure-Rust mesh topology, PeerRole & disconnect grace
+│       └── webrtc.rs               # Pure-Rust WebRTC state machine, SDP validator & in-memory test channels
 ├── zero_network/                   # Stateless Cloudflare Worker & Durable Object
 │   ├── Cargo.toml
 │   ├── wrangler.toml               # Cloudflare configuration & DO bindings
@@ -200,23 +202,22 @@ zero_chat/
   $$\text{Token} = \text{HMAC-SHA256}(\text{host\_secret}, \text{Invite\_UUID})$$
 - **Memory Zeroization**: Volatile memory zeroization on drop (`Zeroize`, `ZeroizeOnDrop`) ensures ephemeral keys and plaintext buffers are wiped immediately upon deallocation.
 
-### 3.2 WebRTC Engine (`zero_client::webrtc`)
-- Implements pure Rust WebAssembly abstractions over `web_sys::{RtcPeerConnection, RtcDataChannel}`.
-- Non-trickle candidate gathering: Hooks `onicecandidate` and waits until `IceGatheringState::Complete`, assembling a fully self-contained SDP offer/answer bundle with deduplicated CRLF candidates.
-- Safe lifecycle management: Rust closures bound to JavaScript callbacks (`onopen`, `onmessage`, `onerror`, `onclose`) are stored in an explicit registry and cleanly dropped on disconnection, preventing WASM memory leaks.
+### 3.2 WebRTC Engine (`zero_client::webrtc` & `zero_client/index.html`)
+- **Browser WebRTC Orchestrator (`ZeroWebRtcEngine` in `index.html`)**: Manages real browser `RTCPeerConnection` and `RTCDataChannel` lifecycles, smart non-trickle ICE candidate gathering (srflx/relay settling), STUN/TURN fallback servers, and visibility-change re-connections.
+- **Pure-Rust State Machine (`zero_client::webrtc`)**: Provides pure-Rust `PeerLifecycleState` transitions, SDP parsing/validation (`validate_sdp_offer`, `validate_sdp_answer`, `bundle_sdp_with_candidates`), and in-memory simulated channel pairs for hermetic testing.
 
 ### 3.3 Hibernating Durable Object Dead-Drop (`zero_network`)
 - **WebSocket Hibernation**: Room hosts connect to `/host/:do_id` via WebSocket. The Durable Object serializes the room state (`host_secret`) using `serialize_attachment()` and hibernates immediately, billing $0 during idle waiting.
 - **Dead-Drop Endpoint (`POST /drop/:do_id/:uuid`)**: The joining peer posts its SDP answer directly to the Cloudflare Worker edge. The handler performs constant-time HMAC verification against the bearer token.
 - **Single-Use Burning**: Upon successful delivery to the hibernating host WebSocket, the UUID is permanently burned in Durable Object storage. Any replay attempt receives an immediate `410 Gone`.
 
-### 3.4 Stateless URL Fragment Auto-Drop (`zero_client::invite`, `bootstrap`)
+### 3.4 Stateless URL Fragment Signaling (`zero_client::invite` & `index.html`)
 - Alice generates an offline room invite bundle containing: `do_id`, `host_pubkey`, `invite_uuid`, `hmac_token`, and Alice's bundled SDP offer.
 - The bundle is compressed/serialized into URL fragment `#payload=<base64>` and shared out-of-band. URL fragments are never transmitted to cloud servers in HTTP headers.
-- When Bob opens the URL, the client automatically extracts the fragment, verifies the HMAC token offline, generates an SDP answer, and dispatches the dead-drop POST request.
+- When Bob opens the URL, the browser client automatically extracts the fragment, verifies the HMAC token offline, derives the pairwise X25519 secret, seals the SDP answer into `sealed_sdp_answer`, and dispatches the dead-drop POST request.
 - **Immediate Edge Severance**: As soon as the WebRTC DataChannel fires `onopen`, Alice and Bob explicitly close all signaling sockets.
 
-### 3.5 Ephemeral Chat UI (`zero_client::ui`, `style.css`)
+### 3.5 Ephemeral Chat UI (`zero_client/index.html`, `style.css`)
 - Glassmorphic dark-mode interface with translucent panels (`backdrop-filter: blur(16px)`), pulsing connection badges, and responsive layouts.
 - Domain URL branding in top-bar header and `<title>` (`zero-chat.pages.dev`) with embedded SVG favicon matching the static brand icon (`<span class="brand-icon">0</span>`).
 - Header controls feature fixed bounding alignment with an adaptive split badge architecture:
@@ -345,6 +346,6 @@ Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
     * Test 21: Unified Connectivity Resilience - Per-Peer Roles, Grace Window & Smart ICE (REQ-045.1 - REQ-045.4)
     * Test 22: WasmCryptoSession Browser Runtime Integration & Blind Dead-Drop - Wire Blindness, Authenticated AEAD & Ed25519 Signatures, 3-Peer Mesh Formation & Host Departure Continuity, Tamper Rejection & Fail-Closed Security, and Volatile Memory Wipe (REQ-047.1 - REQ-047.5)
 
-Total: 136 Rust tests + 22 Browser tests passed, 0 failed.
+Total: 115 Rust tests + 22 Browser tests passed, 0 failed.
 ```
 
