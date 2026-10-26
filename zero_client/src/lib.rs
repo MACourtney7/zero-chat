@@ -10,6 +10,7 @@ pub mod webrtc;
 
 #[allow(unused_imports)]
 pub use bootstrap::*;
+pub use crypto::WasmCryptoSession;
 #[allow(unused_imports)]
 pub use crypto::*;
 #[allow(unused_imports)]
