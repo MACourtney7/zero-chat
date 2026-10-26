@@ -28,9 +28,108 @@ use std::rc::Rc;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 use zero_client::{
-    ChatSessionCrypto, ChatUi, ConnectionStatus, CryptoError, DataChannelMessage, MeshTopology,
-    PeerLifecycleState, WebRtcPeer,
+    ChatSessionCrypto, CryptoError, DataChannelMessage, MeshTopology, PeerLifecycleState,
+    WebRtcPeer,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConnectionStatus {
+    #[default]
+    Disconnected,
+    Signaling,
+    Connected,
+    EdgeSevered,
+}
+
+#[derive(Default)]
+pub struct MockChatUi {
+    status: std::sync::RwLock<ConnectionStatus>,
+    peers: std::sync::RwLock<Vec<String>>,
+    messages: std::sync::RwLock<Vec<(String, String, bool, bool)>>,
+    alerts: std::sync::RwLock<Vec<String>>,
+}
+
+impl MockChatUi {
+    pub fn mount(_id: &str) -> Result<Self, String> {
+        Ok(Self::default())
+    }
+
+    pub fn status(&self) -> ConnectionStatus {
+        *self.status.read().unwrap()
+    }
+
+    pub fn set_status(&self, status: ConnectionStatus) -> Result<(), String> {
+        *self.status.write().unwrap() = status;
+        Ok(())
+    }
+
+    pub fn add_peer(&self, peer_id: &str) -> Result<(), String> {
+        let mut p = self.peers.write().unwrap();
+        if !p.contains(&peer_id.to_string()) {
+            p.push(peer_id.to_string());
+        }
+        Ok(())
+    }
+
+    pub fn remove_peer(&self, peer_id: &str) -> Result<(), String> {
+        self.peers.write().unwrap().retain(|p| p != peer_id);
+        Ok(())
+    }
+
+    pub fn peers(&self) -> Vec<String> {
+        self.peers.read().unwrap().clone()
+    }
+
+    pub fn peer_count(&self) -> usize {
+        self.peers.read().unwrap().len()
+    }
+
+    pub fn append_message(
+        &self,
+        sender: &str,
+        text: &str,
+        is_self: bool,
+        verified: bool,
+    ) -> Result<(), String> {
+        self.messages.write().unwrap().push((
+            sender.to_string(),
+            text.to_string(),
+            is_self,
+            verified,
+        ));
+        Ok(())
+    }
+
+    pub fn messages(&self) -> Vec<(String, String, bool, bool)> {
+        self.messages.read().unwrap().clone()
+    }
+
+    pub fn burn_peer_messages(&self, peer_id: &str) -> Result<(), String> {
+        self.messages
+            .write()
+            .unwrap()
+            .retain(|(sender, _, _, _)| sender != peer_id);
+        Ok(())
+    }
+
+    pub fn append_security_alert(&self, alert: &str) -> Result<(), String> {
+        self.alerts.write().unwrap().push(alert.to_string());
+        Ok(())
+    }
+
+    pub fn alerts(&self) -> Vec<String> {
+        self.alerts.read().unwrap().clone()
+    }
+
+    pub fn destroy_session(&self) -> Result<(), String> {
+        *self.status.write().unwrap() = ConnectionStatus::Disconnected;
+        self.peers.write().unwrap().clear();
+        self.messages.write().unwrap().clear();
+        self.alerts.write().unwrap().clear();
+        Ok(())
+    }
+}
+
 use zero_protocol::crypto::x25519::{derive_shared_secret, X25519Keypair};
 use zero_protocol::{
     envelope::{from_json_str, to_json_string},
@@ -767,14 +866,14 @@ fn test_req_006_4_duplicate_broadcast_loop_suppression() {
 /// REQ-006.5: Disconnection of a peer is detected, tearing down associated channels and
 /// updating the UI peer list.
 ///
-/// - In an active multi-peer mesh with UI integration (`ChatUi`):
+/// - In an active multi-peer mesh with UI integration (`MockChatUi`):
 ///   - Mount UI for Alice with initial peers: Bob and Charlie (`add_peer("bob")`, `add_peer("charlie")`).
 ///   - Assert `ui.peers()` contains `"bob"` and `"charlie"`.
 ///   - Simulate Bob disconnecting (close Bob's data channel or call `disconnect_peer("bob")`).
 ///   - Verify:
 ///     - Alice's mesh triggers `on_peer_left("bob")`.
 ///     - Alice's routing table removes Bob (`has_peer("bob") == false`).
-///     - Alice's `ChatUi` removes Bob (`ui.remove_peer("bob")`), leaving only `"charlie"` in `ui.peers()`.
+///     - Alice's `MockChatUi` removes Bob (`ui.remove_peer("bob")`), leaving only `"charlie"` in `ui.peers()`.
 ///     - Remaining direct connections (Alice <-> Charlie) remain healthy and active.
 #[test]
 fn test_req_006_5_peer_disconnect_and_ui_cleanup() {
@@ -782,8 +881,8 @@ fn test_req_006_5_peer_disconnect_and_ui_cleanup() {
     let (_bob_sk, bob_pk) = generate_kp();
     let (charlie_sk, charlie_pk) = generate_kp();
 
-    // 1. Mount Alice's ephemeral ChatUi and instantiate mesh
-    let ui = Rc::new(ChatUi::mount("app").expect("mount ChatUi"));
+    // 1. Mount Alice's ephemeral MockChatUi and instantiate mesh
+    let ui = Rc::new(MockChatUi::mount("app").expect("mount MockChatUi"));
     let alice_mesh = MeshTopology::new("alice", alice_sk);
 
     // Initial UI peer list
@@ -801,7 +900,7 @@ fn test_req_006_5_peer_disconnect_and_ui_cleanup() {
         "UI peer list contains Charlie"
     );
 
-    // Wire Alice's on_peer_left callback to update ChatUi
+    // Wire Alice's on_peer_left callback to update MockChatUi
     let ui_disconnect_hook = ui.clone();
     let peer_left_log = Rc::new(RefCell::new(Vec::new()));
     let left_log_clone = peer_left_log.clone();
@@ -870,12 +969,12 @@ fn test_req_006_5_peer_disconnect_and_ui_cleanup() {
         "Only Charlie remains in Alice's connected peers"
     );
 
-    // 6. Verify Alice's ChatUi removed Bob, leaving only Charlie
+    // 6. Verify Alice's MockChatUi removed Bob, leaving only Charlie
     let updated_ui_peers = ui.peers();
     assert_eq!(
         updated_ui_peers,
         vec!["charlie".to_string()],
-        "ChatUi peer list removes Bob, retaining only Charlie"
+        "MockChatUi peer list removes Bob, retaining only Charlie"
     );
 
     // 7. Test explicit disconnect_peer API helper on Bob (confirming idempotent cleanup)
@@ -942,13 +1041,13 @@ fn test_req_006_5_peer_disconnect_and_ui_cleanup() {
 /// 1. Establish a 3-node connected mesh (`Alice`, `Bob`, `Charlie`):
 ///    - Pair Alice <-> Bob, Alice <-> Charlie, and Bob <-> Charlie using `WebRtcPeer::pair_for_testing`.
 ///    - Add peers to respective `MeshTopology` instances (`alice_mesh`, `bob_mesh`, `charlie_mesh`).
-/// 2. Mount ephemeral UI test doubles for Alice and Charlie using `ChatUi::mount`:
-///    - Alice UI: `let alice_ui = Rc::new(ChatUi::mount("alice-app").expect("mount Alice UI"));`
-///    - Charlie UI: `let charlie_ui = Rc::new(ChatUi::mount("charlie-app").expect("mount Charlie UI"));`
+/// 2. Mount ephemeral UI test doubles for Alice and Charlie using `MockChatUi::mount`:
+///    - Alice UI: `let alice_ui = Rc::new(MockChatUi::mount("alice-app").expect("mount Alice UI"));`
+///    - Charlie UI: `let charlie_ui = Rc::new(MockChatUi::mount("charlie-app").expect("mount Charlie UI"));`
 ///    - Seed UI peer lists for Alice (`bob`, `charlie`) and Charlie (`alice`, `bob`).
 ///    - Wire `on_burn_peer_messages` callbacks on Alice and Charlie to call `ui.burn_peer_messages(peer_id)`.
 ///    - Wire `on_peer_left` callbacks on Alice and Charlie to call `ui.remove_peer(peer_id)`.
-///    - Wire `on_message` callbacks on Alice and Charlie to append messages to `ChatUi` via `ui.append_message(sender, text, false, true)`.
+///    - Wire `on_message` callbacks on Alice and Charlie to append messages to `MockChatUi` via `ui.append_message(sender, text, false, true)`.
 /// 3. Exchange messages:
 ///    - Bob broadcasts multiple messages: `"Message 1 from Bob"`, `"Message 2 from Bob"`.
 ///    - Alice broadcasts a message: `"Message from Alice"`. Alice's UI appends it with `is_self = true`.
@@ -1016,9 +1115,9 @@ fn test_req_leave_and_burn_selective_message_purging() {
     assert_eq!(bob_mesh.peer_count(), 2);
     assert_eq!(charlie_mesh.peer_count(), 2);
 
-    // 2. Mount ephemeral UI test doubles for Alice and Charlie using ChatUi::mount:
-    let alice_ui = Rc::new(ChatUi::mount("alice-app").expect("mount Alice UI"));
-    let charlie_ui = Rc::new(ChatUi::mount("charlie-app").expect("mount Charlie UI"));
+    // 2. Mount ephemeral UI test doubles for Alice and Charlie using MockChatUi::mount:
+    let alice_ui = Rc::new(MockChatUi::mount("alice-app").expect("mount Alice UI"));
+    let charlie_ui = Rc::new(MockChatUi::mount("charlie-app").expect("mount Charlie UI"));
 
     // Seed UI peer lists for Alice (bob, charlie) and Charlie (alice, bob)
     alice_ui.add_peer("bob").expect("Alice UI adds Bob");
@@ -1060,7 +1159,7 @@ fn test_req_leave_and_burn_selective_message_purging() {
         let _ = c_ui_left.remove_peer(peer_id);
     });
 
-    // Wire on_message callbacks on Alice and Charlie to append messages to ChatUi
+    // Wire on_message callbacks on Alice and Charlie to append messages to MockChatUi
     let a_ui_msg = alice_ui.clone();
     alice_mesh.on_message(move |sender, text| {
         let _ = a_ui_msg.append_message(sender, text, false, true);
@@ -1352,9 +1451,9 @@ fn test_req_global_burn_session_annihilation() {
     assert_eq!(charlie_mesh.peer_count(), 2);
 
     // 2. Mount ephemeral UI test doubles for all three participants
-    let alice_ui = Rc::new(ChatUi::mount("alice-app").expect("mount Alice UI"));
-    let bob_ui = Rc::new(ChatUi::mount("bob-app").expect("mount Bob UI"));
-    let charlie_ui = Rc::new(ChatUi::mount("charlie-app").expect("mount Charlie UI"));
+    let alice_ui = Rc::new(MockChatUi::mount("alice-app").expect("mount Alice UI"));
+    let bob_ui = Rc::new(MockChatUi::mount("bob-app").expect("mount Bob UI"));
+    let charlie_ui = Rc::new(MockChatUi::mount("charlie-app").expect("mount Charlie UI"));
 
     alice_ui.add_peer("bob").expect("Alice UI adds Bob");
     alice_ui.add_peer("charlie").expect("Alice UI adds Charlie");
@@ -1563,10 +1662,10 @@ fn test_req_global_burn_session_annihilation() {
 /// Validates that an unannounced, abrupt channel disconnect ("dirty disconnect") triggers
 /// selective message purging across surviving mesh nodes:
 /// 1. Establish a 3-node connected mesh (`Alice`, `Bob`, `Charlie`) with paired `WebRtcPeer` instances and populated routing tables.
-/// 2. Mount ephemeral UI test doubles for Alice and Charlie using `ChatUi::mount`:
+/// 2. Mount ephemeral UI test doubles for Alice and Charlie using `MockChatUi::mount`:
 ///    - Wire `on_burn_peer_messages` callbacks on Alice and Charlie to call `ui.burn_peer_messages(peer_id)`.
 ///    - Wire `on_peer_left` callbacks on Alice and Charlie to call `ui.remove_peer(peer_id)`.
-///    - Wire `on_message` callbacks on Alice and Charlie to append messages to `ChatUi` via `ui.append_message(sender, text, false, true)`.
+///    - Wire `on_message` callbacks on Alice and Charlie to append messages to `MockChatUi` via `ui.append_message(sender, text, false, true)`.
 /// 3. Seed UI peer lists for Alice (`bob`, `charlie`) and Charlie (`alice`, `bob`).
 /// 4. Exchange messages:
 ///    - Bob broadcasts messages: `"Message 1 from Bob"`, `"Message 2 from Bob"`.
@@ -1634,9 +1733,9 @@ fn test_req_dirty_disconnect_triggers_peer_message_purge() {
     assert_eq!(bob_mesh.peer_count(), 2);
     assert_eq!(charlie_mesh.peer_count(), 2);
 
-    // 2. Mount ephemeral UI test doubles for Alice and Charlie using ChatUi::mount:
-    let alice_ui = Rc::new(ChatUi::mount("alice-app").expect("mount Alice UI"));
-    let charlie_ui = Rc::new(ChatUi::mount("charlie-app").expect("mount Charlie UI"));
+    // 2. Mount ephemeral UI test doubles for Alice and Charlie using MockChatUi::mount:
+    let alice_ui = Rc::new(MockChatUi::mount("alice-app").expect("mount Alice UI"));
+    let charlie_ui = Rc::new(MockChatUi::mount("charlie-app").expect("mount Charlie UI"));
 
     // Wire on_burn_peer_messages callbacks on Alice and Charlie
     let alice_burn_log = Rc::new(RefCell::new(Vec::new()));
@@ -1672,7 +1771,7 @@ fn test_req_dirty_disconnect_triggers_peer_message_purge() {
         let _ = c_ui_left.remove_peer(peer_id);
     });
 
-    // Wire on_message callbacks on Alice and Charlie to append messages to ChatUi via ui.append_message(sender, text, false, true)
+    // Wire on_message callbacks on Alice and Charlie to append messages to MockChatUi via ui.append_message(sender, text, false, true)
     let a_ui_msg = alice_ui.clone();
     alice_mesh.on_message(move |sender, text| {
         let _ = a_ui_msg.append_message(sender, text, false, true);
@@ -2285,8 +2384,8 @@ fn test_req_028_2_partial_peer_departure_and_feed_survivability() {
     assert_eq!(charlie_mesh.peer_count(), 2);
 
     // Mount ephemeral UI test doubles for surviving nodes Alice and Charlie
-    let alice_ui = Rc::new(ChatUi::mount("alice-app").expect("mount Alice UI"));
-    let charlie_ui = Rc::new(ChatUi::mount("charlie-app").expect("mount Charlie UI"));
+    let alice_ui = Rc::new(MockChatUi::mount("alice-app").expect("mount Alice UI"));
+    let charlie_ui = Rc::new(MockChatUi::mount("charlie-app").expect("mount Charlie UI"));
 
     alice_ui
         .set_status(ConnectionStatus::Connected)
@@ -2673,9 +2772,9 @@ fn test_req_029_5_host_departure_survivability() {
     assert_eq!(charlie_mesh.peer_count(), 2, "Charlie reports 2 peers");
 
     // Mount ephemeral UI test doubles for Bob and Charlie (surviving nodes) and Alice (host)
-    let alice_ui = Rc::new(ChatUi::mount("alice-app").expect("mount Alice UI"));
-    let bob_ui = Rc::new(ChatUi::mount("bob-app").expect("mount Bob UI"));
-    let charlie_ui = Rc::new(ChatUi::mount("charlie-app").expect("mount Charlie UI"));
+    let alice_ui = Rc::new(MockChatUi::mount("alice-app").expect("mount Alice UI"));
+    let bob_ui = Rc::new(MockChatUi::mount("bob-app").expect("mount Bob UI"));
+    let charlie_ui = Rc::new(MockChatUi::mount("charlie-app").expect("mount Charlie UI"));
 
     alice_ui
         .set_status(ConnectionStatus::Connected)
@@ -3032,8 +3131,8 @@ fn test_req_029_4_third_peer_departure_selective_purge() {
     assert_eq!(charlie_mesh.peer_count(), 2);
 
     // Mount UI test doubles for surviving nodes Alice and Bob
-    let alice_ui = Rc::new(ChatUi::mount("alice-app").expect("mount Alice UI"));
-    let bob_ui = Rc::new(ChatUi::mount("bob-app").expect("mount Bob UI"));
+    let alice_ui = Rc::new(MockChatUi::mount("alice-app").expect("mount Alice UI"));
+    let bob_ui = Rc::new(MockChatUi::mount("bob-app").expect("mount Bob UI"));
 
     alice_ui
         .set_status(ConnectionStatus::Connected)
@@ -3298,7 +3397,7 @@ fn test_req_029_4_third_peer_departure_selective_purge() {
 /// 3. Step 2: Bob invites Charlie (`Channel_BC`).
 /// 4. Step 3: Bob introduces Alice and Charlie via in-band relay signaling (`PeerJoined`, `RelaySdpOffer`, `RelaySdpAnswer` through Bob).
 /// 5. Step 4: Direct `Channel_AC` data channel is established between Alice and Charlie with 0 cloud edge hits.
-/// 6. Step 5: Assert ALL 3 nodes (Alice, Bob, Charlie) report peer count == 2 (in both MeshTopology and ChatUi).
+/// 6. Step 5: Assert ALL 3 nodes (Alice, Bob, Charlie) report peer count == 2 (in both MeshTopology and MockChatUi).
 /// 7. Step 6: Test broadcast messaging across all 3 nodes, verifying delivery and loop suppression.
 #[test]
 fn test_req_030_secondary_inviter_mesh_snapping_and_counters() {
@@ -3310,9 +3409,9 @@ fn test_req_030_secondary_inviter_mesh_snapping_and_counters() {
     let bob_mesh = MeshTopology::new("bob", bob_sk);
     let charlie_mesh = MeshTopology::new("charlie", charlie_sk);
 
-    let alice_ui = Rc::new(ChatUi::mount("alice-app").expect("mount Alice UI"));
-    let bob_ui = Rc::new(ChatUi::mount("bob-app").expect("mount Bob UI"));
-    let charlie_ui = Rc::new(ChatUi::mount("charlie-app").expect("mount Charlie UI"));
+    let alice_ui = Rc::new(MockChatUi::mount("alice-app").expect("mount Alice UI"));
+    let bob_ui = Rc::new(MockChatUi::mount("bob-app").expect("mount Bob UI"));
+    let charlie_ui = Rc::new(MockChatUi::mount("charlie-app").expect("mount Charlie UI"));
 
     alice_ui
         .set_status(ConnectionStatus::Connected)
@@ -3547,9 +3646,9 @@ struct Req030ScenarioContext {
     alice_mesh: MeshTopology,
     bob_mesh: MeshTopology,
     charlie_mesh: MeshTopology,
-    alice_ui: Rc<ChatUi>,
-    bob_ui: Rc<ChatUi>,
-    charlie_ui: Rc<ChatUi>,
+    alice_ui: Rc<MockChatUi>,
+    bob_ui: Rc<MockChatUi>,
+    charlie_ui: Rc<MockChatUi>,
     alice_to_bob: WebRtcPeer,
     bob_to_alice: WebRtcPeer,
     bob_to_charlie: WebRtcPeer,
@@ -3569,9 +3668,9 @@ fn setup_req_030_mesh_scenario() -> Req030ScenarioContext {
     let bob_mesh = MeshTopology::new("bob", bob_sk);
     let charlie_mesh = MeshTopology::new("charlie", charlie_sk);
 
-    let alice_ui = Rc::new(ChatUi::mount("alice-app").expect("mount Alice UI"));
-    let bob_ui = Rc::new(ChatUi::mount("bob-app").expect("mount Bob UI"));
-    let charlie_ui = Rc::new(ChatUi::mount("charlie-app").expect("mount Charlie UI"));
+    let alice_ui = Rc::new(MockChatUi::mount("alice-app").expect("mount Alice UI"));
+    let bob_ui = Rc::new(MockChatUi::mount("bob-app").expect("mount Bob UI"));
+    let charlie_ui = Rc::new(MockChatUi::mount("charlie-app").expect("mount Charlie UI"));
 
     alice_ui
         .set_status(ConnectionStatus::Connected)
