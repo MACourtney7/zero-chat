@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-048"
 title: "Consolidate & Prune Legacy Rust Client Scaffolding"
-state: "PLANNING"
+state: "IN_PROGRESS"
 created_at: "2026-10-26T21:45:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-048/main"
