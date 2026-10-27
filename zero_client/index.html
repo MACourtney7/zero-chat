@@ -199,7 +199,11 @@
 
     <script type="module">
         const WORKER_ORIGIN = "https://network.zero-chat.workers.dev";
+        const WORKER_HTTP_ORIGIN = (typeof window !== "undefined" && window.WORKER_HTTP_ORIGIN) ? window.WORKER_HTTP_ORIGIN : WORKER_ORIGIN;
         const WORKER_WS_ORIGIN = "wss://network.zero-chat.workers.dev";
+        if (typeof window !== "undefined" && !window.WORKER_HTTP_ORIGIN) {
+            window.WORKER_HTTP_ORIGIN = WORKER_HTTP_ORIGIN;
+        }
 
         const CREATE_CHAT_ICON_SVG = `
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -341,6 +345,68 @@
         }
 
         const peerPublicKeys = new Map(); // peerId -> { x25519: number[], ed25519: number[] | null }
+
+        // Dynamic ICE / TURN Server Provisioning & Caching (ticket-049)
+        let cachedIceServers = null;
+        let cachedIceTimestamp = 0;
+        const ICE_CACHE_TTL_MS = 15 * 60 * 1000;
+
+        async function ensureIceServersReady() {
+            const now = Date.now();
+            if (cachedIceServers && (now - cachedIceTimestamp) < ICE_CACHE_TTL_MS) {
+                return cachedIceServers;
+            }
+
+            const defaultStun = [
+                { urls: "stun:stun.cloudflare.com:3478" },
+                { urls: "stun:stun.l.google.com:19302" },
+                { urls: "stun:stun1.l.google.com:19302" },
+                { urls: "stun:stun2.l.google.com:19302" },
+                { urls: "stun:stun.l.google.com:3478" }
+            ];
+            const customTurn = (typeof window !== "undefined" && Array.isArray(window.ZERO_TURN_SERVERS))
+                ? window.ZERO_TURN_SERVERS
+                : [];
+
+            let timer = null;
+            try {
+                const ctrl = (typeof AbortController !== "undefined") ? new AbortController() : null;
+                if (ctrl) timer = setTimeout(() => ctrl.abort(), 2500);
+                const origin = (typeof window !== "undefined" && window.WORKER_HTTP_ORIGIN)
+                    ? window.WORKER_HTTP_ORIGIN
+                    : (typeof WORKER_HTTP_ORIGIN !== "undefined" ? WORKER_HTTP_ORIGIN : WORKER_ORIGIN);
+                const res = await fetch(`${origin}/ice`, ctrl ? { signal: ctrl.signal } : {});
+                if (timer) {
+                    clearTimeout(timer);
+                    timer = null;
+                }
+
+                if (res && res.ok) {
+                    const data = await res.json();
+                    if (data && Array.isArray(data.iceServers) && data.iceServers.length > 0) {
+                        cachedIceServers = [...defaultStun, ...data.iceServers, ...customTurn];
+                        cachedIceTimestamp = now;
+                        const activeEng = (typeof engine !== "undefined" && engine) ? engine : (typeof window !== "undefined" && window.engine ? window.engine : null);
+                        if (activeEng && typeof activeEng.setIceServers === "function") {
+                            activeEng.setIceServers(cachedIceServers);
+                        }
+                        return cachedIceServers;
+                    }
+                }
+            } catch (_) {
+                // Graceful fallback to STUN + customTurn when offline or in tests
+            } finally {
+                if (timer) clearTimeout(timer);
+            }
+
+            cachedIceServers = [...defaultStun, ...customTurn];
+            cachedIceTimestamp = now;
+            const activeEng = (typeof engine !== "undefined" && engine) ? engine : (typeof window !== "undefined" && window.engine ? window.engine : null);
+            if (activeEng && typeof activeEng.setIceServers === "function") {
+                activeEng.setIceServers(cachedIceServers);
+            }
+            return cachedIceServers;
+        }
 
         if (typeof document !== "undefined" && !document.documentElement) {
             document.documentElement = {
@@ -587,8 +653,17 @@
                 if (typeof window !== "undefined" && Array.isArray(window.ZERO_TURN_SERVERS)) {
                     extraServers = window.ZERO_TURN_SERVERS;
                 }
+                const baseServers = (Array.isArray(cachedIceServers) && cachedIceServers.length >= 5)
+                    ? cachedIceServers
+                    : defaultIceServers;
+                const merged = [...baseServers];
+                for (const ex of extraServers) {
+                    if (!merged.some(s => JSON.stringify(s.urls) === JSON.stringify(ex.urls))) {
+                        merged.push(ex);
+                    }
+                }
                 this.rtcConfig = {
-                    iceServers: [...defaultIceServers, ...extraServers]
+                    iceServers: merged
                 };
                 this.localPeerId = peerId || localPeerId;
                 this.cryptoSession = (typeof WasmCryptoSession === "function") ? new WasmCryptoSession() : null;
@@ -599,6 +674,12 @@
                 this.onStateChangeCb = null; // (state, peerId) => void
                 this.onPeerStateChangeCb = null; // (peerId, state) => void
                 this.onMessageCb = null; // (data, peerId) => void
+            }
+
+            setIceServers(iceServers) {
+                if (Array.isArray(iceServers)) {
+                    this.rtcConfig.iceServers = iceServers;
+                }
             }
 
             get openPeerCount() {
@@ -729,7 +810,12 @@
                 return new Promise((resolve) => {
                     let maxTimeoutTimer = null;
                     let settleTimer = null;
-                    let hasPublicCandidate = false;
+                    let hasRelayCandidate = false;
+
+                    const hasTurnConfigured = (this.rtcConfig && this.rtcConfig.iceServers || []).some((s) => {
+                        const urls = Array.isArray(s.urls) ? s.urls : [s.urls || ""];
+                        return urls.some((u) => typeof u === "string" && (u.startsWith("turn:") || u.startsWith("turns:")));
+                    });
 
                     const cleanup = () => {
                         if (maxTimeoutTimer) clearTimeout(maxTimeoutTimer);
@@ -753,10 +839,21 @@
                             return;
                         }
                         const candStr = ev.candidate.candidate || "";
-                        if (candStr.includes("typ srflx") || candStr.includes("typ relay")) {
-                            hasPublicCandidate = true;
-                            if (!settleTimer) {
-                                settleTimer = setTimeout(finish, 400); // 400ms settle timer
+                        if (!hasTurnConfigured) {
+                            if (candStr.includes("typ srflx") || candStr.includes("typ relay")) {
+                                if (!settleTimer) {
+                                    settleTimer = setTimeout(finish, 400); // 400ms settle timer
+                                }
+                            }
+                        } else {
+                            if (candStr.includes("typ relay")) {
+                                hasRelayCandidate = true;
+                                if (settleTimer) clearTimeout(settleTimer);
+                                settleTimer = setTimeout(finish, 350); // fast 350ms settle timer
+                            } else if (candStr.includes("typ srflx") && !hasRelayCandidate) {
+                                if (!settleTimer) {
+                                    settleTimer = setTimeout(finish, 1200); // 1,200ms fallback settle timer
+                                }
                             }
                         }
                     };
@@ -1102,6 +1199,7 @@
 
         async function initiateRelayHandshake(relayPeerId, targetPeerId) {
             if (!engine) return;
+            await ensureIceServersReady();
             if (!peerRoles.has(targetPeerId)) {
                 peerRoles.set(targetPeerId, "mesh");
             }
@@ -1905,6 +2003,7 @@
             }
 
             try {
+                await ensureIceServersReady();
                 const crypto = await ensureCryptoReady();
                 const assignedPeerId = "peer-" + Math.random().toString(36).slice(2, 8);
                 pendingInvitePeerId = assignedPeerId;
@@ -2047,11 +2146,13 @@
 
         async function handleInputAddPeerClick() {
             if (!engine || isBurned) return;
+            await ensureIceServersReady();
             await handleInRoomInvite(inputAddPeerBtn);
         }
 
         async function handleHeaderAddPeerClick() {
             if (!engine || isBurned) return;
+            await ensureIceServersReady();
             await handleInRoomInvite(inputAddPeerBtn);
         }
 
@@ -3128,6 +3229,7 @@
             updateStatus("signaling", "Gathering ICE & creating offer...");
 
             try {
+                await ensureIceServersReady();
                 const crypto = await ensureCryptoReady();
                 engine = new ZeroWebRtcEngine(localPeerId);
                 engine.cryptoSession = crypto;
@@ -3339,6 +3441,7 @@
                 const jsonStr = base64UrlToUtf8(rawPayload);
                 const invite = JSON.parse(jsonStr);
 
+                await ensureIceServersReady();
                 const crypto = await ensureCryptoReady();
                 localPeerId = invite.assigned_peer_id || ("peer-" + Math.random().toString(36).slice(2, 8));
                 engine = new ZeroWebRtcEngine(localPeerId);
@@ -3808,6 +3911,13 @@
         window.setHasAnnouncedInitialSelfJoin = (v) => { hasAnnouncedInitialSelfJoin = v; };
         window.pendingDisconnectTimers = pendingDisconnectTimers;
         window.DISCONNECT_GRACE_MS = DISCONNECT_GRACE_MS;
+        window.ensureIceServersReady = ensureIceServersReady;
+        window.resetIceServersCache = () => {
+            cachedIceServers = null;
+            cachedIceTimestamp = 0;
+        };
+        window.getCachedIceServers = () => cachedIceServers;
+        window.getCachedIceTimestamp = () => cachedIceTimestamp;
         window.ensureCryptoReady = ensureCryptoReady;
         window.getCryptoSession = () => cryptoSession;
         window.setCryptoSession = (cs) => { cryptoSession = cs; };
