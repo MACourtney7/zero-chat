@@ -10,16 +10,16 @@ pub use durable_object::{
     DEAD_DROP_BINDING, HOST_WEBSOCKET_TAG, MAX_BURNED_UUIDS,
 };
 pub use handlers::{
-    extract_bearer_token, parse_host_secret, process_dead_drop, process_host_upgrade, HttpResponse,
-    NetworkError, MAX_DROP_BODY_BYTES,
+    build_default_stun_response, cors_preflight_response, default_ice_servers_json,
+    extract_bearer_token, get_env_var, handle_ice_config, parse_custom_ice_servers,
+    parse_host_secret, process_dead_drop, process_host_upgrade, process_ice_servers, with_cors,
+    HttpResponse, NetworkError, MAX_DROP_BODY_BYTES,
 };
 
 use worker::{event, Context, Env, Request, Response, Result, Router};
 
-use crate::handlers::{cors_preflight_response, with_cors};
-
 /// Cloudflare Worker fetch entrypoint routing `/host/:do_id` and `/drop/:do_id/:invite_uuid`
-/// to the named `DeadDropRoom` Durable Object instance.
+/// to the named `DeadDropRoom` Durable Object instance, and `/ice` for TURN/STUN negotiation.
 #[event(fetch)]
 pub async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     let router = Router::new();
@@ -29,6 +29,7 @@ pub async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .options("/drop/:do_id/:invite_uuid", |_, _| {
             cors_preflight_response()
         })
+        .options("/ice", |_, _| cors_preflight_response())
         .get_async("/host/:do_id", |req, ctx| async move {
             let do_id = match ctx.param("do_id") {
                 Some(id) if !id.trim().is_empty() => id,
@@ -47,6 +48,12 @@ pub async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             let stub = namespace.id_from_name(do_id)?.get_stub()?;
             let resp = stub.fetch_with_request(req).await?;
             with_cors(resp)
+        })
+        .get_async("/ice", |_req, ctx| async move {
+            handle_ice_config(&ctx.env).await
+        })
+        .post_async("/ice", |_req, ctx| async move {
+            handle_ice_config(&ctx.env).await
         })
         .get("/health", |_, _| with_cors(Response::ok("ok")?))
         .run(req, env)
