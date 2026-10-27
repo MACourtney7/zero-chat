@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.23.0"
+version: "1.23.1"
 milestone: "cloudflare-turn-cgnat-relay"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-27T22:15:00Z"
+updated_at: "2026-10-27T22:55:00Z"
 ---
 ```
 
@@ -134,8 +134,8 @@ updated_at: "2026-10-27T22:15:00Z"
     - **Pure-State Mesh Topology**: `MeshTopology` implements per-peer role tracking (`PeerRole::{Inviter, Joiner, Mesh}`) and two-stage transient disconnect grace periods (`mark_peer_disconnected_grace`, `recover_peer`, `expire_peer_grace`), preventing premature message burning during cellular handoffs and background tab freezes while ensuring explicit `PeerLeftAndBurn` signals immediately purge without delay.
 25. **Ephemeral Cloudflare Realtime TURN Relay, 4G/5G CGNAT Traversal & Non-Trickle Relay Bundling**:
     - **Three-Tier ICE Endpoint (`/ice`)**:
-      - **Mode 1 (Cloudflare Realtime TURN API)**: Worker queries `CF_TURN_KEY_ID` and `CF_TURN_API_TOKEN` from secrets. If present, it mints 1-hour credentials (`ttl: 3600`) via `POST https://rtc.live.cloudflare.com/v1/turn/keys/${CF_TURN_KEY_ID}/credentials/generate` and serves `{ "iceServers": [...] }` directly.
-      - **Mode 2 (Static / Custom JSON Override)**: Evaluates `TURN_SERVERS_JSON` in `env` via `parse_custom_ice_servers`.
+      - **Mode 1 (Cloudflare Realtime TURN API)**: Worker queries `CF_TURN_KEY_ID` and `CF_TURN_API_TOKEN` from secrets. If present, it mints credentials via `POST https://rtc.live.cloudflare.com/v1/turn/keys/${CF_TURN_KEY_ID}/credentials/generate-ice-servers` (accepting any 2xx response, including `201 Created`) and normalizes `{ "iceServers": [...] }` directly.
+      - **Mode 2 (Static / Custom JSON Override)**: Evaluates `TURN_SERVERS_JSON` in `env` via `parse_custom_ice_servers` (supporting `{ "iceServers": [...] }`, arrays, and flat credential objects with `urls`).
       - **Mode 3 (Graceful Default STUN Fallback)**: Returns default STUN servers (`stun.cloudflare.com:3478`, `stun.l.google.com:19302`) with `200 OK` on missing secrets or upstream API errors.
       - CORS headers (`Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: GET, POST, OPTIONS`, `Access-Control-Allow-Headers: Content-Type`) and `Content-Type: application/json` are strictly preserved on all responses.
     - **Operator Secret Activation**:

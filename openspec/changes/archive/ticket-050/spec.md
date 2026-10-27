@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-050"
 title: "Cloudflare TURN API 201 Created and Generate ICE Servers Path Resolution"
-state: "IN_PROGRESS"
+state: "COMPLETED"
 created_at: "2026-10-27T22:48:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-050/main"
