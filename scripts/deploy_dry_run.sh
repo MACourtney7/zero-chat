@@ -64,6 +64,19 @@ else
     cp "${CLIENT_WASM}" dist/pkg/zero_client_bg.wasm
 fi
 
+WASM_FILE="dist/pkg/zero_client_bg.wasm"
+if [ -f "$WASM_FILE" ]; then
+    BEFORE_BYTES=$(wc -c < "$WASM_FILE" | tr -d ' ')
+    echo "[deploy_dry_run] WASM size before wasm-opt: ${BEFORE_BYTES} bytes"
+    if command -v wasm-opt >/dev/null 2>&1; then
+        wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int "$WASM_FILE" -o "$WASM_FILE"
+        AFTER_BYTES=$(wc -c < "$WASM_FILE" | tr -d ' ')
+        echo "[deploy_dry_run] WASM size after wasm-opt -Oz: ${AFTER_BYTES} bytes"
+    else
+        echo "[deploy_dry_run] wasm-opt not found on PATH; skipping Binaryen post-pass (Cargo LTO/strip active)"
+    fi
+fi
+
 echo "--> Copying web assets (index.html, style.css)..."
 cp zero_client/index.html dist/
 cp zero_client/style.css dist/
