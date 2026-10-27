@@ -2372,6 +2372,9 @@ async function runTests() {
             "PeerLeftAndBurn must append 'Peer left chat'");
 
         // --- Part C: REQ-045.3 Smart Non-Trickle ICE Gathering & Multi-Port STUN/TURN Config ---
+        if (typeof window.resetIceServersCache === "function") {
+            window.resetIceServersCache();
+        }
         // 1. Redundant STUN server configuration
         const engTest = new ZeroWebRtcEngine("peer-ice-test");
         const servers = engTest.rtcConfig.iceServers;
@@ -2970,6 +2973,454 @@ async function runTests() {
         print("  PASS: Scenario E: Burn All & Teardown Verification verified.");
 
         print("  PASS: WasmCryptoSession, blind dead-drop SDP, authenticated 3-peer mesh & tamper rejection verified cleanly.");
+    }
+
+    // =========================================================================
+    // TEST 23: Ephemeral Cloudflare TURN Provisioning, 15m Caching & Smart Relay Settle (ticket-049)
+    // =========================================================================
+    {
+        print("\n--- Test 23: REQ-049.1 - REQ-049.4: TURN / ICE Provisioning, Caching & Relay Settle ---");
+
+        // ---------------------------------------------------------------------
+        // Scenario A (/ice Provisioning & Engine Population)
+        // ---------------------------------------------------------------------
+        {
+            print("  [Test 23.A] Dynamic /ice provisioning & engine rtcConfig update...");
+            resetToHome();
+            if (typeof resetIceServersCache === "function") {
+                resetIceServersCache();
+            }
+            mockIceFetchCount = 0;
+            mockIceResponse = null;
+
+            // 1. Initial state prior to ensureIceServersReady
+            assert(mockIceFetchCount === 0, "mockIceFetchCount must be 0 initially");
+
+            // 2. Call ensureIceServersReady() and verify network fetch
+            const provisionedServers = await ensureIceServersReady();
+            assert(mockIceFetchCount === 1, `Must fetch /ice from network exactly once, got ${mockIceFetchCount}`);
+            assert(Array.isArray(provisionedServers) && provisionedServers.length > 0,
+                "Provisioned iceServers must be non-empty array");
+
+            // Verify contains default STUN servers + provisioned TURN servers
+            const hasStun = provisionedServers.some(s => {
+                const urls = Array.isArray(s.urls) ? s.urls : [s.urls || ""];
+                return urls.some(u => u.includes("stun:"));
+            });
+            assert(hasStun, "iceServers must include STUN fallback servers");
+
+            const turnServer = provisionedServers.find(s => {
+                const urls = Array.isArray(s.urls) ? s.urls : [s.urls || ""];
+                return urls.some(u => u.includes("turn:"));
+            });
+            assert(turnServer !== undefined, "iceServers must include provisioned TURN server");
+            assert(turnServer.username === "mock" && turnServer.credential === "pass",
+                "TURN server credentials must match provisioned response");
+
+            // 3. Verify active engine rtcConfig is populated
+            const activeEng = new ZeroWebRtcEngine("peer-t23-engine");
+            activeEng.setIceServers(provisionedServers);
+            assert(activeEng.rtcConfig.iceServers.some(s => {
+                const urls = Array.isArray(s.urls) ? s.urls : [s.urls || ""];
+                return urls.some(u => u.includes("turn:"));
+            }), "activeEng.rtcConfig.iceServers must include provisioned TURN servers");
+
+            // 4. Verify graceful fallback when /ice endpoint is offline/500
+            resetIceServersCache();
+            mockIceResponse = { ok: false, status: 500, json: async () => ({ error: "Service Unavailable" }) };
+            const fallbackServers = await ensureIceServersReady();
+            assert(fallbackServers.length >= 5, "Fallback must return at least 5 default STUN servers");
+            assert(!fallbackServers.some(s => {
+                const urls = Array.isArray(s.urls) ? s.urls : [s.urls || ""];
+                return urls.some(u => u.includes("turn:"));
+            }), "Fallback servers must not contain TURN servers when /ice fails");
+            mockIceResponse = null;
+            resetIceServersCache();
+
+            print("  PASS: Scenario A: Dynamic /ice provisioning & graceful STUN fallback verified.");
+        }
+
+        // ---------------------------------------------------------------------
+        // Scenario B (15-Minute Cache Invariant)
+        // ---------------------------------------------------------------------
+        {
+            print("  [Test 23.B] 15-Minute Cache Invariant (avoid redundant /ice network fetches)...");
+            resetToHome();
+            resetIceServersCache();
+            mockIceFetchCount = 0;
+            mockIceResponse = null;
+
+            // Initial fetch populates cache
+            const serversInitial = await ensureIceServersReady();
+            assert(mockIceFetchCount === 1, `Initial call must fetch from network, got ${mockIceFetchCount}`);
+
+            // Immediate subsequent call returns cached array
+            const serversCached1 = await ensureIceServersReady();
+            assert(mockIceFetchCount === 1,
+                `Immediate second call within 15 min must not refetch, count: ${mockIceFetchCount}`);
+            assert(serversCached1 === serversInitial, "Must return exact cached object reference");
+
+            // Third call returns cached array
+            const serversCached2 = await ensureIceServersReady();
+            assert(mockIceFetchCount === 1,
+                `Third call within 15 min must not refetch, count: ${mockIceFetchCount}`);
+
+            // Time advancement simulation:
+            const realDateNow = Date.now;
+            try {
+                const initialTime = realDateNow();
+
+                // Advance virtual time by 14 minutes (within 15m TTL)
+                Date.now = () => initialTime + (14 * 60 * 1000);
+                const servers14m = await ensureIceServersReady();
+                assert(mockIceFetchCount === 1,
+                    `Call at 14 minutes (within TTL) must use cache without network fetch, got ${mockIceFetchCount}`);
+                assert(servers14m === serversInitial, "Must return cached reference at 14 minutes");
+
+                // Advance virtual time to 16 minutes (> 15m TTL)
+                Date.now = () => initialTime + (16 * 60 * 1000);
+                const servers16m = await ensureIceServersReady();
+                assert(mockIceFetchCount === 2,
+                    `Call at 16 minutes (TTL expired) must perform network refetch, got ${mockIceFetchCount}`);
+                assert(Array.isArray(servers16m) && servers16m.length > 0, "Refetched servers must be valid");
+            } finally {
+                Date.now = realDateNow;
+            }
+
+            print("  PASS: Scenario B: 15-Minute Cache Invariant verified cleanly.");
+        }
+
+        // ---------------------------------------------------------------------
+        // Scenario C (hasTurnConfigured Relay Settle Logic & Non-Trickle SDP Bundling)
+        // ---------------------------------------------------------------------
+        {
+            print("  [Test 23.C] hasTurnConfigured Relay Settle Logic & Non-Trickle SDP Bundling...");
+            resetToHome();
+            resetIceServersCache();
+
+            // Provision TURN servers
+            const turnServers = await ensureIceServersReady();
+            const turnEngine = new ZeroWebRtcEngine("peer-t23-c-settle");
+            turnEngine.setIceServers(turnServers);
+
+            // Verify hasTurnConfigured evaluates to true
+            const hasTurn = (turnEngine.rtcConfig.iceServers || []).some((s) => {
+                const urls = Array.isArray(s.urls) ? s.urls : [s.urls || ""];
+                return urls.some((u) => typeof u === "string" && (u.startsWith("turn:") || u.startsWith("turns:")));
+            });
+            assert(hasTurn === true, "turnEngine must have hasTurnConfigured === true");
+
+            // Part 1: Verify typ relay triggers fast 350ms settle timer, ignoring 400ms srflx timer
+            const mockPcRelay = new RTCPeerConnection(turnEngine.rtcConfig);
+            mockPcRelay.iceGatheringState = "gathering";
+
+            let relayWaitFinished = false;
+            turnEngine._waitForIceGatheringComplete(mockPcRelay).then(() => {
+                relayWaitFinished = true;
+            });
+
+            // 1a. Emit typ host candidate - should NOT settle
+            mockPcRelay.generateMockCandidate("host");
+            assert(relayWaitFinished === false, "Host candidate alone must not settle wait");
+
+            // 1b. Emit typ srflx candidate - with TURN configured, triggers 1200ms fallback, NOT 400ms
+            mockPcRelay.generateMockCandidate("srflx");
+            await delay(450);
+            assert(relayWaitFinished === false,
+                "With TURN configured, wait must NOT settle at 450ms on srflx alone (waits for relay or 1200ms fallback)");
+
+            // 1c. Emit typ relay candidate - triggers fast 350ms settle timer
+            mockPcRelay.generateMockCandidate("relay");
+            assert(relayWaitFinished === false, "Wait should not settle synchronously upon relay candidate");
+            await delay(400); // 350ms settle timer + 50ms margin
+            assert(relayWaitFinished === true,
+                "Wait must resolve cleanly after 350ms settle timer once relay candidate is gathered");
+
+            // Part 2: Verify fallback 1200ms settle timer when TURN server is unreachable / no relay arrives
+            const mockPcUnreachableTurn = new RTCPeerConnection(turnEngine.rtcConfig);
+            mockPcUnreachableTurn.iceGatheringState = "gathering";
+
+            let fallbackWaitFinished = false;
+            turnEngine._waitForIceGatheringComplete(mockPcUnreachableTurn).then(() => {
+                fallbackWaitFinished = true;
+            });
+
+            mockPcUnreachableTurn.generateMockCandidate("srflx");
+            await delay(500);
+            assert(fallbackWaitFinished === false, "Fallback must not settle at 500ms");
+            await delay(800); // Total 1300ms > 1200ms fallback settle timer
+            assert(fallbackWaitFinished === true,
+                "Wait must resolve after 1200ms fallback settle timer when relay candidate never arrives");
+
+            // Part 3: Verify non-trickle SDP bundles typ relay candidate
+            const nonTrickleOffer = await turnEngine.create_peer_offer("peer-t23-bundle-test");
+            assert(nonTrickleOffer.includes("typ relay"),
+                "Non-trickle offer SDP must bundle typ relay candidate");
+            assert(nonTrickleOffer.includes("typ srflx"),
+                "Non-trickle offer SDP must bundle typ srflx candidate");
+            assert(nonTrickleOffer.includes("typ host"),
+                "Non-trickle offer SDP must bundle typ host candidate");
+
+            const nonTrickleAnswer = await turnEngine.create_peer_answer("peer-t23-bundle-ans", nonTrickleOffer);
+            assert(nonTrickleAnswer.includes("typ relay"),
+                "Non-trickle answer SDP must bundle typ relay candidate");
+            assert(nonTrickleAnswer.includes("typ srflx"),
+                "Non-trickle answer SDP must bundle typ srflx candidate");
+
+            turnEngine.close();
+            print("  PASS: Scenario C: hasTurnConfigured Relay Settle Logic & Non-Trickle SDP Bundling verified.");
+        }
+
+        // ---------------------------------------------------------------------
+        // Scenario D (3-Peer Encrypted Mesh Formation with Simulated TURN Relay Support)
+        // ---------------------------------------------------------------------
+        {
+            print("  [Test 23.D] 3-Peer Encrypted Mesh with TURN Relay & Host Departure Continuity...");
+            resetToHome();
+            resetIceServersCache();
+
+            const turnServers = await ensureIceServersReady();
+
+            const meshHostId = "peer-t23-host";
+            const meshPeerBId = "peer-t23-peer-b";
+            const meshPeerCId = "peer-t23-peer-c";
+
+            const engHost = new ZeroWebRtcEngine(meshHostId);
+            const engPeerB = new ZeroWebRtcEngine(meshPeerBId);
+            const engPeerC = new ZeroWebRtcEngine(meshPeerCId);
+
+            engHost.setIceServers(turnServers);
+            engPeerB.setIceServers(turnServers);
+            engPeerC.setIceServers(turnServers);
+
+            const cryptoHost = new WasmCryptoSession();
+            const cryptoPeerB = new WasmCryptoSession();
+            const cryptoPeerC = new WasmCryptoSession();
+
+            engHost.cryptoSession = cryptoHost;
+            engPeerB.cryptoSession = cryptoPeerB;
+            engPeerC.cryptoSession = cryptoPeerC;
+
+            engHost.receivedChats = [];
+            engPeerB.receivedChats = [];
+            engPeerC.receivedChats = [];
+
+            function wireTurnMeshNode(eng, crypto) {
+                eng.onMessageCb = async (text, incomingPeerId) => {
+                    let data = null;
+                    try { data = JSON.parse(text); } catch (_) {}
+                    if (!data || !data.signal) return;
+                    const signal = data.signal;
+                    const myId = eng.localPeerId;
+
+                    if (signal.PeerJoined) {
+                        const remotePeerId = signal.PeerJoined.peer_id;
+                        if (remotePeerId !== myId) {
+                            if (signal.PeerJoined.public_key) {
+                                crypto.register_peer(
+                                    remotePeerId,
+                                    new Uint8Array(signal.PeerJoined.public_key),
+                                    signal.PeerJoined.signing_key ? new Uint8Array(signal.PeerJoined.signing_key) : undefined
+                                );
+                            }
+                            const peerObj = eng.peers.get(remotePeerId);
+                            const isOpen = peerObj && peerObj.state === "open" && peerObj.dc && peerObj.dc.readyState === "open";
+                            const isConn = peerObj && peerObj.state === "connecting";
+                            if (!isOpen && !isConn && myId < remotePeerId) {
+                                const offerSdp = await eng.create_peer_offer(remotePeerId);
+                                const sealedOfferJson = crypto.seal_for_peer(remotePeerId, offerSdp);
+                                const relayMsg = {
+                                    frame_id: "relay-offer-" + myId + "-" + remotePeerId,
+                                    ttl: 3,
+                                    signal: {
+                                        RelaySdpOffer: {
+                                            from_peer_id: myId,
+                                            to_peer_id: remotePeerId,
+                                            sealed_offer: JSON.parse(sealedOfferJson)
+                                        }
+                                    }
+                                };
+                                eng.send_text(JSON.stringify(relayMsg), incomingPeerId);
+                            }
+                        }
+                    }
+
+                    if (signal.RelaySdpOffer) {
+                        const { from_peer_id, to_peer_id, sealed_offer } = signal.RelaySdpOffer;
+                        if (to_peer_id === myId) {
+                            const offerBytes = crypto.open_from_peer(from_peer_id, sealed_offer);
+                            const offerSdp = new TextDecoder().decode(offerBytes);
+                            const answerSdp = await eng.create_peer_answer(from_peer_id, offerSdp);
+                            const sealedAnsJson = crypto.seal_for_peer(from_peer_id, answerSdp);
+                            const relayAns = {
+                                frame_id: "relay-ans-" + myId + "-" + from_peer_id,
+                                ttl: 3,
+                                signal: {
+                                    RelaySdpAnswer: {
+                                        from_peer_id: myId,
+                                        to_peer_id: from_peer_id,
+                                        sealed_answer: JSON.parse(sealedAnsJson)
+                                    }
+                                }
+                            };
+                            eng.send_text(JSON.stringify(relayAns), incomingPeerId);
+                        } else if (data.ttl > 1) {
+                            const fwd = { ...data, ttl: data.ttl - 1 };
+                            eng.send_text(JSON.stringify(fwd), to_peer_id);
+                        }
+                    }
+
+                    if (signal.RelaySdpAnswer) {
+                        const { from_peer_id, to_peer_id, sealed_answer } = signal.RelaySdpAnswer;
+                        if (to_peer_id === myId) {
+                            const answerBytes = crypto.open_from_peer(from_peer_id, sealed_answer);
+                            const answerSdp = new TextDecoder().decode(answerBytes);
+                            await eng.accept_peer_answer(from_peer_id, answerSdp);
+                        } else if (data.ttl > 1) {
+                            const fwd = { ...data, ttl: data.ttl - 1 };
+                            eng.send_text(JSON.stringify(fwd), to_peer_id);
+                        }
+                    }
+
+                    if (signal.BroadcastChat) {
+                        const broadcast = signal.BroadcastChat;
+                        const senderId = broadcast.sender_id || incomingPeerId;
+                        const sealedPayload = broadcast.sealed_payload || broadcast.sealed_message;
+                        const openedBytes = crypto.open_from_peer(senderId, sealedPayload);
+                        const bodyText = new TextDecoder().decode(openedBytes);
+                        eng.receivedChats.push({ from: senderId, text: bodyText });
+                    }
+                };
+            }
+
+            wireTurnMeshNode(engHost, cryptoHost);
+            wireTurnMeshNode(engPeerB, cryptoPeerB);
+            wireTurnMeshNode(engPeerC, cryptoPeerC);
+
+            // Step 1: Connect Host <-> Peer B
+            cryptoHost.register_peer(meshPeerBId, cryptoPeerB.x25519_public_key_bytes(), cryptoPeerB.ed25519_public_key_bytes());
+            cryptoPeerB.register_peer(meshHostId, cryptoHost.x25519_public_key_bytes(), cryptoHost.ed25519_public_key_bytes());
+            const offerHB = await engHost.create_peer_offer(meshPeerBId);
+            assert(offerHB.includes("typ relay"), "Host offer to B must bundle typ relay candidate");
+            const answerBH = await engPeerB.create_peer_answer(meshHostId, offerHB);
+            assert(answerBH.includes("typ relay"), "Peer B answer to Host must bundle typ relay candidate");
+            await engHost.accept_peer_answer(meshPeerBId, answerBH);
+            await delay(50);
+            assert(engHost.openPeerCount === 1, "Host-B DataChannel must be open");
+            assert(engPeerB.openPeerCount === 1, "B-Host DataChannel must be open");
+
+            // Step 2: Connect Host <-> Peer C
+            cryptoHost.register_peer(meshPeerCId, cryptoPeerC.x25519_public_key_bytes(), cryptoPeerC.ed25519_public_key_bytes());
+            cryptoPeerC.register_peer(meshHostId, cryptoHost.x25519_public_key_bytes(), cryptoHost.ed25519_public_key_bytes());
+            const offerHC = await engHost.create_peer_offer(meshPeerCId);
+            assert(offerHC.includes("typ relay"), "Host offer to C must bundle typ relay candidate");
+            const answerCH = await engPeerC.create_peer_answer(meshHostId, offerHC);
+            assert(answerCH.includes("typ relay"), "Peer C answer to Host must bundle typ relay candidate");
+            await engHost.accept_peer_answer(meshPeerCId, answerCH);
+            await delay(50);
+            assert(engHost.openPeerCount === 2, "Host must hold 2 direct open channels (B and C)");
+
+            // Step 3: Host introduces B and C with authenticated PeerJoined frames
+            const introToB = {
+                frame_id: "intro-H-to-B-for-C",
+                ttl: 3,
+                signal: {
+                    PeerJoined: {
+                        peer_id: meshPeerCId,
+                        public_key: Array.from(cryptoPeerC.x25519_public_key_bytes()),
+                        signing_key: Array.from(cryptoPeerC.ed25519_public_key_bytes())
+                    }
+                }
+            };
+            const introToC = {
+                frame_id: "intro-H-to-C-for-B",
+                ttl: 3,
+                signal: {
+                    PeerJoined: {
+                        peer_id: meshPeerBId,
+                        public_key: Array.from(cryptoPeerB.x25519_public_key_bytes()),
+                        signing_key: Array.from(cryptoPeerB.ed25519_public_key_bytes())
+                    }
+                }
+            };
+            engHost.send_text(JSON.stringify(introToB), meshPeerBId);
+            engHost.send_text(JSON.stringify(introToC), meshPeerCId);
+            await delay(100);
+
+            // Assert full 3-peer mesh formation
+            assert(engHost.openPeerCount === 2, `Host open peers must be 2, got ${engHost.openPeerCount}`);
+            assert(engPeerB.openPeerCount === 2, `Peer B open peers must be 2, got ${engPeerB.openPeerCount}`);
+            assert(engPeerC.openPeerCount === 2, `Peer C open peers must be 2, got ${engPeerC.openPeerCount}`);
+
+            // Helper to broadcast encrypted messages
+            function broadcastTurnEncrypted(eng, crypto, text) {
+                for (const [targetId, p] of eng.peers.entries()) {
+                    if (p.state === "open" && p.dc && p.dc.readyState === "open") {
+                        const sealedJson = crypto.seal_for_peer(targetId, text);
+                        const envelope = {
+                            frame_id: "turn-msg-" + Math.random(),
+                            ttl: 3,
+                            signal: {
+                                BroadcastChat: {
+                                    message_id: "chat-" + Math.random(),
+                                    sender_id: eng.localPeerId,
+                                    sealed_payload: JSON.parse(sealedJson)
+                                }
+                            }
+                        };
+                        eng.send_text(JSON.stringify(envelope), targetId);
+                    }
+                }
+            }
+
+            // Exchange messages across the full mesh
+            broadcastTurnEncrypted(engHost, cryptoHost, "Encrypted message from Host over TURN mesh");
+            await delay(50);
+            broadcastTurnEncrypted(engPeerB, cryptoPeerB, "Encrypted message from Peer B over TURN mesh");
+            await delay(50);
+            broadcastTurnEncrypted(engPeerC, cryptoPeerC, "Encrypted message from Peer C over TURN mesh");
+            await delay(50);
+
+            assert(engHost.receivedChats.some(m => m.from === meshPeerBId && m.text.includes("Peer B")),
+                "Host must receive encrypted message from Peer B");
+            assert(engHost.receivedChats.some(m => m.from === meshPeerCId && m.text.includes("Peer C")),
+                "Host must receive encrypted message from Peer C");
+            assert(engPeerB.receivedChats.some(m => m.from === meshHostId && m.text.includes("Host")),
+                "Peer B must receive encrypted message from Host");
+            assert(engPeerB.receivedChats.some(m => m.from === meshPeerCId && m.text.includes("Peer C")),
+                "Peer B must receive encrypted message from Peer C");
+            assert(engPeerC.receivedChats.some(m => m.from === meshHostId && m.text.includes("Host")),
+                "Peer C must receive encrypted message from Host");
+            assert(engPeerC.receivedChats.some(m => m.from === meshPeerBId && m.text.includes("Peer B")),
+                "Peer C must receive encrypted message from Peer B");
+
+            // Step 4: Host departs; verify Peer B and Peer C direct link survives
+            engHost.close();
+            await delay(50);
+
+            assert(engPeerB.peers.get(meshPeerCId).state === "open",
+                "Peer B direct DataChannel to Peer C must remain open after Host departs");
+            assert(engPeerC.peers.get(meshPeerBId).state === "open",
+                "Peer C direct DataChannel to Peer B must remain open after Host departs");
+
+            // Peer B and C exchange post-departure messages
+            broadcastTurnEncrypted(engPeerB, cryptoPeerB, "Post-host message from B over surviving channel");
+            await delay(50);
+            broadcastTurnEncrypted(engPeerC, cryptoPeerC, "Post-host message from C over surviving channel");
+            await delay(50);
+
+            assert(engPeerC.receivedChats.some(m => m.from === meshPeerBId && m.text === "Post-host message from B over surviving channel"),
+                "Peer C must receive post-departure message from Peer B");
+            assert(engPeerB.receivedChats.some(m => m.from === meshPeerCId && m.text === "Post-host message from C over surviving channel"),
+                "Peer B must receive post-departure message from Peer C");
+
+            engPeerB.close();
+            engPeerC.close();
+            resetToHome();
+            print("  PASS: Scenario D: 3-Peer Encrypted Mesh with TURN Relay & Host Departure Continuity verified.");
+        }
+
+        print("  PASS: Ephemeral Cloudflare TURN Provisioning, 15m Caching & Smart Relay Settle verified cleanly.");
     }
 
     print("\n===============================================================================");

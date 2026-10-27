@@ -6,7 +6,7 @@ use std::fmt;
 
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
 use base64::Engine;
-use worker::{Headers, Request, Response, Result, State, WebSocketPair};
+use worker::{Headers, Request, RequestInit, Response, Result, State, WebSocketPair};
 use zero_protocol::crypto::verify_invite_token;
 use zero_protocol::{from_json_bytes, to_json_string, DropPayload};
 
@@ -260,21 +260,150 @@ pub fn process_dead_drop<S: HibernatingSocket>(
 }
 
 /// Attaches permissive CORS headers to a Cloudflare Worker `Response`.
-pub fn with_cors(resp: Response) -> Result<Response> {
-    let headers = Headers::new();
-    headers.set("Access-Control-Allow-Origin", "*")?;
-    headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")?;
-    headers.set(
+pub fn with_cors(mut resp: Response) -> Result<Response> {
+    resp.headers_mut().set("Access-Control-Allow-Origin", "*")?;
+    resp.headers_mut()
+        .set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")?;
+    resp.headers_mut().set(
         "Access-Control-Allow-Headers",
         "Content-Type, Authorization, X-Host-Secret",
     )?;
-    Ok(resp.with_headers(headers))
+    Ok(resp)
 }
 
 /// Constructs an HTTP 204 No Content response for CORS preflight `OPTIONS` requests.
 pub fn cors_preflight_response() -> Result<Response> {
     let resp = Response::empty()?.with_status(204);
     with_cors(resp)
+}
+
+/// Retrieves a binding string from `worker::Env`, checking secrets first, then environment variables.
+pub fn get_env_var(env: &worker::Env, key: &str) -> Option<String> {
+    if let Ok(sec) = env.secret(key) {
+        let val = sec.to_string();
+        if !val.trim().is_empty() {
+            return Some(val);
+        }
+    }
+    if let Ok(var) = env.var(key) {
+        let val = var.to_string();
+        if !val.trim().is_empty() {
+            return Some(val);
+        }
+    }
+    None
+}
+
+/// Parses custom TURN/ICE servers JSON string (array or object with `iceServers`) into `{ "iceServers": ... }`.
+pub fn parse_custom_ice_servers(raw_json: &str) -> Option<serde_json::Value> {
+    let parsed: serde_json::Value = serde_json::from_str(raw_json).ok()?;
+    match parsed {
+        serde_json::Value::Array(arr) => Some(serde_json::json!({
+            "iceServers": arr
+        })),
+        serde_json::Value::Object(map) => map
+            .get("iceServers")
+            .map(|servers| serde_json::json!({ "iceServers": servers })),
+        _ => None,
+    }
+}
+
+/// Returns default STUN configuration structure for WebRTC NAT traversal.
+pub fn default_ice_servers_json() -> serde_json::Value {
+    serde_json::json!({
+        "iceServers": [
+            { "urls": "stun:stun.cloudflare.com:3478" },
+            { "urls": "stun:stun.l.google.com:19302" }
+        ]
+    })
+}
+
+/// Target-independent handler resolving custom JSON or falling back to default STUN configuration.
+pub fn process_ice_servers(custom_json: Option<&str>) -> HttpResponse {
+    if let Some(json_str) = custom_json {
+        if let Some(val) = parse_custom_ice_servers(json_str) {
+            return HttpResponse {
+                status: 200,
+                body: serde_json::to_string(&val).unwrap_or_default(),
+            };
+        }
+    }
+    HttpResponse {
+        status: 200,
+        body: serde_json::to_string(&default_ice_servers_json()).unwrap_or_default(),
+    }
+}
+
+/// Constructs a 200 OK Response with default STUN configuration and CORS headers.
+pub fn build_default_stun_response() -> Result<Response> {
+    with_cors(Response::from_json(&default_ice_servers_json())?)
+}
+
+/// Provisions short-lived ephemeral Cloudflare TURN credentials or returns a reliable default STUN configuration.
+pub async fn handle_ice_config(env: &worker::Env) -> Result<Response> {
+    // Mode 1: Cloudflare Realtime TURN API
+    let key_id = get_env_var(env, "CF_TURN_KEY_ID");
+    let api_token = get_env_var(env, "CF_TURN_API_TOKEN");
+
+    if let (Some(key_id), Some(api_token)) = (key_id, api_token) {
+        let url =
+            format!("https://rtc.live.cloudflare.com/v1/turn/keys/{key_id}/credentials/generate");
+        let headers = Headers::new();
+        let _ = headers.set("Authorization", &format!("Bearer {api_token}"));
+        let _ = headers.set("Content-Type", "application/json");
+
+        let mut init = RequestInit::new();
+        init.with_method(worker::Method::Post);
+        init.with_headers(headers);
+        init.with_body(Some(worker::wasm_bindgen::JsValue::from_str(
+            "{\"ttl\": 3600}",
+        )));
+
+        match Request::new_with_init(&url, &init) {
+            Ok(req) => match worker::Fetch::Request(req).send().await {
+                Ok(mut cf_res) => {
+                    if cf_res.status_code() == 200 {
+                        if let Ok(body_str) = cf_res.text().await {
+                            if let Ok(json_val) =
+                                serde_json::from_str::<serde_json::Value>(&body_str)
+                            {
+                                return with_cors(Response::from_json(&json_val)?);
+                            }
+                        }
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    worker::console_warn!(
+                        "Cloudflare TURN API returned status {} or invalid body",
+                        cf_res.status_code()
+                    );
+                    #[cfg(not(target_arch = "wasm32"))]
+                    eprintln!(
+                        "Cloudflare TURN API returned status {} or invalid body",
+                        cf_res.status_code()
+                    );
+                }
+                Err(e) => {
+                    #[cfg(target_arch = "wasm32")]
+                    worker::console_warn!("Failed to fetch Cloudflare TURN credentials: {:?}", e);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    eprintln!("Failed to fetch Cloudflare TURN credentials: {:?}", e);
+                }
+            },
+            Err(e) => {
+                #[cfg(target_arch = "wasm32")]
+                worker::console_warn!("Failed to build Cloudflare TURN request: {:?}", e);
+                #[cfg(not(target_arch = "wasm32"))]
+                eprintln!("Failed to build Cloudflare TURN request: {:?}", e);
+            }
+        }
+    }
+
+    // Mode 2 & Mode 3: Custom JSON Override or Default STUN Fallback
+    let custom_json = get_env_var(env, "TURN_SERVERS_JSON");
+    let resolved = process_ice_servers(custom_json.as_deref());
+    let val: serde_json::Value =
+        serde_json::from_str(&resolved.body).unwrap_or_else(|_| default_ice_servers_json());
+    with_cors(Response::from_json(&val)?)
 }
 
 /// Cloudflare Durable Object adapter for `GET /host/:do_id` WebSocket upgrade and hibernation registration.

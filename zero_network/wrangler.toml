@@ -13,9 +13,21 @@ class_name = "DeadDropRoom"
 tag = "v1"
 new_sqlite_classes = ["DeadDropRoom"]
 
+[vars]
+# Optional: Ephemeral Cloudflare Realtime TURN credentials for 4G/5G CGNAT traversal
+# Set via: wrangler secret put CF_TURN_KEY_ID
+# Set via: wrangler secret put CF_TURN_API_TOKEN
+# Optional fallback override: TURN_SERVERS_JSON
+
 [env.production]
 name = "network"
 
 [[env.production.durable_objects.bindings]]
 name = "DEAD_DROP_ROOM"
 class_name = "DeadDropRoom"
+
+[env.production.vars]
+# Optional: Ephemeral Cloudflare Realtime TURN credentials for 4G/5G CGNAT traversal
+# Set via: wrangler secret put CF_TURN_KEY_ID
+# Set via: wrangler secret put CF_TURN_API_TOKEN
+# Optional fallback override: TURN_SERVERS_JSON

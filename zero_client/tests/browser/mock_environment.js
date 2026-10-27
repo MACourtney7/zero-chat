@@ -749,7 +749,30 @@
     global.WebSocket = MockWebSocket;
     global._signalingRooms = signalingRooms;
 
+    global.mockIceFetchCount = 0;
+    global.mockIceResponse = null;
+
     global.fetch = async function(url, options = {}) {
+        if (url && (url.endsWith("/ice") || url.includes("/ice?") || url.includes("/ice/"))) {
+            global.mockIceFetchCount = (global.mockIceFetchCount || 0) + 1;
+            if (global.mockIceResponse !== null && global.mockIceResponse !== undefined) {
+                if (typeof global.mockIceResponse === "function") {
+                    return global.mockIceResponse(url, options);
+                }
+                return global.mockIceResponse;
+            }
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    iceServers: [
+                        { urls: "stun:stun.cloudflare.com:3478" },
+                        { urls: "turn:turn.cloudflare.com:3478", username: "mock", credential: "pass" }
+                    ]
+                })
+            };
+        }
+
         const m = url && url.match(/\/drop\/([a-zA-Z0-9_-]+)\//);
         if (m) {
             const doId = m[1];
@@ -846,6 +869,8 @@
 
             this.onconnectionstatechange = null;
             this.oniceconnectionstatechange = null;
+            this.onicecandidate = null;
+            this.onicegatheringstatechange = null;
             this.ondatachannel = null;
             this._listeners = new Map();
             this.addEventListener = function(event, cb) {
@@ -868,6 +893,55 @@
             connectionRegistry.set(this.id, this);
         }
 
+        static generateCandidate(type = "host", options = {}) {
+            const ufrag = options.ufrag || Math.random().toString(36).slice(2, 8);
+            const port = options.port || (type === "relay" ? 50001 : 50000);
+            const ip = options.ip || (type === "host" ? "192.168.1.100" : "1.2.3.4");
+            const raddr = options.raddr || "192.168.1.100";
+            const rport = options.rport || "50000";
+            if (type === "host") {
+                return `candidate:${ufrag} 1 UDP 2122260223 ${ip} ${port} typ host`;
+            } else if (type === "srflx") {
+                return `candidate:${ufrag} 1 UDP 2122260222 ${ip} ${port} typ srflx raddr ${raddr} rport ${rport}`;
+            } else if (type === "relay") {
+                return `candidate:${ufrag} 1 UDP 2122260221 ${ip} ${port} typ relay raddr ${raddr} rport ${rport}`;
+            }
+            return `candidate:${ufrag} 1 UDP 2122260223 ${ip} ${port} typ ${type}`;
+        }
+
+        generateMockCandidate(type = "host", options = {}) {
+            const candStr = MockRTCPeerConnection.generateCandidate(type, options);
+            if (this.localDescription && this.localDescription.sdp) {
+                if (!this.localDescription.sdp.includes(candStr)) {
+                    this.localDescription.sdp += `a=${candStr}\r\n`;
+                }
+            }
+            const ev = { type: "icecandidate", candidate: { candidate: candStr } };
+            this.dispatchEvent(ev);
+            if (typeof this.onicecandidate === "function") {
+                this.onicecandidate(ev);
+            }
+            return candStr;
+        }
+
+        generateMockCandidates(types = ["host", "srflx", "relay"]) {
+            return types.map(t => this.generateMockCandidate(t));
+        }
+
+        completeIceGathering() {
+            this.iceGatheringState = "complete";
+            const evState = { type: "icegatheringstatechange" };
+            this.dispatchEvent(evState);
+            if (typeof this.onicegatheringstatechange === "function") {
+                this.onicegatheringstatechange(evState);
+            }
+            const evCand = { type: "icecandidate", candidate: null };
+            this.dispatchEvent(evCand);
+            if (typeof this.onicecandidate === "function") {
+                this.onicecandidate(evCand);
+            }
+        }
+
         createDataChannel(label, options) {
             const dc = new MockRTCDataChannel(label, this);
             this.dataChannels.push(dc);
@@ -875,16 +949,40 @@
         }
 
         async createOffer() {
+            let sdp = `v=0\r\no=- ${Date.now()} 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=mock-pc-id:${this.id}\r\n`;
+            if (this.config && Array.isArray(this.config.iceServers)) {
+                const hasTurn = this.config.iceServers.some(s => {
+                    const urls = Array.isArray(s.urls) ? s.urls : [s.urls || ""];
+                    return urls.some(u => typeof u === "string" && (u.startsWith("turn:") || u.startsWith("turns:")));
+                });
+                if (hasTurn) {
+                    sdp += `a=candidate:1 1 UDP 2122260223 192.168.1.100 50000 typ host\r\n`;
+                    sdp += `a=candidate:2 1 UDP 2122260222 1.2.3.4 50000 typ srflx raddr 192.168.1.100 rport 50000\r\n`;
+                    sdp += `a=candidate:3 1 UDP 2122260221 1.2.3.4 50001 typ relay raddr 1.2.3.4 rport 50000\r\n`;
+                }
+            }
             return new MockRTCSessionDescription({
                 type: "offer",
-                sdp: `v=0\r\no=- ${Date.now()} 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=mock-pc-id:${this.id}\r\n`
+                sdp
             });
         }
 
         async createAnswer() {
+            let sdp = `v=0\r\no=- ${Date.now()} 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=mock-pc-id:${this.id}\r\n`;
+            if (this.config && Array.isArray(this.config.iceServers)) {
+                const hasTurn = this.config.iceServers.some(s => {
+                    const urls = Array.isArray(s.urls) ? s.urls : [s.urls || ""];
+                    return urls.some(u => typeof u === "string" && (u.startsWith("turn:") || u.startsWith("turns:")));
+                });
+                if (hasTurn) {
+                    sdp += `a=candidate:1 1 UDP 2122260223 192.168.1.100 50000 typ host\r\n`;
+                    sdp += `a=candidate:2 1 UDP 2122260222 1.2.3.4 50000 typ srflx raddr 192.168.1.100 rport 50000\r\n`;
+                    sdp += `a=candidate:3 1 UDP 2122260221 1.2.3.4 50001 typ relay raddr 1.2.3.4 rport 50000\r\n`;
+                }
+            }
             return new MockRTCSessionDescription({
                 type: "answer",
-                sdp: `v=0\r\no=- ${Date.now()} 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=mock-pc-id:${this.id}\r\n`
+                sdp
             });
         }
 

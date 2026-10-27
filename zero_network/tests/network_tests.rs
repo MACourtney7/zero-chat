@@ -4,9 +4,10 @@
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
 use zero_network::{
-    extract_bearer_token, parse_host_secret, process_dead_drop, process_host_upgrade,
-    EphemeralRoomState, HibernatingSocket, HostAttachment, MockHostSocket, NetworkError,
-    MAX_BURNED_UUIDS, MAX_DROP_BODY_BYTES,
+    default_ice_servers_json, extract_bearer_token, parse_custom_ice_servers, parse_host_secret,
+    process_dead_drop, process_host_upgrade, process_ice_servers, EphemeralRoomState,
+    HibernatingSocket, HostAttachment, MockHostSocket, NetworkError, MAX_BURNED_UUIDS,
+    MAX_DROP_BODY_BYTES,
 };
 use zero_protocol::crypto::{compute_invite_token, X25519Keypair};
 use zero_protocol::{from_json_str, to_json_bytes, DropPayload, SdpAnswer};
@@ -412,4 +413,63 @@ fn test_dead_drop_edge_cases_and_dos_guards() {
     .expect_err("full burn table must return 429");
     assert_eq!(err_capacity, NetworkError::BurnCapacityExceeded);
     assert_eq!(err_capacity.status_code(), 429);
+}
+
+#[test]
+fn test_ice_endpoint_returns_default_stun_fallback() {
+    let resp = process_ice_servers(None);
+    assert_eq!(resp.status, 200);
+
+    let json: serde_json::Value = serde_json::from_str(&resp.body).expect("parse JSON body");
+
+    assert!(json.get("iceServers").is_some());
+    let ice_servers = json["iceServers"]
+        .as_array()
+        .expect("iceServers should be an array");
+    assert_eq!(ice_servers.len(), 2);
+
+    let urls: Vec<&str> = ice_servers
+        .iter()
+        .map(|s| s["urls"].as_str().expect("urls string"))
+        .collect();
+    assert_eq!(
+        urls,
+        vec![
+            "stun:stun.cloudflare.com:3478",
+            "stun:stun.l.google.com:19302"
+        ]
+    );
+
+    // Verify default_ice_servers_json helper consistency
+    assert_eq!(json, default_ice_servers_json());
+}
+
+#[test]
+fn test_parse_custom_ice_servers_modes() {
+    // Mode 2a: Valid array wrapped into { "iceServers": ... }
+    let raw_arr = r#"[{"urls":"turn:turn.example.com:3478","username":"user","credential":"pwd"}]"#;
+    let parsed_arr = parse_custom_ice_servers(raw_arr).expect("parse custom array");
+    let arr = parsed_arr["iceServers"]
+        .as_array()
+        .expect("iceServers array");
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["urls"], "turn:turn.example.com:3478");
+
+    // Mode 2b: Valid object already containing iceServers
+    let raw_obj = r#"{"iceServers":[{"urls":"turn:turn.override.com:3478"}]}"#;
+    let parsed_obj = parse_custom_ice_servers(raw_obj).expect("parse custom object");
+    let arr2 = parsed_obj["iceServers"]
+        .as_array()
+        .expect("iceServers array");
+    assert_eq!(arr2.len(), 1);
+    assert_eq!(arr2[0]["urls"], "turn:turn.override.com:3478");
+
+    // Malformed JSON -> None
+    assert!(parse_custom_ice_servers("not valid json").is_none());
+
+    // Object without iceServers -> None
+    assert!(parse_custom_ice_servers(r#"{"other":"key"}"#).is_none());
+
+    // Primitive number -> None
+    assert!(parse_custom_ice_servers("123").is_none());
 }
