@@ -262,7 +262,8 @@ pub fn process_dead_drop<S: HibernatingSocket>(
 /// Attaches permissive CORS headers to a Cloudflare Worker `Response`.
 pub fn with_cors(mut resp: Response) -> Result<Response> {
     resp.headers_mut().set("Access-Control-Allow-Origin", "*")?;
-    resp.headers_mut().set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")?;
+    resp.headers_mut()
+        .set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")?;
     resp.headers_mut().set(
         "Access-Control-Allow-Headers",
         "Content-Type, Authorization, X-Host-Secret",
@@ -345,9 +346,8 @@ pub async fn handle_ice_config(env: &worker::Env) -> Result<Response> {
     let api_token = get_env_var(env, "CF_TURN_API_TOKEN");
 
     if let (Some(key_id), Some(api_token)) = (key_id, api_token) {
-        let url = format!(
-            "https://rtc.live.cloudflare.com/v1/turn/keys/{key_id}/credentials/generate"
-        );
+        let url =
+            format!("https://rtc.live.cloudflare.com/v1/turn/keys/{key_id}/credentials/generate");
         let headers = Headers::new();
         let _ = headers.set("Authorization", &format!("Bearer {api_token}"));
         let _ = headers.set("Content-Type", "application/json");
@@ -355,7 +355,9 @@ pub async fn handle_ice_config(env: &worker::Env) -> Result<Response> {
         let mut init = RequestInit::new();
         init.with_method(worker::Method::Post);
         init.with_headers(headers);
-        init.with_body(Some(worker::wasm_bindgen::JsValue::from_str("{\"ttl\": 3600}")));
+        init.with_body(Some(worker::wasm_bindgen::JsValue::from_str(
+            "{\"ttl\": 3600}",
+        )));
 
         match Request::new_with_init(&url, &init) {
             Ok(req) => match worker::Fetch::Request(req).send().await {
