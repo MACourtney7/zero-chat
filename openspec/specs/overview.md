@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.23.1"
-milestone: "cloudflare-turn-cgnat-relay"
+version: "1.0.0"
+milestone: "v1.0-release-production"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-27T22:55:00Z"
+updated_at: "2026-10-27T23:20:00Z"
 ---
 ```
 
@@ -153,6 +153,10 @@ updated_at: "2026-10-27T22:55:00Z"
       - WebRTC SCTP DataChannels are protected by DTLS encapsulation over UDP/TCP.
       - Application chat payloads remain end-to-end encrypted and authenticated via `WasmCryptoSession` (pairwise X25519 + ChaCha20-Poly1305 AEAD + Ed25519 signatures).
       - Cloudflare TURN servers act strictly as blind transport relays (RFC 5766 / RFC 8656), inspecting only opaque doubly-encrypted UDP/TCP packets. Ephemeral credentials carry zero room, user, or message metadata.
+26. **WASM Size Optimization (Cargo LTO & Binaryen `wasm-opt -Oz`) & Architectural Showcase (`README.md`)**:
+    - **Whole-Program Release Profile**: `Cargo.toml` workspace declares `[profile.release]` with `opt-level = "z"`, `lto = true`, `codegen-units = 1`, `panic = "abort"`, and `strip = true`, enabling whole-program link-time dead-symbol elimination and zero stack-unwinding tables.
+    - **Binaryen Post-Pass Pipeline**: `scripts/deploy_dry_run.sh` runs `wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int` on `dist/pkg/zero_client_bg.wasm` when available, logging before/after byte sizes and falling back gracefully when absent.
+    - **Production Showcase**: Root `README.md` documents the 3-crate layout, Option B Burner Keybundle (`X25519` + `Ed25519` + `ChaCha20-Poly1305` + `ZeroizeOnDrop`), 100% blind dead-drop signaling (`sealed_sdp_answer`), self-healing mesh topology, mobile background freeze grace periods, and 3-tier TURN CGNAT traversal.
 
 ---
 
