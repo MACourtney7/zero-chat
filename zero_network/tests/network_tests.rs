@@ -464,6 +464,17 @@ fn test_parse_custom_ice_servers_modes() {
     assert_eq!(arr2.len(), 1);
     assert_eq!(arr2[0]["urls"], "turn:turn.override.com:3478");
 
+    // Mode 2c: Flat credential object containing urls
+    let raw_flat = r#"{"urls":"turn:turn.cloudflare.com:3478","username":"u","credential":"p"}"#;
+    let parsed_flat = parse_custom_ice_servers(raw_flat).expect("parse flat credential object");
+    let arr3 = parsed_flat["iceServers"]
+        .as_array()
+        .expect("iceServers array");
+    assert_eq!(arr3.len(), 1);
+    assert_eq!(arr3[0]["urls"], "turn:turn.cloudflare.com:3478");
+    assert_eq!(arr3[0]["username"], "u");
+    assert_eq!(arr3[0]["credential"], "p");
+
     // Malformed JSON -> None
     assert!(parse_custom_ice_servers("not valid json").is_none());
 
