@@ -294,16 +294,22 @@ pub fn get_env_var(env: &worker::Env, key: &str) -> Option<String> {
     None
 }
 
-/// Parses custom TURN/ICE servers JSON string (array or object with `iceServers`) into `{ "iceServers": ... }`.
+/// Parses custom TURN/ICE servers JSON string (array, object with `iceServers`, or object with `urls`) into `{ "iceServers": ... }`.
 pub fn parse_custom_ice_servers(raw_json: &str) -> Option<serde_json::Value> {
     let parsed: serde_json::Value = serde_json::from_str(raw_json).ok()?;
     match parsed {
         serde_json::Value::Array(arr) => Some(serde_json::json!({
             "iceServers": arr
         })),
-        serde_json::Value::Object(map) => map
-            .get("iceServers")
-            .map(|servers| serde_json::json!({ "iceServers": servers })),
+        serde_json::Value::Object(map) => {
+            if let Some(servers) = map.get("iceServers") {
+                Some(serde_json::json!({ "iceServers": servers }))
+            } else if map.contains_key("urls") {
+                Some(serde_json::json!({ "iceServers": [map] }))
+            } else {
+                None
+            }
+        }
         _ => None,
     }
 }
@@ -346,8 +352,9 @@ pub async fn handle_ice_config(env: &worker::Env) -> Result<Response> {
     let api_token = get_env_var(env, "CF_TURN_API_TOKEN");
 
     if let (Some(key_id), Some(api_token)) = (key_id, api_token) {
-        let url =
-            format!("https://rtc.live.cloudflare.com/v1/turn/keys/{key_id}/credentials/generate");
+        let url = format!(
+            "https://rtc.live.cloudflare.com/v1/turn/keys/{key_id}/credentials/generate-ice-servers"
+        );
         let headers = Headers::new();
         let _ = headers.set("Authorization", &format!("Bearer {api_token}"));
         let _ = headers.set("Content-Type", "application/json");
@@ -356,17 +363,19 @@ pub async fn handle_ice_config(env: &worker::Env) -> Result<Response> {
         init.with_method(worker::Method::Post);
         init.with_headers(headers);
         init.with_body(Some(worker::wasm_bindgen::JsValue::from_str(
-            "{\"ttl\": 3600}",
+            "{\"ttl\": 86400}",
         )));
 
         match Request::new_with_init(&url, &init) {
             Ok(req) => match worker::Fetch::Request(req).send().await {
                 Ok(mut cf_res) => {
-                    if cf_res.status_code() == 200 {
+                    let status = cf_res.status_code();
+                    if (200..=299).contains(&status) {
                         if let Ok(body_str) = cf_res.text().await {
-                            if let Ok(json_val) =
-                                serde_json::from_str::<serde_json::Value>(&body_str)
-                            {
+                            let json_val = parse_custom_ice_servers(&body_str).or_else(|| {
+                                serde_json::from_str::<serde_json::Value>(&body_str).ok()
+                            });
+                            if let Some(json_val) = json_val {
                                 return with_cors(Response::from_json(&json_val)?);
                             }
                         }
@@ -374,12 +383,12 @@ pub async fn handle_ice_config(env: &worker::Env) -> Result<Response> {
                     #[cfg(target_arch = "wasm32")]
                     worker::console_warn!(
                         "Cloudflare TURN API returned status {} or invalid body",
-                        cf_res.status_code()
+                        status
                     );
                     #[cfg(not(target_arch = "wasm32"))]
                     eprintln!(
                         "Cloudflare TURN API returned status {} or invalid body",
-                        cf_res.status_code()
+                        status
                     );
                 }
                 Err(e) => {
