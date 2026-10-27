@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.22.0"
-milestone: "option-b-crypto-modernization"
+version: "1.23.0"
+milestone: "cloudflare-turn-cgnat-relay"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-26T22:15:00Z"
+updated_at: "2026-10-27T22:15:00Z"
 ---
 ```
 
@@ -132,6 +132,27 @@ updated_at: "2026-10-26T22:15:00Z"
     - **Clean Separation of Concerns**: The Rust client (`zero_client`) operates strictly as a pure-Rust/WASM Cryptography, Protocol & Pure-State library without legacy DOM templates, unconfigured `web-sys` browser RTC closures, or heavy web-sys dependencies.
     - **Optimized Binary Size**: Stripping 45+ unused DOM feature flags reduces the compiled release WASM binary (`dist/pkg/zero_client_bg.wasm`) to ~844KB (a 35% reduction from 1.3MB) for rapid cold-start loading.
     - **Pure-State Mesh Topology**: `MeshTopology` implements per-peer role tracking (`PeerRole::{Inviter, Joiner, Mesh}`) and two-stage transient disconnect grace periods (`mark_peer_disconnected_grace`, `recover_peer`, `expire_peer_grace`), preventing premature message burning during cellular handoffs and background tab freezes while ensuring explicit `PeerLeftAndBurn` signals immediately purge without delay.
+25. **Ephemeral Cloudflare Realtime TURN Relay, 4G/5G CGNAT Traversal & Non-Trickle Relay Bundling**:
+    - **Three-Tier ICE Endpoint (`/ice`)**:
+      - **Mode 1 (Cloudflare Realtime TURN API)**: Worker queries `CF_TURN_KEY_ID` and `CF_TURN_API_TOKEN` from secrets. If present, it mints 1-hour credentials (`ttl: 3600`) via `POST https://rtc.live.cloudflare.com/v1/turn/keys/${CF_TURN_KEY_ID}/credentials/generate` and serves `{ "iceServers": [...] }` directly.
+      - **Mode 2 (Static / Custom JSON Override)**: Evaluates `TURN_SERVERS_JSON` in `env` via `parse_custom_ice_servers`.
+      - **Mode 3 (Graceful Default STUN Fallback)**: Returns default STUN servers (`stun.cloudflare.com:3478`, `stun.l.google.com:19302`) with `200 OK` on missing secrets or upstream API errors.
+      - CORS headers (`Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: GET, POST, OPTIONS`, `Access-Control-Allow-Headers: Content-Type`) and `Content-Type: application/json` are strictly preserved on all responses.
+    - **Operator Secret Activation**:
+      - Operators activate Cloudflare TURN by running:
+        `npx wrangler secret put CF_TURN_KEY_ID`
+        `npx wrangler secret put CF_TURN_API_TOKEN`
+    - **Client-Side 15-Minute In-Memory Caching**:
+      - `ensureIceServersReady()` in `zero_client/index.html` caches provisioned ICE servers for 15 minutes (`ICE_CACHE_TTL_MS = 15 * 60 * 1000`), eliminating redundant network roundtrips during rapid secondary in-room invites and mesh handshakes.
+      - Dynamic engine injection: `activeEng.setIceServers(...)` dynamically updates active WebRTC RTCPeerConnection configurations.
+    - **Adaptive Non-Trickle Candidate Gathering & Settle Timers**:
+      - `_waitForIceGatheringComplete(pc)` detects `hasTurnConfigured`.
+      - When TURN is active, arrival of a `typ relay` candidate triggers a fast 350ms settle timer, canceling pending timers and ensuring cellular relay candidates are bundled into non-trickle SDPs.
+      - If only `typ srflx` candidates arrive, a 1,200ms fallback settle timer applies, backed by an absolute 5,000ms hard ceiling.
+    - **Privacy & Cryptographic Invariant**:
+      - WebRTC SCTP DataChannels are protected by DTLS encapsulation over UDP/TCP.
+      - Application chat payloads remain end-to-end encrypted and authenticated via `WasmCryptoSession` (pairwise X25519 + ChaCha20-Poly1305 AEAD + Ed25519 signatures).
+      - Cloudflare TURN servers act strictly as blind transport relays (RFC 5766 / RFC 8656), inspecting only opaque doubly-encrypted UDP/TCP packets. Ephemeral credentials carry zero room, user, or message metadata.
 
 ---
 
@@ -317,13 +338,14 @@ Integration Test Suites:
     * REQ-004.1 through REQ-004.5
   - tests/webrtc_tests.rs (6 tests):
     * REQ-002.1 through REQ-002.5
-  - tests/network_tests.rs (6 tests):
+  - tests/network_tests.rs (8 tests):
     * REQ-003.1 through REQ-003.5 + Dead-drop joiner_peer_id preservation
+    * REQ-049.1: Default STUN fallback and custom TURN parsing modes
   - tests/protocol_tests.rs (12 tests):
     * REQ-001.1 through REQ-001.5 + Serde backward compatibility & round-trip assertions
 
 Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
-  - 16 comprehensive multi-participant mesh, departure & UI scenarios passed:
+  - 17 comprehensive multi-participant mesh, departure & UI scenarios passed:
     * Test 1: Full mesh establishment with 3 peers (A, B, C) (K_3)
     * Test 2: Host A departs; C broadcasts; B receives directly
     * Test 3: C departs; B reflects 0 open peers
@@ -345,7 +367,8 @@ Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
     * Test 20: Mobile Browser Web Share API, Desktop Share Bypass, Clean Share URL, Burn Offset & Compacted Layout (ticket-043, ticket-044)
     * Test 21: Unified Connectivity Resilience - Per-Peer Roles, Grace Window & Smart ICE (REQ-045.1 - REQ-045.4)
     * Test 22: WasmCryptoSession Browser Runtime Integration & Blind Dead-Drop - Wire Blindness, Authenticated AEAD & Ed25519 Signatures, 3-Peer Mesh Formation & Host Departure Continuity, Tamper Rejection & Fail-Closed Security, and Volatile Memory Wipe (REQ-047.1 - REQ-047.5)
+    * Test 23: Ephemeral Cloudflare Realtime TURN Relay, 15-Minute ICE Caching & Adaptive Candidate Gathering - Three-Tier ICE Endpoint, 15m Cache Expiration, 350ms Relay vs 1200ms Srflx Settle Logic, and Authenticated 3-Peer Mesh over TURN Relay (REQ-049.1 - REQ-049.4)
 
-Total: 115 Rust tests + 22 Browser tests passed, 0 failed.
+Total: 117 Rust tests + 23 Browser tests passed, 0 failed.
 ```
 

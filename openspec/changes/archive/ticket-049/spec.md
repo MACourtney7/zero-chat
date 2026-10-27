@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-049"
 title: "Ephemeral Cloudflare Realtime TURN Relay for 4G/5G CGNAT Traversal"
-state: "IN_PROGRESS"
+state: "COMPLETED"
 created_at: "2026-10-27T21:00:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-049/main"
