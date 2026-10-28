@@ -3230,9 +3230,9 @@
 
             try {
                 await ensureIceServersReady();
-                const crypto = await ensureCryptoReady();
+                const wasmCrypto = await ensureCryptoReady();
                 engine = new ZeroWebRtcEngine(localPeerId);
-                engine.cryptoSession = crypto;
+                engine.cryptoSession = wasmCrypto;
                 window.engine = engine;
                 initEngineListeners();
 
@@ -3242,13 +3242,13 @@
 
                 // Generate random room DO ID and 32-byte host secret
                 const doId = "room-" + Math.random().toString(36).slice(2, 10);
-                const hostSecretBytes = (window.crypto || crypto).getRandomValues(new Uint8Array(32));
+                const hostSecretBytes = window.crypto.getRandomValues(new Uint8Array(32));
                 const hostSecretHex = Array.from(hostSecretBytes).map(b => b.toString(16).padStart(2, "0")).join("");
 
                 const inviteUuid = generateUuid();
                 let tokenHex;
-                if (crypto && typeof crypto.compute_hmac_hex === "function") {
-                    tokenHex = crypto.compute_hmac_hex(hostSecretBytes, inviteUuid);
+                if (wasmCrypto && typeof wasmCrypto.compute_hmac_hex === "function") {
+                    tokenHex = wasmCrypto.compute_hmac_hex(hostSecretBytes, inviteUuid);
                 } else if (typeof WasmCryptoSession !== "undefined" && typeof WasmCryptoSession.compute_hmac_hex === "function") {
                     tokenHex = WasmCryptoSession.compute_hmac_hex(hostSecretBytes, inviteUuid);
                 } else {
@@ -3257,12 +3257,12 @@
 
                 let hostX25519Pub;
                 let hostEd25519Pub;
-                if (crypto && typeof crypto.x25519_public_key_bytes === "function") {
-                    hostX25519Pub = Array.from(crypto.x25519_public_key_bytes());
-                    hostEd25519Pub = Array.from(crypto.ed25519_public_key_bytes());
+                if (wasmCrypto && typeof wasmCrypto.x25519_public_key_bytes === "function") {
+                    hostX25519Pub = Array.from(wasmCrypto.x25519_public_key_bytes());
+                    hostEd25519Pub = Array.from(wasmCrypto.ed25519_public_key_bytes());
                 } else {
-                    hostX25519Pub = Array.from((window.crypto || crypto).getRandomValues(new Uint8Array(32)));
-                    hostEd25519Pub = Array.from((window.crypto || crypto).getRandomValues(new Uint8Array(32)));
+                    hostX25519Pub = Array.from(window.crypto.getRandomValues(new Uint8Array(32)));
+                    hostEd25519Pub = Array.from(window.crypto.getRandomValues(new Uint8Array(32)));
                 }
 
                 const myHostId = (engine && engine.localPeerId) || localPeerId;
@@ -3380,6 +3380,9 @@
         let joinWatchdogTimer = null;
 
         function handleJoinFailure(err) {
+            if (!isJoining) return;
+            isJoining = false;
+
             if (joinWatchdogTimer) {
                 clearTimeout(joinWatchdogTimer);
                 joinWatchdogTimer = null;
@@ -3408,7 +3411,6 @@
                 createRoomBar.classList.remove("hidden");
                 setCreateRoomStage1Plus();
             }
-            isJoining = false;
             if (err) console.error("Joiner failed:", err);
         }
 
@@ -3847,6 +3849,10 @@
         window.handlePeerDeparture = handlePeerDeparture;
         window.createRoomAsHost = createRoomAsHost;
         window.joinRoomFromHash = joinRoomFromHash;
+        window.handleJoinFailure = handleJoinFailure;
+        window.getIsJoining = () => isJoining;
+        window.setIsJoining = (v) => { isJoining = v; };
+        window.initEngineListeners = initEngineListeners;
         window.headerControls = headerControls;
         window.headerAddBtn = headerAddBtn;
         window.burnBtn = burnBtn;
