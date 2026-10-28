@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-052"
 title: "Fix Durable Object Dead-Drop Immutable Header Crash & Joiner Failure Re-Entrancy"
-state: "IN_PROGRESS"
+state: "COMPLETED"
 created_at: "2026-10-28T17:10:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-052/main"

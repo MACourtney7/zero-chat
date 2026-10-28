@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.0.0"
+version: "1.0.1"
 milestone: "v1.0-release-production"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-27T23:20:00Z"
+updated_at: "2026-10-28T17:30:00Z"
 ---
 ```
 
@@ -157,6 +157,10 @@ updated_at: "2026-10-27T23:20:00Z"
     - **Whole-Program Release Profile**: `Cargo.toml` workspace declares `[profile.release]` with `opt-level = "z"`, `lto = true`, `codegen-units = 1`, `panic = "abort"`, and `strip = true`, enabling whole-program link-time dead-symbol elimination and zero stack-unwinding tables.
     - **Binaryen Post-Pass Pipeline**: `scripts/deploy_dry_run.sh` runs `wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int` on `dist/pkg/zero_client_bg.wasm` when available, logging before/after byte sizes and falling back gracefully when absent.
     - **Production Showcase**: Root `README.md` documents the 3-crate layout, Option B Burner Keybundle (`X25519` + `Ed25519` + `ChaCha20-Poly1305` + `ZeroizeOnDrop`), 100% blind dead-drop signaling (`sealed_sdp_answer`), self-healing mesh topology, mobile background freeze grace periods, and 3-tier TURN CGNAT traversal.
+27. **Durable Object CORS RPC Reconstruction & Non-Re-Entrant Joiner Failure Teardown**:
+    - **Durable Object RPC Boundary Reconstruction**: When the Cloudflare Worker router receives responses from `stub.fetch_with_request(req).await` in `/drop/:do_id/:invite_uuid`, subrequest responses have immutable headers (`guard: "immutable"`). Non-101 responses extract `status` and `body_text` and reconstruct a fresh mutable `worker::Response` in the outer isolate before applying `handlers::with_cors`, avoiding unhandled V8 exceptions and guaranteeing browser CORS delivery. 101 Switching Protocols responses bypass CORS mutation. Subrequest errors return structured 500 responses with CORS.
+    - **Joiner Failure Non-Re-Entrancy**: `handleJoinFailure(err)` in `zero_client/index.html` atomically checks and clears `isJoining = false` at entry before invoking `engine.close()`, neutralizing recursive callback re-entrancy triggered synchronously by RTCPeerConnection `"closed"` state events.
+    - **Unshadowed Web Crypto API**: Native `window.crypto.getRandomValues` is preserved without local variable shadowing by binding Wasm crypto session instances as `wasmCrypto`.
 
 ---
 
@@ -372,7 +376,8 @@ Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
     * Test 21: Unified Connectivity Resilience - Per-Peer Roles, Grace Window & Smart ICE (REQ-045.1 - REQ-045.4)
     * Test 22: WasmCryptoSession Browser Runtime Integration & Blind Dead-Drop - Wire Blindness, Authenticated AEAD & Ed25519 Signatures, 3-Peer Mesh Formation & Host Departure Continuity, Tamper Rejection & Fail-Closed Security, and Volatile Memory Wipe (REQ-047.1 - REQ-047.5)
     * Test 23: Ephemeral Cloudflare Realtime TURN Relay, 15-Minute ICE Caching & Adaptive Candidate Gathering - Three-Tier ICE Endpoint, 15m Cache Expiration, 350ms Relay vs 1200ms Srflx Settle Logic, and Authenticated 3-Peer Mesh over TURN Relay (REQ-049.1 - REQ-049.4)
+    * Test 24: Joiner Failure Non-Re-Entrancy, Web Crypto De-shadowing & Error Handling (ticket-052)
 
-Total: 117 Rust tests + 23 Browser tests passed, 0 failed.
+Total: 122 Rust tests + 24 Browser tests passed, 0 failed.
 ```
 
