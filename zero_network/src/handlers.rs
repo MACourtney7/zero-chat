@@ -261,13 +261,24 @@ pub fn process_dead_drop<S: HibernatingSocket>(
 
 /// Attaches permissive CORS headers to a Cloudflare Worker `Response`.
 pub fn with_cors(mut resp: Response) -> Result<Response> {
-    resp.headers_mut().set("Access-Control-Allow-Origin", "*")?;
-    resp.headers_mut()
-        .set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")?;
-    resp.headers_mut().set(
+    let status = resp.status_code();
+    if status == 101 {
+        return Ok(resp);
+    }
+
+    let headers = resp.headers_mut();
+    headers.set("Access-Control-Allow-Origin", "*")?;
+    headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")?;
+    headers.set(
         "Access-Control-Allow-Headers",
         "Content-Type, Authorization, X-Host-Secret",
     )?;
+    headers.set("Access-Control-Max-Age", "86400")?;
+
+    if (status == 200 || status == 201) && headers.get("Content-Type")?.is_none() {
+        headers.set("Content-Type", "application/json")?;
+    }
+
     Ok(resp)
 }
 
