@@ -3423,6 +3423,89 @@ async function runTests() {
         print("  PASS: Ephemeral Cloudflare TURN Provisioning, 15m Caching & Smart Relay Settle verified cleanly.");
     }
 
+    // =========================================================================
+    // TEST 24: Joiner Failure Non-Re-Entrancy & Crypto De-shadowing Verification
+    // =========================================================================
+    {
+        print("\n--- Test 24: Joiner Failure Non-Re-Entrancy & Crypto De-shadowing ---");
+        resetToHome();
+
+        // 1. Verify createRoomAsHost does not crash or malfunction with de-shadowed window.crypto
+        await createRoomAsHost();
+        assert(activeHostInviteUrl !== null, "createRoomAsHost must generate activeHostInviteUrl successfully");
+        assert(headerLeaveBtn.classList.contains("hidden") === false, "Host waiting: #header-leave-btn must be visible");
+        headerLeaveBtn.click();
+        resetToHome();
+
+        // 2. Direct Mock Test for Non-Re-Entrant handleJoinFailure
+        // Simulate an engine whose close() method synchronously invokes onStateChangeCb("closed")
+        let failureCalls = 0;
+        const originalHandleJoinFailure = window.handleJoinFailure;
+        
+        const mockEngine = {
+            onStateChangeCb: null,
+            close: function() {
+                // Synchronously invoke onStateChange callback with "closed", mimicking RTC state change
+                if (typeof this.onStateChangeCb === "function") {
+                    this.onStateChangeCb("closed", "mock-peer");
+                }
+            },
+            peers: new Map()
+        };
+
+        // Attach engine and initialize engine listeners
+        window.setEngine(mockEngine);
+        window.initEngineListeners();
+        window.setIsInRoomSession(true);
+        window.setIsJoining(true);
+
+        // Track system messages added to feed
+        const initialSystemMessagesCount = Array.from(feed.children).filter(el => 
+            el.textContent && el.textContent.includes("Failed to establish connection")
+        ).length;
+
+        // Wrap handleJoinFailure to count invocations
+        window.handleJoinFailure = function(err) {
+            failureCalls++;
+            return originalHandleJoinFailure(err);
+        };
+
+        // Invoke handleJoinFailure while isJoining=true
+        window.handleJoinFailure(new Error("Initial test failure"));
+
+        const finalSystemMessages = Array.from(feed.children).filter(el => 
+            el.textContent && el.textContent.includes("Failed to establish connection")
+        );
+        const addedSystemMessages = finalSystemMessages.length - initialSystemMessagesCount;
+
+        assert(failureCalls === 1, `handleJoinFailure must execute exactly once, but executed ${failureCalls} times`);
+        assert(addedSystemMessages === 1, `Exactly one 'Failed to establish connection' message must be added, but found ${addedSystemMessages}`);
+        assert(window.getIsJoining() === false, "isJoining must be reset to false");
+
+        // Restore original function and reset
+        window.handleJoinFailure = originalHandleJoinFailure;
+        resetToHome();
+
+        // 3. E2E joinRoomFromHash failure flow
+        const initialFeedCount = Array.from(feed.children).filter(el => 
+            el.textContent && el.textContent.includes("Failed to establish connection")
+        ).length;
+
+        await joinRoomFromHash("#payload=nonexistent_invalid_mock_data");
+        await delay(50);
+
+        const afterHashFailureCount = Array.from(feed.children).filter(el => 
+            el.textContent && el.textContent.includes("Failed to establish connection")
+        ).length - initialFeedCount;
+
+        assert(afterHashFailureCount === 1, `E2E join failure must add exactly 1 error message, got ${afterHashFailureCount}`);
+        assert(window.getIsJoining() === false, "isJoining must remain false after join failure");
+        assert(headerLeaveBtn.classList.contains("hidden") === false, "Leave button must be visible after join failure");
+
+        resetToHome();
+        print("  PASS: Joiner failure non-re-entrancy, clean cleanup & crypto de-shadowing verified cleanly.");
+    }
+
     print("\n===============================================================================");
     print("ALL BROWSER HEADLESS MESH TESTS PASSED SUCCESSFULLY!");
     print("===============================================================================");
