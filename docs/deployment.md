@@ -74,7 +74,7 @@ Automated deployment workflows running in GitHub Actions require Cloudflare auth
 
 The backend signaling worker is defined in `crates/zero_network/wrangler.toml` and requires the following Cloudflare configuration:
 
-- **Worker Name**: `network` (routes to `https://network.zero-chat.workers.dev`)
+- **Worker Name**: `network` (routes to `https://network.zero-network.workers.dev`)
 - **Main Entrypoint**: `build/worker/shim.mjs`
 - **Compatibility Date**: `2025-01-01`
 - **Compatibility Flags**: `["nodejs_compat"]`
