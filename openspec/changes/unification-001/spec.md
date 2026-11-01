@@ -4,7 +4,7 @@
 ---
 ticket_id: "unification-001"
 title: "Bootstrap Sibling Repositories (zero_protocol & zero_network) and Re-Wire zero_chat Baseline"
-state: "PLANNING"
+state: "IN_PROGRESS"
 created_at: "2026-11-01T15:27:00Z"
 base_branch: "main"
 ticket_branch: "factory/unification-001/main"
@@ -141,3 +141,4 @@ Additionally, the existing sibling directory `../virtual-dog-walker` must be nor
    - `cargo fmt -- --check` passes.
    - `bash zero_client/tests/browser/run_test.sh` passes all 24 headless browser tests.
    - `./scripts/deploy_dry_run.sh` builds release WASM and verifies bundle.
+
