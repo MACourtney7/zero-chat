@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.0.1"
+version: "1.0.2"
 milestone: "v1.0-release-production"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-10-28T17:30:00Z"
+updated_at: "2026-11-01T10:45:00Z"
 ---
 ```
 
@@ -161,6 +161,10 @@ updated_at: "2026-10-28T17:30:00Z"
     - **Durable Object RPC Boundary Reconstruction**: When the Cloudflare Worker router receives responses from `stub.fetch_with_request(req).await` in `/drop/:do_id/:invite_uuid`, subrequest responses have immutable headers (`guard: "immutable"`). Non-101 responses extract `status` and `body_text` and reconstruct a fresh mutable `worker::Response` in the outer isolate before applying `handlers::with_cors`, avoiding unhandled V8 exceptions and guaranteeing browser CORS delivery. 101 Switching Protocols responses bypass CORS mutation. Subrequest errors return structured 500 responses with CORS.
     - **Joiner Failure Non-Re-Entrancy**: `handleJoinFailure(err)` in `zero_client/index.html` atomically checks and clears `isJoining = false` at entry before invoking `engine.close()`, neutralizing recursive callback re-entrancy triggered synchronously by RTCPeerConnection `"closed"` state events.
     - **Unshadowed Web Crypto API**: Native `window.crypto.getRandomValues` is preserved without local variable shadowing by binding Wasm crypto session instances as `wasmCrypto`.
+28. **Cloudflare Worker Subdomain (`zero-network.workers.dev`) & Staged Scope Isolation**:
+    - Default signaling endpoints in `zero_client/index.html` target `https://network.zero-network.workers.dev` and `wss://network.zero-network.workers.dev`, matching the dedicated `zero-network` Cloudflare Workers subdomain.
+    - Dynamic staging/override support is preserved via `window.WORKER_HTTP_ORIGIN`.
+    - Cloudflare Pages static hosting remains strictly isolated under project `zero-chat` (`zero-chat.pages.dev`).
 
 ---
 
