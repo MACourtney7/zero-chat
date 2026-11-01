@@ -34,23 +34,11 @@ fi
 echo "--> Ensuring wasm32-unknown-unknown target is installed..."
 rustup target add wasm32-unknown-unknown
 
-# Step 2: Validate zero_network compilation
-echo "--> Validating zero_network compilation for wasm32-unknown-unknown..."
-cargo check -p zero_network --target wasm32-unknown-unknown
-
-if command -v worker-build >/dev/null 2>&1; then
-    echo "--> Testing worker-build --release in zero_network..."
-    (cd zero_network && worker-build --release)
-else
-    echo "--> [Notice] worker-build is not installed locally. Skipping worker-build step."
-    echo "    (In CI, worker-build is installed and run by wrangler-action)."
-fi
-
-# Step 3: Build zero_client release WASM
+# Step 2: Build zero_client release WASM
 echo "--> Building zero_client release WASM..."
 cargo build -p zero_client --release --target wasm32-unknown-unknown
 
-# Step 4: Assemble static bundle in dist/
+# Step 3: Assemble static bundle in dist/
 echo "--> Assembling static bundle in dist/..."
 mkdir -p dist/pkg
 
@@ -81,7 +69,7 @@ echo "--> Copying web assets (index.html, style.css)..."
 cp zero_client/index.html dist/
 cp zero_client/style.css dist/
 
-# Step 5: Assert bundle integrity
+# Step 4: Assert bundle integrity
 echo "--> Verifying assembled bundle integrity..."
 if [[ ! -f "dist/index.html" ]]; then
     echo "Error: dist/index.html missing!" >&2
@@ -99,7 +87,7 @@ if [[ "${WASM_COUNT}" -eq 0 ]]; then
     exit 1
 fi
 
-# Step 6: Print artifact details
+# Step 5: Print artifact details
 echo "================================================================="
 echo " Assembled Artifacts in dist/:"
 ls -lh dist/

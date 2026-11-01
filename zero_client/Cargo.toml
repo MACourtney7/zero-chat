@@ -15,4 +15,5 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
-zero_protocol = { path = "../crates/zero_protocol" }
+zero_protocol = { path = "../../zero_protocol/crates/zero_protocol" }
+zero_mesh = { path = "../../zero_protocol/crates/zero_mesh" }
