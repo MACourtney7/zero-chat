@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-053"
 title: "Migrate Cloudflare Workers Subdomain from zero-chat to zero-network"
-state: "PLANNING"
+state: "IN_PROGRESS"
 created_at: "2026-11-01T10:27:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-053/main"
