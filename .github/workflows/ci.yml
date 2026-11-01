@@ -23,7 +23,7 @@ jobs:
       - name: Checkout zero_protocol sibling
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/zero_protocol
+          repository: ${{ github.repository_owner }}/zero-protocol
           path: zero_protocol
           token: ${{ secrets.GITHUB_TOKEN }}
 
