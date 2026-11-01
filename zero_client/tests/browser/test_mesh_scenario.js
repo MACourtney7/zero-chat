@@ -796,7 +796,7 @@ async function runTests() {
             peer_id: invitePayload.assigned_peer_id
         };
 
-        const dropUrl = `https://network.zero-chat.workers.dev/drop/${invitePayload.do_id}/${invitePayload.invite_uuid}`;
+        const dropUrl = `https://network.zero-network.workers.dev/drop/${invitePayload.do_id}/${invitePayload.invite_uuid}`;
         await fetch(dropUrl, {
             method: "POST",
             body: JSON.stringify(dropPayload)
@@ -1291,7 +1291,7 @@ async function runTests() {
             peer_id: invitePayload.assigned_peer_id
         };
 
-        const dropUrlB = `https://network.zero-chat.workers.dev/drop/${invitePayload.do_id}/${invitePayload.invite_uuid}`;
+        const dropUrlB = `https://network.zero-network.workers.dev/drop/${invitePayload.do_id}/${invitePayload.invite_uuid}`;
         await fetch(dropUrlB, {
             method: "POST",
             body: JSON.stringify(dropPayloadB)
@@ -1436,7 +1436,7 @@ async function runTests() {
             peer_id: invitePayloadC.assigned_peer_id
         };
 
-        const dropUrlC = `https://network.zero-chat.workers.dev/drop/${invitePayloadC.do_id}/${invitePayloadC.invite_uuid}`;
+        const dropUrlC = `https://network.zero-network.workers.dev/drop/${invitePayloadC.do_id}/${invitePayloadC.invite_uuid}`;
         await fetch(dropUrlC, {
             method: "POST",
             body: JSON.stringify(dropPayloadC)
@@ -2517,7 +2517,7 @@ async function runTests() {
             "Host must successfully decrypt sealed_sdp_answer and recover genuine SDP answer string");
 
         // Transmit drop payload to establish connection
-        const dropUrl = `https://network.zero-chat.workers.dev/drop/${hostPayload.do_id}/${hostPayload.invite_uuid}`;
+        const dropUrl = `https://network.zero-network.workers.dev/drop/${hostPayload.do_id}/${hostPayload.invite_uuid}`;
         await fetch(dropUrl, {
             method: "POST",
             body: JSON.stringify(dropPayload)

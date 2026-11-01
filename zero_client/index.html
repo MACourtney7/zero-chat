@@ -198,9 +198,9 @@
     </div>
 
     <script type="module">
-        const WORKER_ORIGIN = "https://network.zero-chat.workers.dev";
+        const WORKER_ORIGIN = "https://network.zero-network.workers.dev";
         const WORKER_HTTP_ORIGIN = (typeof window !== "undefined" && window.WORKER_HTTP_ORIGIN) ? window.WORKER_HTTP_ORIGIN : WORKER_ORIGIN;
-        const WORKER_WS_ORIGIN = "wss://network.zero-chat.workers.dev";
+        const WORKER_WS_ORIGIN = "wss://network.zero-network.workers.dev";
         if (typeof window !== "undefined" && !window.WORKER_HTTP_ORIGIN) {
             window.WORKER_HTTP_ORIGIN = WORKER_HTTP_ORIGIN;
         }
