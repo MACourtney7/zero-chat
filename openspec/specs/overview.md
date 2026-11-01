@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.2.0"
-milestone: "v1.2-virtual-dog-walker-zero-mesh-migration"
+version: "1.3.0"
+milestone: "v1.3-simulation-core-rust-wasm-port"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-11-01T18:00:00Z"
+updated_at: "2026-11-01T18:13:00Z"
 ---
 ```
 
@@ -389,12 +389,12 @@ Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
     * Test 23: Ephemeral Cloudflare Realtime TURN Relay, 15-Minute ICE Caching & Adaptive Candidate Gathering - Three-Tier ICE Endpoint, 15m Cache Expiration, 350ms Relay vs 1200ms Srflx Settle Logic, and Authenticated 3-Peer Mesh over TURN Relay (REQ-049.1 - REQ-049.4)
     * Test 24: Joiner Failure Non-Re-Entrancy, Web Crypto De-shadowing & Error Handling (ticket-052)
 
-Unification & Multi-Application P2P Infrastructure (unification-001, unification-002 & unification-003):
+Unification & Multi-Application P2P Infrastructure (unification-001, unification-002, unification-003 & unification-004):
   - Independent Workspace Topology:
     * zero_protocol: Cargo workspace hosting zero_protocol wire/crypto crate and zero_mesh headless WASM engine.
     * zero_network: Standalone Cloudflare signaling worker and hibernating Durable Object.
     * zero_chat: Clean chat frontend compiling WASM client against sibling crates.
-    * virtual_dog_walker: Clifton Down dog-walking simulation running over zero_mesh P2P on Cloudflare Pages.
+    * virtual_dog_walker: Clifton Down dog-walking simulation running over zero_mesh P2P and dog_walker_core on Cloudflare Pages.
   - Wire Envelope & State Streaming:
     * `MeshRelaySignal::BroadcastState`: Authenticated binary/application state streaming multiplexed by topic.
     * `MeshTopology::broadcast_state` & `send_direct_state`: Pairwise ChaCha20-Poly1305 payload encryption, cache deduplication, and multi-hop TTL relaying.
@@ -408,8 +408,11 @@ Unification & Multi-Application P2P Infrastructure (unification-001, unification
     * Game State P2P Replication: Encrypted `game_packet` topic broadcast over `gameMesh` for dog physics, leash sync, toy trajectories, and actions.
     * Deterministic P2P NPC Authority: Lowest lexicographical `peerId` coordinates ambient park NPCs, snapshots delivered to late-joiners, and empty room reseed.
     * Dual-Mesh Proximity Chat: Completely isolated `proximityChatMesh` with 160px/200px hysteresis (`joinRadius: 160`, `leaveRadius: 200`) and 5-minute message retention.
-    * Static Cloudflare Pages CI/CD: Automated `build:wasm` and `build` pipeline producing self-contained `dist/` bundle.
+  - Simulation Core Port to Rust/Wasm (unification-004):
+    * `crates/dog_walker_core`: Deterministic Rust simulation crate compiled to `wasm32-unknown-unknown` covering circle collision pushout, world boundary clamping, spring-damper leash constraint, 3D ball ballistics with ground/obstacle bounces, and polyline NPC path sampling.
+    * Dual Wasm Build: `scripts/build_wasm.sh` compiling both `zero_mesh` (to `src/wasm/`) and `dog_walker_core` (to `src/wasm_core/`), packaged into `dist/`.
+    * Strangler-Fig Bridge: `src/engine/wasm_sim_bridge.js` delegating frame simulation ticks to `WasmWorldSim` while transparently preserving pure JS math fallbacks for headless Python test runners.
 
-Total: All repository test suites passing with zero regressions across virtual_dog_walker (all 21 suites), zero_protocol (109 tests), zero_network (17 tests), and zero_chat (36 tests).
+Total: All repository test suites passing with zero regressions across virtual_dog_walker (all 22 suites), zero_protocol (109 tests), zero_network (17 tests), and zero_chat (36 tests).
 ```
 
