@@ -3,10 +3,10 @@
 ```yaml
 ---
 system: "zero_chat"
-version: "1.0.2"
-milestone: "v1.0-release-production"
+version: "1.1.0"
+milestone: "v1.1-sibling-repo-unification"
 status: "PRODUCTION_CANONICAL"
-updated_at: "2026-11-01T10:45:00Z"
+updated_at: "2026-11-01T16:05:00Z"
 ---
 ```
 
@@ -165,39 +165,46 @@ updated_at: "2026-11-01T10:45:00Z"
     - Default signaling endpoints in `zero_client/index.html` target `https://network.zero-network.workers.dev` and `wss://network.zero-network.workers.dev`, matching the dedicated `zero-network` Cloudflare Workers subdomain.
     - Dynamic staging/override support is preserved via `window.WORKER_HTTP_ORIGIN`.
     - Cloudflare Pages static hosting remains strictly isolated under project `zero-chat` (`zero-chat.pages.dev`).
+29. **Decoupled Sibling Repositories & Modular Mesh Engine Architecture**:
+    - Core wire protocols, cryptographic primitives, and headless P2P mesh state machines are factored out into standalone sibling repository `../zero_protocol` (Cargo workspace containing `zero_protocol` and `zero_mesh`).
+    - The ephemeral signaling worker and hibernating Durable Object are factored out into standalone sibling repository `../zero_network`.
+    - `zero_chat` operates as a focused web client repository: `zero_client` consumes `zero_protocol` and `zero_mesh` from sibling path dependencies, re-exporting `WasmCryptoSession` and entrypoints for zero-npm browser delivery on Cloudflare Pages.
+    - Multi-project ecosystem sibling directory `../virtual_dog_walker` is normalized to snake_case.
 
 ---
 
 ## 2. Directory Layout & Subsystem Ownership
 
 ```text
-zero_chat/
-├── .agents/                        # Antigravity IDE configuration & plugins
-│   ├── plugins.json                # Software factory plugin reference
-│   └── mcp_config.json             # MCP server configuration
-├── .factory/                       # Factory state machine runtime (gitignored)
-├── .github/
-│   └── workflows/                  # CI/CD automation pipelines
-│       ├── ci.yml                  # Format, clippy, test, and wasm build validation
-│       └── deploy.yml              # Cloudflare Worker and Pages deployment
-├── crates/
-│   └── zero_protocol/              # Shared schemas, DTOs, & crypto primitives
-│       ├── Cargo.toml
-│       └── src/
-│           ├── lib.rs
-│           ├── crypto.rs           # HMAC-SHA256, X25519, ChaCha20-Poly1305
-│           └── envelope.rs         # Signaling, chat, and mesh relay envelopes
-├── zero_client/                    # Pure-Rust WASM Cryptography, Protocol & Pure-State library
-│   ├── Cargo.toml                  # Lean WASM configuration (zero DOM feature flags)
-│   ├── index.html                  # Zero-npm HTML/CSS web frontend & WebRTC orchestrator
-│   ├── style.css                   # Glassmorphic dark-mode styling
-│   └── src/
-│       ├── lib.rs                  # Clean public surface (WasmCryptoSession, crypto, invite, mesh, webrtc)
-│       ├── crypto.rs               # WasmCryptoSession & ChaCha20-Poly1305 AEAD sealing
-│       ├── invite.rs               # Offline HMAC invite generation & URL fragment packing
-│       ├── mesh.rs                 # Pure-Rust mesh topology, PeerRole & disconnect grace
-│       └── webrtc.rs               # Pure-Rust WebRTC state machine, SDP validator & in-memory test channels
-├── zero_network/                   # Stateless Cloudflare Worker & Durable Object
+<parent_dir>/
+├── zero_protocol/                      # Sibling repo: Cargo workspace (zero_protocol + zero_mesh)
+│   ├── Cargo.toml
+│   └── crates/
+│       ├── zero_protocol/              # Shared wire types, DTOs, & crypto primitives
+│       │   ├── Cargo.toml
+│       │   └── src/ (lib.rs, crypto.rs, envelope.rs)
+│       └── zero_mesh/                  # Headless P2P WebRTC mesh engine & state machine
+│           ├── Cargo.toml
+│           └── src/ (lib.rs, crypto.rs, invite.rs, mesh.rs, webrtc.rs)
+├── zero_network/                       # Sibling repo: Standalone Cloudflare Signaling Worker
+│   ├── Cargo.toml
+│   ├── wrangler.toml
+│   └── src/ (lib.rs, durable_object.rs, handlers.rs)
+├── zero_chat/                          # Primary web frontend repository
+│   ├── .agents/                        # Antigravity IDE configuration & plugins
+│   ├── .factory/                       # Factory state machine runtime (gitignored)
+│   ├── .github/workflows/              # CI/CD automation pipelines (ci.yml, deploy.yml)
+│   ├── Cargo.toml                      # Workspace declaring ["zero_client"]
+│   ├── zero_client/                    # Web client crate (consumes zero_protocol & zero_mesh)
+│   │   ├── Cargo.toml                  # Lean WASM configuration & sibling path dependencies
+│   │   ├── index.html                  # Zero-npm HTML/CSS web frontend & WebRTC orchestrator
+│   │   ├── style.css                   # Glassmorphic dark-mode styling
+│   │   ├── src/lib.rs                  # Clean public surface re-exporting zero_mesh & WasmCryptoSession
+│   │   └── tests/                      # Integration test suites
+│   ├── dist/                           # Assembled static bundle for Cloudflare Pages
+│   └── scripts/deploy_dry_run.sh       # Local dry-run build & bundle verification
+└── virtual_dog_walker/                 # Normalized multi-project sibling repo
+```
 │   ├── Cargo.toml
 │   ├── wrangler.toml               # Cloudflare configuration & DO bindings
 │   └── src/
