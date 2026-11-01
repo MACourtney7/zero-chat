@@ -389,6 +389,20 @@ Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
     * Test 23: Ephemeral Cloudflare Realtime TURN Relay, 15-Minute ICE Caching & Adaptive Candidate Gathering - Three-Tier ICE Endpoint, 15m Cache Expiration, 350ms Relay vs 1200ms Srflx Settle Logic, and Authenticated 3-Peer Mesh over TURN Relay (REQ-049.1 - REQ-049.4)
     * Test 24: Joiner Failure Non-Re-Entrancy, Web Crypto De-shadowing & Error Handling (ticket-052)
 
-Total: 122 Rust tests + 24 Browser tests passed, 0 failed.
+Unification & Multi-Application P2P Infrastructure (unification-001 & unification-002):
+  - Independent Workspace Topology:
+    * zero_protocol: Cargo workspace hosting zero_protocol wire/crypto crate and zero_mesh headless WASM engine.
+    * zero_network: Standalone Cloudflare signaling worker and hibernating Durable Object.
+    * zero_chat: Clean chat frontend compiling WASM client against sibling crates.
+  - Wire Envelope & State Streaming:
+    * `MeshRelaySignal::BroadcastState`: Authenticated binary/application state streaming multiplexed by topic.
+    * `MeshTopology::broadcast_state` & `send_direct_state`: Pairwise ChaCha20-Poly1305 payload encryption, cache deduplication, and multi-hop TTL relaying.
+    * `WasmMeshTopology`: Headless JavaScript/WASM bindings for browser and game engines.
+  - Dead-Drop Matchmaking & Multi-Host Signaling:
+    * `POST /stage/:do_id` & WS staging: Single-use `InvitePayload` staging with constant-time HMAC validation.
+    * `GET /match/:do_id`: Pseudo-random host selection and atomic single-use invite consumption.
+    * Multi-Host Targeted Routing: Token-matching targeted dead-drop delivery in multi-peer rooms.
+
+Total: All repository test suites passing with zero regressions across zero_protocol (109 tests), zero_network (17 tests), and zero_chat (36 tests).
 ```
 
