@@ -1,9 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/zero_protocol",
     "zero_client",
-    "zero_network",
 ]
 
 [workspace.package]
