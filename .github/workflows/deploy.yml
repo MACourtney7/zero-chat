@@ -35,7 +35,7 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install wasm-bindgen-cli
-        run: cargo install -q wasm-bindgen-cli
+        run: cargo install -q wasm-bindgen-cli --version 0.2.129
 
       - name: Build Client WASM
         working-directory: zero_chat
