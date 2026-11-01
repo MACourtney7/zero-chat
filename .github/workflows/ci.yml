@@ -15,8 +15,17 @@ jobs:
     name: Test & Lint
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout zero_chat
         uses: actions/checkout@v4
+        with:
+          path: zero_chat
+
+      - name: Checkout zero_protocol sibling
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/zero_protocol
+          path: zero_protocol
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -26,18 +35,21 @@ jobs:
 
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: zero_chat -> zero_chat/Cargo.lock
 
       - name: Check code formatting
+        working-directory: zero_chat
         run: cargo fmt --all -- --check
 
       - name: Lint with Clippy
+        working-directory: zero_chat
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Run workspace tests
+        working-directory: zero_chat
         run: cargo test --workspace
 
       - name: Validate WASM compilation (zero_client)
+        working-directory: zero_chat
         run: cargo build -p zero_client --target wasm32-unknown-unknown
-
-      - name: Validate WASM check (zero_network)
-        run: cargo check -p zero_network --target wasm32-unknown-unknown

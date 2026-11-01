@@ -1,17 +1,13 @@
-//! Zero-footprint WASM P2P client crate.
+//! Zero-footprint WASM P2P client crate for zero-chat.
+pub use zero_mesh;
 pub use zero_protocol;
 
-pub mod crypto;
-pub mod invite;
-pub mod mesh;
-pub mod webrtc;
-
-pub use crypto::WasmCryptoSession;
+pub use zero_mesh::crypto::WasmCryptoSession;
 #[allow(unused_imports)]
-pub use crypto::*;
+pub use zero_mesh::crypto::*;
 #[allow(unused_imports)]
-pub use invite::*;
+pub use zero_mesh::invite::*;
 #[allow(unused_imports)]
-pub use mesh::*;
+pub use zero_mesh::mesh::*;
 #[allow(unused_imports)]
-pub use webrtc::*;
+pub use zero_mesh::webrtc::*;
