@@ -389,7 +389,7 @@ Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
     * Test 23: Ephemeral Cloudflare Realtime TURN Relay, 15-Minute ICE Caching & Adaptive Candidate Gathering - Three-Tier ICE Endpoint, 15m Cache Expiration, 350ms Relay vs 1200ms Srflx Settle Logic, and Authenticated 3-Peer Mesh over TURN Relay (REQ-049.1 - REQ-049.4)
     * Test 24: Joiner Failure Non-Re-Entrancy, Web Crypto De-shadowing & Error Handling (ticket-052)
 
-Unification & Multi-Application P2P Infrastructure (unification-001 through unification-007):
+Unification & Multi-Application P2P Infrastructure (unification-001 through unification-008):
   - Independent Workspace Topology:
     * zero_protocol: Cargo workspace hosting zero_protocol wire/crypto crate and zero_mesh headless WASM engine.
     * zero_network: Standalone Cloudflare signaling worker and hibernating Durable Object.
@@ -405,18 +405,21 @@ Unification & Multi-Application P2P Infrastructure (unification-001 through unif
     * Multi-Host Targeted Routing: Token-matching targeted dead-drop delivery in multi-peer rooms.
     * WebSocket Query Authentication: `GET /host/:do_id?secret=<hex>` enabling browser `new WebSocket` connections without custom HTTP headers, verified via constant-time comparison.
     * Universal CORS & Preflight: Standard CORS headers attached across all HTTP routes with immediate 204 No Content responses on `OPTIONS` preflights.
-  - Virtual Dog Walker zero_mesh Migration & Production Hardening (unification-003, unification-005, unification-006 & unification-007):
+  - Virtual Dog Walker zero_mesh Migration & Production Hardening (unification-003, unification-005, unification-006, unification-007 & unification-008):
     * Browser ES Module Integrity: Clean separation with zero bare JSON imports, ensuring unbundled browser module loaders evaluate `<script type="module" src="src/main.js">` cleanly.
     * Cloudflare Static Assets Protection: Strict `.assetsignore` excluding Rust build caches (`target/`), Git history, worktrees, and test runners from Pages deployments.
     * Seed Host Local NPC Dispatch: Instant local invocation of `onNpcSnapshot(snapshot, Date.now())` upon `initNpcSpawner()`, plus symmetric local `onNpcDespawn` and `onNpcSpawn` dispatching so the host player immediately interacts with ambient park pedestrians.
     * Ambient NPC Nighttime Illumination: Active NPCs included in the lighting pass with radial cutouts (`pRadius = 60`) in `environment.js`, ensuring pedestrians remain visible through Dusk and Night cycles.
-    * Public Matchmaking: Automatic connection to `clifton-commons` room via `GET /match/:do_id` with seed host fallback and multi-host staging.
+    * Live Dual-Mesh Proximity WebRTC Handshake: In-band SDP offer/answer (`proximity_invite` / `proximity_drop`) negotiated over `gameMesh.send_direct_state`, with `proximityMesh.set_on_message` incoming routing and instant encrypted fallback delivery during ICE gathering.
+    * Public Matchmaking & Commons Status: Automatic connection to `clifton-commons` room via `GET /match/:do_id` with seed host fallback, multi-host staging, and green `Online` HUD badge.
     * Real WebRTC Handshake: Joiner creates answer and seals with `seal_drop_sdp`; host authenticates WS with `?secret=${secretHex}`, signs with `compute_hmac_hex`, decrypts drop answers with `open_drop_sdp`, and replenishes staged offers.
     * Game State P2P Replication: `ensureRemotePeer` maintaining `{ ownerInterpolator, dogInterpolator, meta }`, `startSyncLoop` (16 Hz) broadcasting `Protocol.createSyncState` { owner, dog }, and symmetric `onPeerJoin(senderId, meta)`.
     * Deterministic P2P NPC Authority: Lowest lexicographical `peerId` coordinates ambient park NPCs, snapshots delivered to late-joiners, and empty room reseed.
     * Dual-Mesh Proximity Chat: Completely isolated `proximityChatMesh` with 160px/200px hysteresis (`joinRadius: 160`, `leaveRadius: 200`) and 5-minute message retention.
-  - Simulation Core Port to Rust/Wasm (unification-004, unification-005 & unification-006):
+  - Simulation Core Port to Rust/Wasm (unification-004 through unification-008):
     * `crates/dog_walker_core`: Deterministic Rust simulation crate compiled to `wasm32-unknown-unknown` covering circle collision pushout, world boundary clamping, spring-damper leash constraint, floppy ear springs, 3D ball ballistics with ground/obstacle bounces, static obstacle colliders, and polyline NPC path sampling.
+    * Full Map Calibration: `WasmWorldSim(3200.0, 2400.0)` calibrated to Clifton Down coordinate bounds.
+    * Entity Simulation Delegation: `CompanionDog.update()` delegates progressive spring-damper leash cushioning (65px..105px) directly to `dog_walker_core::step_leash_constraint` before 105px hard boundary clamping.
     * Dual Wasm Build: `scripts/build_wasm.sh` compiling both `zero_mesh` (to `src/wasm/`) and `dog_walker_core` (to `src/wasm_core/`), packaged into `dist/`.
     * Strangler-Fig Bridge: `src/engine/wasm_sim_bridge.js` delegating frame simulation ticks to `WasmWorldSim` while transparently preserving pure JS math fallbacks for headless Python test runners.
 
