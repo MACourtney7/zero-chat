@@ -389,7 +389,7 @@ Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
     * Test 23: Ephemeral Cloudflare Realtime TURN Relay, 15-Minute ICE Caching & Adaptive Candidate Gathering - Three-Tier ICE Endpoint, 15m Cache Expiration, 350ms Relay vs 1200ms Srflx Settle Logic, and Authenticated 3-Peer Mesh over TURN Relay (REQ-049.1 - REQ-049.4)
     * Test 24: Joiner Failure Non-Re-Entrancy, Web Crypto De-shadowing & Error Handling (ticket-052)
 
-Unification & Multi-Application P2P Infrastructure (unification-001, unification-002, unification-003, unification-004 & unification-005):
+Unification & Multi-Application P2P Infrastructure (unification-001 through unification-006):
   - Independent Workspace Topology:
     * zero_protocol: Cargo workspace hosting zero_protocol wire/crypto crate and zero_mesh headless WASM engine.
     * zero_network: Standalone Cloudflare signaling worker and hibernating Durable Object.
@@ -403,17 +403,21 @@ Unification & Multi-Application P2P Infrastructure (unification-001, unification
     * `POST /stage/:do_id` & WS staging: Single-use `InvitePayload` staging with constant-time HMAC validation.
     * `GET /match/:do_id`: Pseudo-random host selection and atomic single-use invite consumption.
     * Multi-Host Targeted Routing: Token-matching targeted dead-drop delivery in multi-peer rooms.
-  - Virtual Dog Walker zero_mesh Migration (unification-003 & unification-005):
+    * WebSocket Query Authentication: `GET /host/:do_id?secret=<hex>` enabling browser `new WebSocket` connections without custom HTTP headers, verified via constant-time comparison.
+    * Universal CORS & Preflight: Standard CORS headers attached across all HTTP routes with immediate 204 No Content responses on `OPTIONS` preflights.
+  - Virtual Dog Walker zero_mesh Migration & Production Hardening (unification-003, unification-005 & unification-006):
+    * Browser ES Module Integrity: Clean separation with zero bare JSON imports, ensuring unbundled browser module loaders evaluate `<script type="module" src="src/main.js">` cleanly.
+    * Cloudflare Static Assets Protection: Strict `.assetsignore` excluding Rust build caches (`target/`), Git history, worktrees, and test runners from Pages deployments.
     * Public Matchmaking: Automatic connection to `clifton-commons` room via `GET /match/:do_id` with seed host fallback and multi-host staging.
     * Real WebRTC Handshake: Joiner creates answer and seals with `seal_drop_sdp`; host authenticates WS with `?secret=${secretHex}`, signs with `compute_hmac_hex`, decrypts drop answers with `open_drop_sdp`, and replenishes staged offers.
     * Game State P2P Replication: `ensureRemotePeer` maintaining `{ ownerInterpolator, dogInterpolator, meta }`, `startSyncLoop` (16 Hz) broadcasting `Protocol.createSyncState` { owner, dog }, and symmetric `onPeerJoin(senderId, meta)`.
     * Deterministic P2P NPC Authority: Lowest lexicographical `peerId` coordinates ambient park NPCs, snapshots delivered to late-joiners, and empty room reseed.
     * Dual-Mesh Proximity Chat: Completely isolated `proximityChatMesh` with 160px/200px hysteresis (`joinRadius: 160`, `leaveRadius: 200`) and 5-minute message retention.
-  - Simulation Core Port to Rust/Wasm (unification-004 & unification-005):
-    * `crates/dog_walker_core`: Deterministic Rust simulation crate compiled to `wasm32-unknown-unknown` covering circle collision pushout, world boundary clamping, spring-damper leash constraint, floppy ear springs, 3D ball ballistics with ground/obstacle bounces, and polyline NPC path sampling.
+  - Simulation Core Port to Rust/Wasm (unification-004, unification-005 & unification-006):
+    * `crates/dog_walker_core`: Deterministic Rust simulation crate compiled to `wasm32-unknown-unknown` covering circle collision pushout, world boundary clamping, spring-damper leash constraint, floppy ear springs, 3D ball ballistics with ground/obstacle bounces, static obstacle colliders, and polyline NPC path sampling.
     * Dual Wasm Build: `scripts/build_wasm.sh` compiling both `zero_mesh` (to `src/wasm/`) and `dog_walker_core` (to `src/wasm_core/`), packaged into `dist/`.
     * Strangler-Fig Bridge: `src/engine/wasm_sim_bridge.js` delegating frame simulation ticks to `WasmWorldSim` while transparently preserving pure JS math fallbacks for headless Python test runners.
 
-Total: All repository test suites passing with zero regressions across virtual_dog_walker (all 22 suites), zero_protocol (109 tests), zero_network (17 tests), and zero_chat (36 tests).
+Total: All repository test suites passing with zero regressions across virtual_dog_walker (all 22 suites), zero_protocol (109 tests), zero_network (19 tests), and zero_chat (36 tests).
 ```
 
