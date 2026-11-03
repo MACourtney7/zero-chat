@@ -4,7 +4,7 @@
 ---
 ticket_id: "unification-009"
 title: "Extract Reusable ZeroChatWidget from zero_chat and Mount Inside virtual_dog_walker Proximity Chat"
-state: "IN_PROGRESS"
+state: "COMPLETED"
 created_at: "2026-11-03T20:15:00Z"
 target_repos:
   - "../zero_chat"
