@@ -1,0 +1,341 @@
+/* ==============================================================================
+   ZeroChatWidget - Canonical Scoped Glassmorphic Styles
+   ============================================================================== */
+
+.zero-chat-widget {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: #f8fafc;
+}
+
+/* Standalone Container Mode */
+.zero-chat-widget.zero-chat-standalone {
+  max-width: 380px;
+  height: 520px;
+  background: rgba(15, 23, 42, 0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  border-radius: 16px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55), 0 0 24px rgba(56, 189, 248, 0.15);
+}
+
+/* Embedded Container Mode */
+.zero-chat-widget.zero-chat-embedded {
+  background: transparent;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Scoped Header Bar */
+.zero-chat-widget .zero-chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: rgba(30, 41, 59, 0.65);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+/* Scoped Peer Pill / Status Indicator */
+.zero-chat-widget .peer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  color: #38bdf8;
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+.zero-chat-widget .peer-lock-icon {
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.zero-chat-widget .peer-count {
+  font-size: 0.75rem;
+  color: #38bdf8;
+}
+
+/* Scoped Burn Header Button */
+.zero-chat-widget .btn-header-burn {
+  background: transparent;
+  border: none;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 4px 6px;
+  cursor: pointer;
+  border-radius: 6px;
+  opacity: 0.75;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.zero-chat-widget .btn-header-burn:hover {
+  opacity: 1;
+  transform: scale(1.15);
+}
+
+.zero-chat-widget .btn-header-burn:active {
+  transform: scale(0.92);
+}
+
+/* Scoped Messages Area */
+.zero-chat-widget .zero-chat-messages {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+  scroll-behavior: smooth;
+  min-height: 100px;
+}
+
+.zero-chat-widget .zero-chat-messages::-webkit-scrollbar {
+  width: 5px;
+}
+.zero-chat-widget .zero-chat-messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+.zero-chat-widget .zero-chat-messages::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
+}
+.zero-chat-widget .zero-chat-messages::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+/* Scoped Message Bubbles */
+.zero-chat-widget .message-bubble {
+  position: relative;
+  min-width: 120px;
+  max-width: 85%;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: zeroChatFadeIn 0.2s ease-out;
+  box-sizing: border-box;
+}
+
+@keyframes zeroChatFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Scoped Incoming Message */
+.zero-chat-widget .message-incoming {
+  align-self: flex-start;
+  background: rgba(14, 165, 233, 0.12);
+  border: 1px solid rgba(14, 165, 233, 0.25);
+  border-left: 3px solid var(--peer-color, #38bdf8);
+  border-bottom-left-radius: 4px;
+  box-shadow: 0 4px 16px rgba(14, 165, 233, 0.08);
+}
+
+/* Scoped Outgoing Message */
+.zero-chat-widget .message-outgoing {
+  align-self: flex-end;
+  background: rgba(16, 185, 129, 0.14);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-left: 3px solid #10b981;
+  border-bottom-right-radius: 4px;
+  box-shadow: 0 4px 16px rgba(16, 185, 129, 0.1);
+}
+
+/* Scoped Header within Message */
+.zero-chat-widget .message-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 0.72rem;
+  margin-bottom: 2px;
+}
+
+.zero-chat-widget .message-sender {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  flex: 1 1 auto;
+}
+
+.zero-chat-widget .message-incoming .message-sender {
+  color: var(--peer-color, #38bdf8);
+}
+
+.zero-chat-widget .message-outgoing .message-sender {
+  color: #34d399;
+}
+
+/* Scoped Peer Color Dot */
+.zero-chat-widget .peer-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--peer-color, #38bdf8);
+  box-shadow: 0 0 6px var(--peer-color, #38bdf8);
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.zero-chat-widget .peer-dot.self-dot {
+  background-color: #10b981;
+  box-shadow: 0 0 6px #10b981;
+}
+
+/* Scoped Per-Message Burn Button */
+.zero-chat-widget .btn-message-burn {
+  background: transparent;
+  border: none;
+  font-size: 0.75rem;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: 4px;
+  margin-left: auto;
+  opacity: 0.55;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  user-select: none;
+  -webkit-user-select: none;
+  flex-shrink: 0;
+}
+
+.zero-chat-widget .btn-message-burn:hover {
+  opacity: 1;
+  transform: scale(1.2);
+}
+
+.zero-chat-widget .btn-message-burn:active {
+  transform: scale(0.9);
+}
+
+/* Scoped Message Body Text */
+.zero-chat-widget .message-text {
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: #f1f5f9;
+}
+
+/* Scoped Ephemeral Aging & Dissolve Animation */
+.zero-chat-widget .message-aging {
+  opacity: 0.80 !important;
+  transition: opacity 20s linear !important;
+}
+
+.zero-chat-widget .message-dissolve {
+  opacity: 0 !important;
+  transform: scale(0.95) !important;
+  max-height: 0 !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  overflow: hidden !important;
+  transition: opacity 0.2s ease-out, transform 0.2s ease-out, max-height 0.2s ease-out, margin 0.2s ease-out, padding 0.2s ease-out !important;
+}
+
+/* Scoped Input Bar */
+.zero-chat-widget .zero-chat-input-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(15, 23, 42, 0.75);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+.zero-chat-widget .zero-chat-input {
+  flex: 1 1 auto;
+  height: 38px;
+  padding: 0 12px;
+  background: rgba(30, 41, 59, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  color: #f8fafc;
+  font-size: 0.85rem;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  box-sizing: border-box;
+}
+
+.zero-chat-widget .zero-chat-input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.zero-chat-widget .zero-chat-input:focus {
+  border-color: #10b981;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.25);
+}
+
+/* Scoped Emerald Send Button */
+.zero-chat-widget .btn-send-emerald {
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #10b981, #059669);
+  border: none;
+  border-radius: 8px;
+  color: #ffffff;
+  font-size: 1.1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.35);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.zero-chat-widget .btn-send-emerald:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.5);
+  opacity: 0.95;
+}
+
+.zero-chat-widget .btn-send-emerald:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 4px rgba(16, 185, 129, 0.4);
+}
+
+.zero-chat-widget .btn-send-emerald:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}

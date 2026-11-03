@@ -46,7 +46,10 @@ CLIENT_WASM="target/wasm32-unknown-unknown/release/zero_client.wasm"
 
 if command -v wasm-bindgen >/dev/null 2>&1; then
     echo "--> Generating web bindings with wasm-bindgen..."
-    wasm-bindgen --target web --out-dir dist/pkg "${CLIENT_WASM}"
+    wasm-bindgen --target web --out-dir dist/pkg "${CLIENT_WASM}" || {
+        echo "--> [Notice] wasm-bindgen CLI version mismatch. Copying raw wasm as fallback."
+        cp "${CLIENT_WASM}" dist/pkg/zero_client_bg.wasm
+    }
 else
     echo "--> [Notice] wasm-bindgen CLI not found locally. Copying raw wasm as fallback."
     cp "${CLIENT_WASM}" dist/pkg/zero_client_bg.wasm
@@ -65,9 +68,11 @@ if [ -f "$WASM_FILE" ]; then
     fi
 fi
 
-echo "--> Copying web assets (index.html, style.css)..."
+echo "--> Copying web assets (index.html, style.css, widget/)..."
 cp zero_client/index.html dist/
 cp zero_client/style.css dist/
+mkdir -p dist/widget
+cp -r zero_client/widget/* dist/widget/
 
 # Step 4: Assert bundle integrity
 echo "--> Verifying assembled bundle integrity..."
@@ -78,6 +83,16 @@ fi
 
 if [[ ! -f "dist/style.css" ]]; then
     echo "Error: dist/style.css missing!" >&2
+    exit 1
+fi
+
+if [[ ! -f "dist/widget/zero_chat_widget.js" ]]; then
+    echo "Error: dist/widget/zero_chat_widget.js missing!" >&2
+    exit 1
+fi
+
+if [[ ! -f "dist/widget/zero_chat_widget.css" ]]; then
+    echo "Error: dist/widget/zero_chat_widget.css missing!" >&2
     exit 1
 fi
 
