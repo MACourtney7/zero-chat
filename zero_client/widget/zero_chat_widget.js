@@ -52,6 +52,7 @@ export class ZeroChatWidget {
       onSendMessage = null,
       onBurnMessage = null,
       onBurnSession = null,
+      onUnreadCountChange = null,
       agingMs = 70000,
       dissolveMs = 90000
     } = options;
@@ -60,13 +61,16 @@ export class ZeroChatWidget {
     this.onSendMessage = onSendMessage;
     this.onBurnMessage = onBurnMessage;
     this.onBurnSession = onBurnSession;
+    this.onUnreadCountChange = onUnreadCountChange;
     this.agingMs = typeof agingMs === 'number' ? agingMs : 70000;
     this.dissolveMs = typeof dissolveMs === 'number' ? dissolveMs : 90000;
 
     this.peerColorMap = new Map();
+    this.peerMetaMap = new Map(); // peerId -> { name, color }
     this.messagesMap = new Map(); // messageUuid -> record
     this.currentPeers = [];
     this.currentPeerCount = 0;
+    this.unreadCount = 0;
 
     this.container = typeof container === 'string' && typeof document !== 'undefined'
       ? document.querySelector(container)
@@ -76,6 +80,7 @@ export class ZeroChatWidget {
     this.header = null;
     this.statusEl = null;
     this.peerCountEl = null;
+    this.peerStripEl = null;
     this.burnHeaderBtn = null;
     this.messagesContainer = null;
     this.form = null;
@@ -96,6 +101,7 @@ export class ZeroChatWidget {
         <div class="peer-pill" id="proximity-chat-status">
           <span class="peer-lock-icon">🔒</span>
           <span class="peer-count" id="peer-count">0 nearby</span>
+          <span class="peer-strip" id="peer-strip"></span>
         </div>
         <button type="button" class="btn-header-burn" title="Burn all messages" aria-label="Burn all messages">🔥</button>
       </div>
@@ -110,6 +116,7 @@ export class ZeroChatWidget {
     this.header = widgetEl.querySelector('.zero-chat-header');
     this.statusEl = widgetEl.querySelector('#proximity-chat-status');
     this.peerCountEl = widgetEl.querySelector('#peer-count');
+    this.peerStripEl = widgetEl.querySelector('#peer-strip');
     this.burnHeaderBtn = widgetEl.querySelector('.btn-header-burn');
     this.messagesContainer = widgetEl.querySelector('#proximity-chat-messages');
     this.form = widgetEl.querySelector('#proximity-chat-form');
@@ -395,11 +402,38 @@ export class ZeroChatWidget {
   }
 
   /**
-   * Updates peer membership and updates the padlock badge and nearby peer counter.
+   * Sets the unread count and notifies listeners.
+   * @param {number} count
+   */
+  setUnreadCount(count) {
+    this.unreadCount = Math.max(0, count || 0);
+    if (typeof this.onUnreadCountChange === 'function') {
+      this.onUnreadCountChange(this.unreadCount);
+    }
+  }
+
+  /**
+   * Increments unread count by 1 and notifies listeners.
+   */
+  incrementUnread() {
+    this.setUnreadCount(this.unreadCount + 1);
+  }
+
+  /**
+   * Clears unread count to 0 and notifies listeners.
+   */
+  clearUnread() {
+    this.setUnreadCount(0);
+  }
+
+  /**
+   * Updates peer membership and updates the padlock badge, nearby peer counter,
+   * and renders participant name pills/peer dots when 2+ peers are present.
    * @param {Array<string>|Set<string>} peerIds
    * @param {number} [peerCount]
+   * @param {Map|Object} [peerMeta] Map or object mapping peerId -> { name, color }
    */
-  setPeers(peerIds, peerCount) {
+  setPeers(peerIds, peerCount, peerMeta) {
     let count = 0;
     if (typeof peerCount === 'number') {
       count = peerCount;
@@ -412,6 +446,18 @@ export class ZeroChatWidget {
     this.currentPeerCount = count;
     this.currentPeers = Array.isArray(peerIds) ? peerIds : (peerIds ? Array.from(peerIds) : []);
 
+    if (peerMeta) {
+      if (peerMeta instanceof Map) {
+        for (const [id, meta] of peerMeta.entries()) {
+          this.peerMetaMap.set(id, meta);
+        }
+      } else if (typeof peerMeta === 'object') {
+        for (const [id, meta] of Object.entries(peerMeta)) {
+          this.peerMetaMap.set(id, meta);
+        }
+      }
+    }
+
     if (this.peerCountEl) {
       this.peerCountEl.textContent = `${count} nearby`;
     }
@@ -422,6 +468,57 @@ export class ZeroChatWidget {
       } else {
         this.statusEl.classList.remove('active');
       }
+    }
+
+    this._renderPeerStrip();
+  }
+
+  /**
+   * Renders colored dots and truncated name tags for nearby participants.
+   * @private
+   */
+  _renderPeerStrip() {
+    if (!this.peerStripEl) return;
+
+    if (typeof document === 'undefined') return;
+
+    this.peerStripEl.innerHTML = '';
+
+    if (this.currentPeerCount <= 0 || !this.currentPeers || this.currentPeers.length === 0) {
+      return;
+    }
+
+    const maxPills = 4;
+    const peersToRender = this.currentPeers.slice(0, maxPills);
+    const overflowCount = this.currentPeers.length - maxPills;
+
+    for (const peerId of peersToRender) {
+      const meta = this.peerMetaMap.get(peerId) || {};
+      const name = meta.name || peerId;
+      const color = meta.color || this.getPeerColor(peerId);
+
+      const pill = document.createElement('span');
+      pill.className = 'peer-chip';
+      pill.setAttribute('data-peer-id', peerId);
+
+      const dot = document.createElement('span');
+      dot.className = 'peer-chip-dot';
+      dot.style.backgroundColor = color;
+
+      const label = document.createElement('span');
+      label.className = 'peer-chip-label';
+      label.textContent = name.length > 8 ? name.slice(0, 7) + '…' : name;
+
+      pill.appendChild(dot);
+      pill.appendChild(label);
+      this.peerStripEl.appendChild(pill);
+    }
+
+    if (overflowCount > 0) {
+      const overflowPill = document.createElement('span');
+      overflowPill.className = 'peer-chip peer-chip-overflow';
+      overflowPill.textContent = `+${overflowCount}`;
+      this.peerStripEl.appendChild(overflowPill);
     }
   }
 
@@ -464,6 +561,7 @@ export class ZeroChatWidget {
     this.sendBtn = null;
     this.statusEl = null;
     this.peerCountEl = null;
+    this.peerStripEl = null;
     this.burnHeaderBtn = null;
   }
 }

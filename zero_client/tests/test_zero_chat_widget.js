@@ -27,11 +27,27 @@
             this.id = '';
             this.classList = new MockClassList();
             this.attributes = new Map();
-            this.style = {
+            const self = this;
+            this.style = new Proxy({
                 properties: new Map(),
-                setProperty: (k, v) => this.style.properties.set(k, v),
-                getPropertyValue: (k) => this.style.properties.get(k) || ''
-            };
+                setProperty: (k, v) => self.style.properties.set(k, v),
+                getPropertyValue: (k) => self.style.properties.get(k) || ''
+            }, {
+                get(target, prop) {
+                    if (prop in target) return target[prop];
+                    const kebab = String(prop).replace(/([A-Z])/g, '-$1').toLowerCase();
+                    return target.properties.get(kebab) || '';
+                },
+                set(target, prop, value) {
+                    if (prop in target) {
+                        target[prop] = value;
+                    } else {
+                        const kebab = String(prop).replace(/([A-Z])/g, '-$1').toLowerCase();
+                        target.properties.set(kebab, value);
+                    }
+                    return true;
+                }
+            });
             this.children = [];
             this.parentNode = null;
             this.textContent = '';
@@ -430,6 +446,50 @@
     assert(widget.messagesContainer.children.length === 0, "All messages must be removed on session burn");
 
     print("  PASS: Session burn button purges all messages and invokes callback.");
+
+    print("\n[Test 10] Unread Count & Peer Strip Pills/Dots (ticket unification-013)...");
+    let unreadNotified = -1;
+    widget.onUnreadCountChange = (count) => {
+        unreadNotified = count;
+    };
+
+    assert(widget.unreadCount === 0, "Initial unreadCount should be 0");
+    widget.incrementUnread();
+    assert(widget.unreadCount === 1, "incrementUnread should increase to 1");
+    assert(unreadNotified === 1, "onUnreadCountChange should be notified with 1");
+
+    widget.incrementUnread();
+    assert(widget.unreadCount === 2, "incrementUnread should increase to 2");
+    assert(unreadNotified === 2, "onUnreadCountChange should be notified with 2");
+
+    widget.clearUnread();
+    assert(widget.unreadCount === 0, "clearUnread should reset to 0");
+    assert(unreadNotified === 0, "onUnreadCountChange should be notified with 0");
+
+    // Test peer strip rendering with 2+ peers
+    widget.setPeers(['peer-1', 'peer-2'], 2, {
+        'peer-1': { name: 'Alice', color: '#10b981' },
+        'peer-2': { name: 'Bob', color: '#3b82f6' }
+    });
+    assert(widget.currentPeerCount === 2, "Peer count must be 2");
+    assert(widget.peerCountEl.textContent === '2 nearby', "Header text should be '2 nearby'");
+    assert(widget.peerStripEl.children.length === 2, "Peer strip should render 2 chips");
+
+    const chip1 = widget.peerStripEl.children[0];
+    const dot1 = chip1.children[0];
+    const label1 = chip1.children[1];
+    assert(dot1.style.properties.get('background-color') === '#10b981', "Dot 1 should have Alice's color");
+    assert(label1.textContent === 'Alice', "Label 1 should display 'Alice'");
+
+    // Test overflow with >4 peers
+    widget.setPeers(['p1', 'p2', 'p3', 'p4', 'p5'], 5, {
+        'p1': { name: 'P1' }, 'p2': { name: 'P2' }, 'p3': { name: 'P3' }, 'p4': { name: 'P4' }, 'p5': { name: 'P5' }
+    });
+    assert(widget.peerStripEl.children.length === 5, "Peer strip should render 4 chips + 1 overflow chip");
+    const overflowChip = widget.peerStripEl.children[4];
+    assert(overflowChip.textContent === '+1', "Overflow chip should be '+1'");
+
+    print("  PASS: Unread counting and peer strip pills/dots verified.");
 
     print("\n===============================================================================");
     print("ALL ZEROCATWIDGET UNIT TESTS PASSED SUCCESSFULLY!");

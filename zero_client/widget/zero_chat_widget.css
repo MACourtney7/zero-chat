@@ -70,6 +70,47 @@
 .zero-chat-widget .peer-count {
   font-size: 0.75rem;
   color: #38bdf8;
+  white-space: nowrap;
+}
+
+/* Scoped Peer Strip: colored dots & participant pills */
+.zero-chat-widget .peer-strip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+}
+
+.zero-chat-widget .peer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 0.68rem;
+  color: #e2e8f0;
+  max-width: 80px;
+}
+
+.zero-chat-widget .peer-chip-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.zero-chat-widget .peer-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zero-chat-widget .peer-chip-overflow {
+  font-weight: 700;
+  color: #38bdf8;
+  padding: 1px 4px;
 }
 
 /* Scoped Burn Header Button */
