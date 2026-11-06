@@ -16,3 +16,9 @@ commands:
 documentation:
   guidelines: "README.md"
   architecture: "openspec/specs/overview.md"
+
+# Pluggable subagent runners for background worker execution in worktrees:
+runners:
+  implementer: "python3 \"/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/software_factory/scripts/factory_deepseek_worker.py\" --role implementer --brief '{brief}' --worktree '{worktree}' --report '{report}'"
+  reviewer: "python3 \"/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/software_factory/scripts/factory_deepseek_worker.py\" --role reviewer --brief '{brief}' --worktree '{worktree}' --report '{report}'"
+
