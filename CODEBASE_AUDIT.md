@@ -16,7 +16,6 @@
     }
   }
 }
-
 ```
 
 ## FILE: .agents/plugins.json
@@ -28,7 +27,6 @@
     }
   ]
 }
-
 ```
 
 ## FILE: .agents/rules/architect.md
@@ -189,7 +187,6 @@ openspec/
    - **Maximum Review Cycles**: 3 (`MAX_REVIEW_CYCLES = 3`).
    - If Cycle 3 fails to produce an `APPROVE` verdict, **HALT** all autonomous worker spawning.
    - Compile a synthesis summary of the persistent conflict and escalate to the human user for intervention.
-
 ```
 
 ## FILE: .agents/rules/implementer.md
@@ -246,7 +243,6 @@ You are an **Implementer Worker** in the Agentic Software Factory. You execute f
      ---
      ```
    - Commit all changes to your worktree branch with descriptive commit messages before exiting.
-
 ```
 
 ## FILE: .agents/rules/reviewer.md
@@ -305,7 +301,6 @@ You are the **Reviewer Worker** in the Agentic Software Factory. You operate wit
      ---
      ```
    - Group findings by severity (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`) with exact file paths, line numbers, and actionable remediation steps.
-
 ```
 
 ## FILE: .agents/rules/validator.md
@@ -361,7 +356,6 @@ You are a **Validator Worker** in the Agentic Software Factory. Your mission is 
      ---
      ```
    - If tests fail, include the full error output, failing test names, and stack traces inside the markdown file to enable fast triaging.
-
 ```
 
 ## FILE: .agents/skills/complete-roadmap/SKILL.md
@@ -416,7 +410,6 @@ Use this skill when all tickets in a roadmap have been implemented and merged, a
      - **Canonical Specs Reconciled**: Files updated in `openspec/specs/`.
      - **Remote Sync Status**: Confirmed pushed to `origin/main`.
      - **Next Steps**: Recommend next roadmap milestone or invite user to initiate a new task.
-
 ```
 
 ## FILE: .agents/skills/complete-task/SKILL.md
@@ -452,7 +445,6 @@ Use this skill when the user requests final delivery and completion of a verifie
      `git add openspec/ && git commit -m "chore(spec): reconcile canonical specs and archive <ticket-id>"`
    - Push the merged code and spec commits: `git push origin main`.
    - Confirm `main` is in sync with `origin/main`.
-
 
 ```
 
@@ -561,7 +553,6 @@ Use this skill when resuming or continuing an in-flight multi-ticket roadmap aft
 - When all tickets reach `COMPLETED`:
   - Inform the user:
     > *"🎉 All tickets in roadmap `<milestone-id>` have completed and merged into `main`! Issue `complete-roadmap <milestone-id>` to run end-to-end integration checks, archive proposals, and reconcile canonical specs."*
-
 ```
 
 ## FILE: .agents/skills/implement-roadmap/SKILL.md
@@ -646,7 +637,6 @@ Use this skill when the user triggers autonomous execution of a planned mileston
    - When all tickets in the roadmap reach `COMPLETED`:
      - Inform the user:
        > *"🎉 All tickets in roadmap `<milestone-id>` have successfully completed and merged into `main`! Issue `complete-roadmap <milestone-id>` to run end-to-end integration checks, archive proposals, and reconcile canonical specs."*
-
 ```
 
 ## FILE: .agents/skills/implement-task/SKILL.md
@@ -725,7 +715,6 @@ Use this skill when the user triggers execution for a prepared ticket.
    - Instruct the user:
      > *"Implementation, validation, and code review complete with `APPROVE` verdict. Issue `/complete-task <ticket-id>` to review the final acceptance report, merge to `main`, archive the change proposal, and push to remote."*
 
-
 ```
 
 ## FILE: .agents/skills/start-roadmap/SKILL.md
@@ -791,7 +780,6 @@ Use this skill when initiating or decomposing large multi-ticket milestones, cro
    - You are **STRICTLY FORBIDDEN** from checking out `main`, running `git commit`, `git merge`, or `git push origin main`.
    - The roadmap and its constituent tickets MUST remain in `state: "PLANNING"` until the user explicitly issues `implement-roadmap` or `implement-task`.
    - Await the user's explicit response.
-
 ```
 
 ## FILE: .agents/skills/start-task/SKILL.md
@@ -846,7 +834,6 @@ Use this skill when the human user initiates a new task, ticket, or feature requ
    - You are **STRICTLY FORBIDDEN** from checking out `main`, running `git commit`, `git merge`, or `git push origin main`.
    - The specification MUST remain in `state: "PLANNING"` until the user explicitly issues `implement-task` or gives explicit approval.
    - Await the user's explicit response.
-
 ```
 
 ## FILE: .githooks/pre-push
@@ -862,7 +849,6 @@ cargo fmt --all -- --check
 echo "[pre-push] cargo clippy"
 cargo clippy --workspace --all-targets -- -D warnings
 echo "[pre-push] lint checks passed"
-
 ```
 
 ## FILE: .github/workflows/ci.yml
@@ -922,7 +908,6 @@ jobs:
       - name: Validate WASM compilation (zero_client)
         working-directory: zero_chat
         run: cargo build -p zero_client --target wasm32-unknown-unknown
-
 ```
 
 ## FILE: .github/workflows/deploy.yml
@@ -994,7 +979,6 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: zero_chat
           command: 'pages deploy dist --project-name=zero-chat --branch=main --commit-dirty=true'
-
 ```
 
 ## FILE: .gitignore
@@ -1089,7 +1073,6 @@ You MUST operate strictly within the **OpenSpec Spec-Driven Development (SDD)** 
    - When executing user project tickets as the Architect, the MCP server is treated as a black-box service via `factory_*` tool calls.
    - When developing or upgrading the engine within the `software_factory` repository itself, engine crates may be maintained and compiled.
 
-
 ```
 
 ## FILE: Cargo.toml
@@ -1111,7 +1094,6 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
-
 
 ```
 
@@ -1192,7 +1174,6 @@ You MUST operate strictly within the **OpenSpec Spec-Driven Development (SDD)** 
 10. **Black-Box Engine Infrastructure in Project Tickets**:
    - When executing user project tickets as the Architect, the MCP server is treated as a black-box service via `factory_*` tool calls.
    - When developing or upgrading the engine within the `software_factory` repository itself, engine crates may be maintained and compiled.
-
 
 ```
 
@@ -1424,7 +1405,6 @@ ZeroChat is dual-licensed under:
 - MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
 
 at your option.
-
 ```
 
 ## FILE: docs/HANDOVER_MOBILE_BROWSER_SUPPORT.md
@@ -1576,7 +1556,6 @@ This handover brief defines the complete scope for Mobile Browser Support, cover
     - `visualViewport` resize simulation (virtual keyboard open keeps `.chat-header` top >= 0 and `.input-dock` bottom constrained)
     - Host WebSocket drop & Joiner 404 retry simulation
 - **Gate 3: Deployment & Live Mobile Smoke Test**
-
 ```
 
 ## FILE: docs/HANDOVER_MULTI_USER_MESH_ARCHITECTURE.md
@@ -1777,7 +1756,6 @@ When undertaking the implementation:
    - Window B and Window C must retain `#peer-count = 1`.
    - Send message from Window B $\rightarrow$ must appear in Window C.
    - Send message from Window C $\rightarrow$ must appear in Window B.
-
 ```
 
 ## FILE: docs/HANDOVER_TICKET_045.md
@@ -1868,7 +1846,6 @@ Existing messages are not purged.
 Subsequent messages render normally and the peer counter remains 1.
 Scenario C (True Unannounced Disconnect After Grace Expiry): Simulate a peer disconnecting and remaining unreachable past the grace window; assert "Peer left chat" is rendered once, the peer's messages are purged, and the peer counter decrements.
 Scenario D (Explicit PeerLeftAndBurn Immediate Purge): Verify clicking Leave still triggers immediate message purge and "Peer left chat" with zero grace-period delay.
-
 ```
 
 ## FILE: docs/HANDOVER_TICKET_046_OPTION_B_RUST_CRYPTO_AND_WASM_BRIDGE.md
@@ -2005,7 +1982,6 @@ test_backward_compatible_envelopes: Existing InvitePayload and DropPayload paylo
 Gate 2: Client & Workspace Integration Suite
 cargo test --workspace — All workspace tests across zero_protocol, zero_client, and zero_network must pass with 0 failures.
 ./scripts/deploy_dry_run.sh — Must compile zero_client to wasm32-unknown-unknown, run wasm-bindgen --target web --out-dir dist/pkg, and verify that WasmCryptoSession is exported in zero_client/dist/pkg/zero_client.js.
-
 ```
 
 ## FILE: docs/HANDOVER_TICKET_047_BROWSER_WASM_CRYPTO_INTEGRATION.md
@@ -2237,7 +2213,6 @@ Assert DropPayload.sdp_answer.sdp === "SEALED" and DropPayload.sealed_sdp_answer
 Assert BroadcastChat.sealed_payload.ciphertext does not match raw UTF-8 bytes of the message text and includes a 12-byte nonce, 16-byte Poly1305 tag overhead, and 64-byte signature.
 3-Peer Mesh & Host Departure Regression: Run the full 3-peer mesh scenario (Peer 1 invites Peer 2, Peer 1 invites Peer 3, $B \leftrightarrow C$ snaps via encrypted RelaySdpOffer/RelaySdpAnswer, all 3 peers exchange encrypted chat messages, Peer 1 leaves, and Peer 2 & Peer 3 continue chatting encrypted).
 Tamper Rejection Test: Verify that mutating a byte of ciphertext or signature in an incoming BroadcastChat frame causes open_from_peer to reject the frame and prevents DOM rendering.
-
 ```
 
 ## FILE: docs/HANDOVER_TICKET_048_RUST_CLIENT_CONSOLIDATION.md
@@ -2322,7 +2297,6 @@ Gate 2: WASM Build & Bundle Size Verification
 Verify WasmCryptoSession exports remain 100% intact for zero_client/index.html.
 Gate 3: End-to-End Browser Regression Suite
 Run node scripts/test_mesh_scenario.js (all 22 headless browser tests including Test 22 Scenarios A–E) and verify 100% pass rate with zero regressions.
-
 ```
 
 ## FILE: docs/HANDOVER_TICKET_049_CLOUDFLARE_TURN_CGNAT_RELAY.md
@@ -2486,7 +2460,6 @@ Document the 2-command Cloudflare TURN activation steps in openspec/specs/overvi
 wrangler secret put CF_TURN_KEY_ID
 
 wrangler secret put CF_TURN_API_TOKEN
-
 ```
 
 ## FILE: docs/HANDOVER_TICKET_050_V1_RELEASE_POLISH_AND_README.md
@@ -2583,7 +2556,6 @@ cargo test --workspace — All Rust unit and integration tests pass with 0 failu
 cargo clippy --workspace --all-targets -- -D warnings — Zero warnings.
 ./scripts/deploy_dry_run.sh — Builds the release WASM binary with [profile.release] (opt-level = "z", lto = true, strip = true) and optional wasm-opt -Oz, outputting the final .wasm byte size.
 node scripts/test_mesh_scenario.js — All 23 headless browser scenarios pass against the size-optimized release WASM build.
-
 ```
 
 ## FILE: docs/HANDOVER_TICKET_051_FIX_DO_CORS_AND_JOIN_REENTRANCY.md
@@ -2742,7 +2714,6 @@ cargo test --workspace — All Rust workspace tests pass.
 cargo clippy --workspace --all-targets -- -D warnings — Zero warnings.
 ./scripts/deploy_dry_run.sh — Builds release WASM bundle cleanly.
 node scripts/test_mesh_scenario.js — Add a test verifying handleJoinFailure does not double-fire when engine.close() emits "closed", and verify all headless E2E scenarios pass.
-
 ```
 
 ## FILE: docs/deployment.md
@@ -2905,7 +2876,6 @@ Upon successful execution, the script will:
 3. Run `wasm-bindgen` and package static assets into `dist/`.
 4. Validate that `dist/index.html`, `dist/zero_client.js`, and `dist/zero_client_bg.wasm` exist and are non-empty.
 5. Perform a dry-run check of `crates/zero_network/wrangler.toml` configuration using `wrangler deploy --dry-run`.
-
 ```
 
 ## FILE: factory.yaml
@@ -2928,6 +2898,11 @@ commands:
 documentation:
   guidelines: "README.md"
   architecture: "openspec/specs/overview.md"
+
+# Pluggable subagent runners for background worker execution in worktrees:
+runners:
+  implementer: "python3 \"/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/software_factory/scripts/factory_deepseek_worker.py\" --role implementer --brief '{brief}' --worktree '{worktree}' --report '{report}'"
+  reviewer: "python3 \"/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/software_factory/scripts/factory_deepseek_worker.py\" --role reviewer --brief '{brief}' --worktree '{worktree}' --report '{report}'"
 
 ```
 
@@ -2996,7 +2971,6 @@ To enable coordinated, type-safe development across the client (`zero_client`) a
 | **2** | `brief-val-tests` | Validator | `LOW` | Protocol serialization and crypto test suite | `crates/zero_protocol/tests/*` | Batch 1 |
 | **2** | `brief-val-lint` | Validator | `LOW` | Workspace clippy and format audit | Full repository | Batch 1 |
 | **3** | `brief-rev` | Reviewer | `HIGH` | Architectural audit and cryptographic soundness review | Candidate diff | Batch 2 |
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-002/spec.md
@@ -3063,7 +3037,6 @@ In order to achieve serverless browser-to-browser communication, we must impleme
 | **2** | `brief-val-webrtc` | Validator | `MEDIUM` | Unit tests & compilation verification for WASM target | `zero_client/tests/*` | Batch 1 |
 | **2** | `brief-val-lint` | Validator | `LOW` | Clippy and formatting checks across `zero_client` | `zero_client/*` | Batch 1 |
 | **3** | `brief-rev` | Reviewer | `HIGH` | Architectural audit, memory leak avoidance, and WebRTC state machine review | Candidate diff | Batch 2 |
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-003/spec.md
@@ -3134,7 +3107,6 @@ To enable an ephemeral, zero-cost initial connection handshake without running p
 | **2** | `brief-val-network` | Validator | `MEDIUM` | Automated testing for HMAC checks and drop forwarding | `zero_network/tests/*` | Batch 1 |
 | **2** | `brief-val-lint` | Validator | `LOW` | Clippy and formatting audit across `zero_network` | `zero_network/*` | Batch 1 |
 | **3** | `brief-rev` | Reviewer | `HIGH` | Security audit (HMAC timing resistance, DoS resilience, zero-storage invariant) | Candidate diff | Batch 2 |
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-004/spec.md
@@ -3201,7 +3173,6 @@ Wire the end-to-end Pattern B Stateless HMAC handshake into the client applicati
 | **2** | `brief-val-bootstrap` | Validator | `LOW` | End-to-end token verification and fragment parsing tests | `zero_client/tests/*` | Batch 1 |
 | **2** | `brief-val-lint` | Validator | `LOW` | Linting and code formatting audit | `zero_client/*` | Batch 1 |
 | **3** | `brief-rev` | Reviewer | `HIGH` | Architectural audit for edge severance and zero-footprint lifecycle | Candidate diff | Batch 2 |
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-005/spec.md
@@ -3270,7 +3241,6 @@ Once direct WebRTC DataChannels are established, we must provide users with an i
 | **2** | `brief-val-e2e` | Validator | `MEDIUM` | End-to-end integration test harness and zero-persistence verification | `tests/e2e_handshake.rs` | Batch 1 |
 | **2** | `brief-val-lint` | Validator | `LOW` | Clippy, format, and static DOM security audit | Full repository | Batch 1 |
 | **3** | `brief-rev` | Reviewer | `HIGH` | Cryptographic audit, zero-footprint verification, and UX polish review | Candidate diff | Batch 2 |
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-006/spec.md
@@ -3339,7 +3309,6 @@ While the initial peer joins via a single dead-drop `POST` to the host (Alice), 
 | **2** | `brief-val-mesh-sim` | Validator | `HIGH` | 3+ peer in-band mesh simulation and loop prevention test | `tests/mesh_simulation_test.rs` | Batch 1 |
 | **2** | `brief-val-lint` | Validator | `LOW` | Clippy and formatting audit across mesh implementation | Full repository | Batch 1 |
 | **3** | `brief-rev` | Reviewer | `HIGH` | Distributed routing audit, deadlock prevention, and connection lifecycle review | Candidate diff | Batch 2 |
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-007/spec.md
@@ -3412,7 +3381,6 @@ To ensure cross-target compilation integrity and automated production delivery, 
 | **1** | `brief-03-deploy-docs` | Implementer | `LOW` | Deployment setup and secrets documentation | `docs/deployment.md` | None (Parallel) |
 | **2** | `brief-val-workflow-lint` | Validator | `LOW` | Validate workflow syntax, shell scripts, and workspace compatibility | Worktree repo | Batch 1 |
 | **3** | `brief-rev` | Reviewer | `HIGH` | Security audit (secret handling, least-privilege tokens, build reproducibility) | Candidate diff | Batch 2 |
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-008/spec.md
@@ -3487,7 +3455,6 @@ The objective of this task is to strip away all unnecessary visual noise, refine
 | **1** | `brief-01-ui-streamline` | Implementer | `LOW` | Remove diagnostics, status pill, zero persistence card, join-with-link input, and boilerplate text. Update badge to 'P2P Established'. | `zero_client/index.html`, `.github/workflows/deploy.yml`, `scripts/deploy_dry_run.sh` | None |
 | **2** | `brief-val-tests` | Validator | `LOW` | Validate full workspace test suite and clippy linters | Workspace | Batch 1 |
 | **3** | `brief-rev` | Reviewer | `LOW` | Verify UI cleanliness, zero regressions, and user specification compliance | Candidate diff | Batch 2 |
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-009/spec.md
@@ -3556,7 +3523,6 @@ The objective of this task is to address these 6 UI polish items, ensuring a cle
 ## 4. Architectural Design & Impacted Modules
 - `zero_client/index.html`: Markup and script updates.
 - `zero_client/style.css`: CSS styling and hover/cursor updates.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-010/spec.md
@@ -3617,7 +3583,6 @@ The objective of this task is to:
 ## 4. Architectural Design & Impacted Modules
 - `zero_client/index.html`: DOM helper and event bindings.
 - `zero_client/style.css`: CSS styling for system messages and disabled inputs.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-011/spec.md
@@ -3683,7 +3648,6 @@ The objective of this task is to implement dynamic layout transitions between id
 ## 4. Architectural Design & Impacted Modules
 - `zero_client/index.html`: DOM structure updates for bottom action slotting, under-header burn bar, and reactive state management in `initEngineListeners()` and `createRoomAsHost()`.
 - `zero_client/style.css`: Styling for full-width action bars, under-header burn container, disconnected badge, and `.security-alert-card` cursor override.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-012/spec.md
@@ -3754,7 +3718,6 @@ The objective of this task is to implement these visual and layout refinements i
   - `.burn-banner-centered`: `display: flex; justify-content: center; text-align: center;`.
   - `.welcome-splash`: glassmorphic card, feature grid/list, subtle badges.
   - Responsive alignment for bottom invite bar.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-013/spec.md
@@ -3829,7 +3792,6 @@ The objective of this task is to implement these visual, messaging, and event-ha
 - `zero_client/style.css`:
   - Streamlined `.message-header` and `.message-bubble` layout.
   - Dynamic peer color accent classes (e.g. `.peer-color-0`, `.peer-color-1`, etc.).
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-014/spec.md
@@ -3902,7 +3864,6 @@ The objective of this task is to implement these targeted visual, layout, and co
 - `zero_client/style.css`:
   - Harmonized `.peer-pill` and `.peer-count-badge` rules.
   - Styling for `#header-leave-btn` and `.btn-send-emerald`.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-015/spec.md
@@ -3989,7 +3950,6 @@ The objective of this task is to implement these visual, iconographic, and brand
 - `zero_client/style.css`:
   - Consistent cyan glass variables on `#status-badge` and `#peer-count`.
   - Icon button centering and padding adjustments.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-016/spec.md
@@ -4103,7 +4063,6 @@ The objective of this task is to implement all of these visual, functional, and 
     - `cursor: default;`
     - `user-select: none;`
   - `.welcome-splash`: compact vertical padding and gap with headers/prompts removed.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-017/spec.md
@@ -4184,7 +4143,6 @@ The objective of this task is to implement this exact formatting and copy across
   - JavaScript `WELCOME_SPLASH_HTML`: mirror the above structure.
 - `zero_client/style.css`:
   - Verify `.welcome-header` (`text-align: center; margin-bottom: 4px;`), `.welcome-title`, and `.welcome-subtitle` layout and contrast.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-018/spec.md
@@ -4296,7 +4254,6 @@ In the current ZeroChat UI:
   - The welcome splash card must continue to hide immediately when any transient status or system message is rendered.
 - [x] **REQ-018.8 (Test Suite & Non-Regression Integrity)**:
   - All 86 workspace unit and integration tests (`cargo test --workspace`) must pass cleanly.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-019/spec.md
@@ -4388,7 +4345,6 @@ In the current ZeroChat UI:
   - Feature Card 1 description must read exactly `"Private channels with no intermediate relays or storage servers."` in both static DOM (`#welcome-splash`) and dynamic JavaScript template (`WELCOME_SPLASH_HTML`).
 - [x] **REQ-019.3 (Test Suite & Non-Regression Integrity)**:
   - All workspace unit and integration tests (`cargo test --workspace`) and clippy checks must pass cleanly.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-020/spec.md
@@ -4450,7 +4406,6 @@ This task extends `crates/zero_protocol` and `zero_client::mesh` with:
 - [ ] **REQ-020.4 (Unit Test Coverage)**:
   - Protocol roundtrip tests for the new signals in `zero_protocol`.
   - Unit tests in `zero_client::mesh` verifying callback invocation and mesh state teardown upon signal reception.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-021/spec.md
@@ -4520,7 +4475,6 @@ This task updates the client layer to:
   - When a peer client receives a `global_burn` signal, it must immediately execute `resetToHome()`, wiping all DOM messages, closing WebRTC channels, and returning to the welcome splash screen.
 - [ ] **REQ-021.6 (UI Engine Unit Tests)**:
   - `zero_client::ui` unit tests confirming `burn_peer_messages` purges only targeted peer messages while preserving other participants' messages.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-022/spec.md
@@ -4581,7 +4535,6 @@ This task adds comprehensive integration test suites verifying:
 - [ ] **REQ-022.3 (Full Workspace Non-Regression Integrity)**:
   - All unit and integration tests across the entire Cargo workspace pass cleanly.
   - Clippy reports zero warnings across all targets.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-023/spec.md
@@ -4642,7 +4595,6 @@ This task extends the selective burn lifecycle to dirty disconnects:
 - [x] **REQ-023.5 (Workspace Regression & Linter Integrity)**:
   - Full workspace test suite (`cargo test --workspace`) passes with zero failures.
   - Zero clippy warnings across all workspace targets.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-024/spec.md
@@ -4783,7 +4735,6 @@ When a peer exits a chat session—whether cleanly via `#header-leave-btn`, abru
      - Ensure `resetToHome()` cleanly returns to home view.
 2. **Brief 2 (`brief-val-tests.md`) [MEDIUM]**:
    - Update `zero_client/src/ui.rs` and `zero_client/tests/mesh_simulation_test.rs` to validate the deduplicated `"Peer left chat"` lifecycle, top bar state preservation, and clean return to home view.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-025/spec.md
@@ -4838,7 +4789,6 @@ This task refactors `ZeroWebRtcEngine` into a multi-peer WebRTC connection pool:
   - Individual peer disconnection transitions update only that peer's state; the engine remains active as long as at least one peer or active session exists.
 - [x] **REQ-025.4 (Workspace Integrity & Compilation)**:
   - Clean HTML/JS syntax and 0 regressions across existing test suite (`cargo test --workspace`).
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-026/spec.md
@@ -4894,7 +4844,6 @@ This task implements in-band SDP relay handling inside the browser client (`zero
   - Multi-hop chat messages flood across direct links with TTL hops and message deduplication.
 - [x] **REQ-026.4 (Workspace Integrity & Regression)**:
   - Full workspace test suite passes with 0 failures and 0 warnings.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-027/spec.md
@@ -4968,7 +4917,6 @@ In an active multi-user room, users need an intuitive, non-wasteful way to invit
   - When 1 of N peers leaves, only their messages are purged; session remains active for surviving peers with decremented counter.
 - [x] **REQ-027.5 (Workspace Integrity & Tests)**:
   - Full workspace test suite passes with 0 failures and 0 clippy warnings.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-028/spec.md
@@ -5022,7 +4970,6 @@ With multi-peer mesh connections, in-band relay signaling, and header add-peer i
   - `cargo test --workspace` passes with 100% success.
   - `cargo clippy --workspace --all-targets -- -D warnings` reports 0 warnings.
   - `cargo check --target wasm32-unknown-unknown -p zero_client` is clean.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-029/spec.md
@@ -5119,7 +5066,6 @@ Testing of the multi-user mesh chat functionality revealed usability friction in
 | `V-029-3` | Charlie sends message then departs | Only Charlie's messages purged from Alice and Bob; Alice and Bob keep own/each other's messages; peer count drops to 1 |
 | `V-029-4` | Alice (host) departs from 3-node room | Only Alice's messages purged from Bob and Charlie; Bob and Charlie keep messages and continue chatting |
 | `V-029-5` | Workspace test suite | `cargo test --workspace` passes 100% |
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-030/spec.md
@@ -5216,7 +5162,6 @@ Testing of 3-participant chat sessions revealed an asymmetry in peer counter beh
 | `V-030-4` | 2nd user (hub inviter) departs from 3-user chat | Surviving clients (User 1 and User 3) maintain direct connection, `#peer-count` decrements to `1` on both |
 | `V-030-5` | 1st user (host) departs from 3-user chat | Surviving clients (User 2 and User 3) maintain direct connection, `#peer-count` decrements to `1` on both |
 | `V-030-6` | Full workspace test suite | `cargo test --workspace` passes 100% |
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-031/spec.md
@@ -5332,7 +5277,6 @@ Stage 2: `brief-validation` (L), then reviewer cycles (max 3).
 ## 7. Risks / Open Questions
 - Browser root cause may only reproduce with real WebRTC; mitigation: V-031-8.
 - Symmetric NAT without TURN can legitimately block B-C; we surface the failure and keep the star link as gossip fallback.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-032/spec.md
@@ -5445,7 +5389,6 @@ In manual browser testing of a 3-user chat session, the network topology degrade
 | `brief-impl-032-browser` | MEDIUM | `zero_client/index.html`, `zero_client/tests/browser/*` | Pre-assigned peer IDs in URL, joiner ID adoption, scoped invite cleanup, departure dedup |
 | `brief-validation` | LOW | reports only | Run full workspace fmt, clippy, tests, wasm, and browser test suite |
 | `reviewer` | HIGH | reviews/ | Code review cycle (max 3 cycles) |
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-033/spec.md
@@ -5540,7 +5483,6 @@ The current room creation button and system message lifecycle contain visual clu
 | **V-033.4** | Verify arrival of any permanent system message clears all active temporary messages. |
 | **V-033.5** | Verify clicking `#header-add-btn` emits `"Invite link copied to clipboard"` without timestamp, self-clears after 5s, and re-clicking re-triggers the pulse animation and restarts the 5s timer without modifying the button itself. |
 | **V-033.6** | Verify all headless browser mesh tests and cargo test suites pass cleanly. |
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-034/spec.md
@@ -5623,7 +5565,6 @@ In pursuit of a clean zero-text UI outside of system messages and chat messages:
 - `zero_client/tests/browser/test_mesh_scenario.js`:
   - Update Test 11 line 482 assertion for placeholder
   - Update / add assertions for REQ-034.1 - REQ-034.4
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-035/spec.md
@@ -5734,7 +5675,6 @@ max_review_cycles: 3
   - `.message-aging` (opacity 0.8) and `.message-dissolve` (200ms soft exit with height collapse).
 - `zero_client/tests/browser/test_mesh_scenario.js`:
   - Test 15 covering per-message burn, distributed sync, 90s TTL, aging fade, and quiet room.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-036/spec.md
@@ -5855,7 +5795,6 @@ In `zero_chat`, when all peers disconnect from an active chat room, the remainin
   - `.system-temporary`, `.transient-status`, `.system-message:has(.ticking-dots)`: `gap: 0;` eliminating gap before ticking dots.
 - `zero_client/tests/browser/test_mesh_scenario.js`:
   - Add Test 16 testing the complete limbo recovery workflow, temporary notice TTL exemption, and zero whitespace ticking dots.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-037/spec.md
@@ -6030,7 +5969,6 @@ In `zero_client/index.html`, establish consistent reactive UI synchronization:
 4. **Gate 4: Headless Browser Regression Suite**:
    - `bash zero_client/tests/browser/run_test.sh` (17 / 17 tests pass, including updated assertions and new Test 17).
 5. **Gate 5: Architectural & Security Review**: Reviewer Cycle 1 verification and unanimous `APPROVE` verdict.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-038/spec.md
@@ -6130,7 +6068,6 @@ Unify `.message-header` into a single flex container row that houses both the co
 4. **Gate 4: Headless Browser Regression Suite**:
    - `bash zero_client/tests/browser/run_test.sh` (17 / 17 tests pass).
 5. **Gate 5: Architectural & Security Review**: Reviewer verification with `APPROVE` verdict.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-039/spec.md
@@ -6296,7 +6233,6 @@ Through visual testing and iterative design review, five user interface refineme
 4. **Gate 4: Headless Browser Regression Suite**:
    - `bash zero_client/tests/browser/run_test.sh` (17 / 17 tests pass).
 5. **Gate 5: Architectural & Security Review**: Reviewer verification with `APPROVE` verdict.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-040/spec.md
@@ -6450,7 +6386,6 @@ Through visual testing and iterative UX review of the newly introduced in-chat b
 4. **Gate 4: Headless Browser Regression Suite**:
    - `bash zero_client/tests/browser/run_test.sh` (17 / 17 tests pass).
 5. **Gate 5: Architectural & Security Review**: Reviewer verification with `APPROVE` verdict.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-041/spec.md
@@ -6641,7 +6576,6 @@ max_review_cycles: 3
 4. **Gate 4: Headless Browser Regression Suite**:
    - `bash zero_client/tests/browser/run_test.sh` (18 / 18 tests pass).
 5. **Gate 5: Architectural & Security Review**: Reviewer verification with `APPROVE` verdict.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-042/spec.md
@@ -6835,7 +6769,6 @@ The application UI currently exhibits several visual inconsistencies and sub-opt
 4. **Gate 4: Headless Browser Regression Suite**:
    - `bash zero_client/tests/browser/run_test.sh` (all tests pass).
 5. **Gate 5: Architectural & Security Review**: Reviewer verification with `APPROVE` verdict.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-043/spec.md
@@ -6989,7 +6922,6 @@ Following the visual modernization in `ticket-042`, five specific UI glitches an
 4. **Gate 4: Headless Browser Regression Suite**:
    - `bash zero_client/tests/browser/run_test.sh` (all 19 tests pass).
 5. **Gate 5: Architectural & Security Review**: Independent Reviewer evaluation with `APPROVE` verdict.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-044/spec.md
@@ -7138,7 +7070,6 @@ Following the delivery of `ticket-043`, four UI behaviors and layout discrepanci
 4. **Gate 4: Headless Browser Regression Suite**:
    - `bash zero_client/tests/browser/run_test.sh` (all 20 tests pass).
 5. **Gate 5: Architectural & Security Review**: Independent Reviewer evaluation with `APPROVE` verdict.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-045/spec.md
@@ -7293,7 +7224,6 @@ This implementation maintains a single, unified codebase across all platforms. E
 4. **Gate 4: Headless Browser Regression Suite**:
    - `bash zero_client/tests/browser/run_test.sh` (all 21 tests pass).
 5. **Gate 5: Architectural & Security Review**: Independent Reviewer evaluation with `APPROVE` verdict.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-046/spec.md
@@ -7473,7 +7403,6 @@ Currently, `zero_protocol` implements raw `x25519-dalek` Diffie-Hellman key agre
    - Cloudflare Worker (`zero_network`) handles only dead-drop routing; with `sealed_sdp_answer`, the worker cannot inspect SDP parameters, IP candidates, or codec profiles.
 3. **Fail-Closed Authenticated Envelopes**:
    - Tampered signatures or corrupted Poly1305 tags immediately abort with `ProtocolError::DecryptionError` or `ProtocolError::InvalidHmacSignature`, preventing forged relay injections.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-047/spec.md
@@ -7603,7 +7532,6 @@ However, as diagnosed in [`docs/HANDOVER_TICKET_047_BROWSER_WASM_CRYPTO_INTEGRAT
    - Memory is zeroized on peer departure (`remove_peer`) and room exit (`burn_all()`).
 3. **Fail-Closed Authenticated Envelopes**:
    - Any signature tampering or Poly1305 MAC failure immediately aborts frame processing without DOM mutation.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-048/spec.md
@@ -7716,7 +7644,6 @@ cargo clippy --workspace --all-targets -- -D warnings
 ./scripts/deploy_dry_run.sh
 bash zero_client/tests/browser/run_test.sh
 ```
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-049/spec.md
@@ -7835,7 +7762,6 @@ cargo clippy --workspace --all-targets -- -D warnings
 ./scripts/deploy_dry_run.sh
 bash zero_client/tests/browser/run_test.sh
 ```
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-050/spec.md
@@ -7913,7 +7839,6 @@ However, during live production activation, when the credentials were deployed, 
   - `handle_ice_config` URL path and `(200..=299).contains(&status)` check.
 - `zero_network/tests/network_tests.rs`:
   - Add test cases for flat credential objects in `parse_custom_ice_servers`.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-051/spec.md
@@ -8006,7 +7931,6 @@ With `ticket-045` through `ticket-050` completed and verified in production, Zer
 - `scripts/deploy_dry_run.sh`: Post-bindgen `wasm-opt -Oz` pass with size reporting.
 - `README.md`: Root architectural showcase.
 - `openspec/specs/overview.md`: Version and canonical spec update.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-052/spec.md
@@ -8107,7 +8031,6 @@ In `createRoomAsHost()` in `zero_client/index.html`, `const crypto = await ensur
 - `zero_network/src/handlers.rs`: Guard against 101 status and add `Max-Age` / `Content-Type` headers.
 - `zero_client/index.html`: Re-entrancy guard in `handleJoinFailure` and variable de-shadowing.
 - `zero_client/tests/browser/test_mesh_scenario.js`: Test 24 verifying join failure non-re-entrancy.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-053/spec.md
@@ -8202,7 +8125,6 @@ Without updating these origins, the client will fail to connect to signaling or 
    `cargo fmt -- --check`
    `./scripts/deploy_dry_run.sh`
    `bash zero_client/tests/browser/run_test.sh`
-
 ```
 
 ## FILE: openspec/changes/archive/unification-001/spec.md
@@ -8351,7 +8273,6 @@ Additionally, the existing sibling directory `../virtual-dog-walker` must be nor
    - `bash zero_client/tests/browser/run_test.sh` passes all 24 headless browser tests.
    - `./scripts/deploy_dry_run.sh` builds release WASM and verifies bundle.
 
-
 ```
 
 ## FILE: openspec/changes/archive/unification-002/spec.md
@@ -8459,7 +8380,6 @@ zero_chat/
   - Add unit tests for matching, staging, and multi-host routing.
 - **Brief 3 [L] (Integration & Regression Testing)**:
   - Verify multi-crate build and `cargo test` across `zero_protocol`, `zero_network`, and `zero_chat`.
-
 
 ```
 
@@ -8575,7 +8495,6 @@ In Step 3 (`unification-003` — Stage 1 of the `virtual_dog_walker` migration),
   - Register in `test/run_tests.py`.
   - Run full test suites across all 4 repos.
 
-
 ```
 
 ## FILE: openspec/changes/archive/unification-004/spec.md
@@ -8667,7 +8586,6 @@ Scaffolded inside `virtual_dog_walker`:
    - `cargo test --manifest-path ../zero_network/Cargo.toml`
    - `cargo test --manifest-path ../zero_chat/Cargo.toml`
 
-
 ```
 
 ## FILE: openspec/changes/archive/unification-005/spec.md
@@ -8748,7 +8666,6 @@ Additionally, we will refine `crates/dog_walker_core` to include floppy ear spri
 3. **Python Suite**: `cd ../virtual_dog_walker && python3 test/run_tests.py`
 4. **Sibling Repos**: `cargo test` on `zero_protocol`, `zero_network`, and `zero_chat`.
 
-
 ```
 
 ## FILE: openspec/changes/archive/unification-006/spec.md
@@ -8820,7 +8737,6 @@ When loading `play.zero-network.workers.dev` in a standard browser, users observ
 - **AC-006.3 (WebSocket Query Auth & CORS in zero_network)**: `zero_network` accepts `?secret=<hex>` on `GET /host/:do_id` and serves standard CORS headers on all HTTP routes and `OPTIONS` preflights.
 - **AC-006.4 (100% Test Pass Rate)**: `python3 test/run_tests.py` passes in `virtual_dog_walker` and `cargo test` passes across `zero_protocol`, `zero_network`, `zero_chat`, and `virtual_dog_walker`.
 
-
 ```
 
 ## FILE: openspec/changes/archive/unification-007/spec.md
@@ -8882,7 +8798,6 @@ Inspecting `play.zero-network.workers.dev` in a live browser shows that ambient 
 - **AC-007.1 (Seed Host Local NPCs Visible Immediately)**: `ZeroMeshNetworkManager.initNpcSpawner()` invokes `this.onNpcSnapshot` locally, and `despawnNpc()` invokes `this.onNpcDespawn` and `this.onNpcSpawn` locally so the host sees active NPCs immediately without remote peers.
 - **AC-007.2 (Nighttime NPC Visibility)**: Ambient NPCs receive radial illumination cutouts during `DUSK` and `NIGHT` in `src/main.js` and `src/world/environment.js`.
 - **AC-007.3 (All Test Suites Green)**: `python3 test/run_tests.py` and `cargo test` pass 100% across all 4 repositories.
-
 
 ```
 
@@ -8959,7 +8874,6 @@ Inspecting the runtime code in `virtual_dog_walker` following `unification-007` 
 - **AC-008.2 (WasmWorldSim 3200x2400 & Entity Wiring)**: `initWasmSim` initializes with 3200x2400 world dimensions and `CompanionDog.update()` invokes `stepLeashConstraint`.
 - **AC-008.3 (SocialHUD Public Commons Badge)**: `src/ui/social_hud.js` recognizes `clifton-commons` as the public commons and displays `Online`.
 - **AC-008.4 (100% Test Suite Green)**: `python3 test/run_tests.py` and `cargo test` pass across all 4 repositories.
-
 
 ```
 
@@ -9042,7 +8956,6 @@ Currently, chat UI and message presentation logic are duplicated with disjoint l
 - **AC-009.2 (Unified In-Game Chat Experience)**: Proximity chat in `virtual_dog_walker` mounts `ZeroChatWidget` inside `#proximity-chat-panel`, providing matching visual styling, padlock badge, per-message flame burn button, and session burn.
 - **AC-009.3 (Zero Test Regressions)**: All 24 browser scenarios in `zero_chat` pass, all Rust workspace tests pass, and all Python test suites in `virtual_dog_walker` pass 100%.
 
-
 ```
 
 ## FILE: openspec/changes/archive/unification-010/spec.md
@@ -9114,7 +9027,6 @@ With the four-repository zero-network architecture (`zero_protocol`, `zero_netwo
 - **AC-010.3 (Configuration Integrity)**: `wrangler.jsonc` has no Durable Object bindings or migrations; `package.json` has no `partyserver` dependency.
 - **AC-010.4 (Clean Build & 100% Test Pass Rate)**: `bash scripts/build_wasm.sh`, `cargo test`, and `python3 test/run_tests.py` pass 100% with zero errors or references to deleted files.
 
-
 ```
 
 ## FILE: openspec/changes/archive/unification-011/spec.md
@@ -9173,7 +9085,6 @@ max_review_cycles: 3
 3. `brief-origin-references` [L]: grep/replace `play.zero-network.workers.dev` across repos; verify `network.js` host detection.
 4. Validation + review; operator checklist for Worker retirement.
 
-
 ```
 
 ## FILE: openspec/changes/archive/unification-012/spec.md
@@ -9218,7 +9129,6 @@ Update `.github/workflows/ci.yml` in `virtual_dog_walker`:
 - **AC-012.1**: Both `wasm-bindgen-cli` install steps in `.github/workflows/ci.yml` specify `--version 0.2.130`.
 - **AC-012.2**: Local test suites (`cargo test`, `python3 test/run_tests.py`, `bash scripts/build_pages.sh`) pass 100%.
 - **AC-012.3**: Pushing to `origin/main` triggers the GitHub Actions CI pipeline and both `test` and `deploy` jobs complete successfully.
-
 
 ```
 
@@ -9299,6 +9209,228 @@ Stage 1 (parallel): rust-ball-api, entity-wasm-wiring (collision/ears/NPC), widg
 - Multi-repo change: `zero_chat` push must precede `virtual_dog_walker` CI so the build script's widget sync picks up the new widget.
 - Gameplay feel must not change; if any parity test fails the Wasm path must be fixed, not the JS tolerance loosened.
 
+```
+
+## FILE: openspec/changes/archive/unification-014/spec.md
+```markdown
+---
+ticket_id: "unification-014"
+title: "Phase 2: Mobile UI, Scaling & Contextual Input Polish"
+state: "COMPLETED"
+created_at: "2026-11-06T22:50:00Z"
+target_repos:
+  - "../virtual_dog_walker"
+  - "../zero_chat"
+max_review_cycles: 3
+---
+
+# Change Proposal: unification-014 — Phase 2: Mobile UI, Scaling & Contextual Input Polish
+
+## 1. Audit Findings & Problem Statement
+
+Inspecting `src/main.js`, `src/world/field.js`, `src/ui/touch_controls.js`, `src/ui/proximity_chat.js`, and `src/style.css` highlights three primary friction points affecting mobile browser gameplay on smartphones and tablets:
+
+### 1.1 DPI / Retina Canvas Scaling & Dynamic Viewport Zoom
+- **Soft Rendering on High-DPI Displays**: `initCanvas()` in `src/main.js:220` currently sets `canvas.width = window.innerWidth` and `canvas.height = window.innerHeight` at 1x CSS pixel ratio. On modern smartphones (Retina displays with `devicePixelRatio` 2.0 or 3.0), the browser stretches this low-resolution backing canvas over high-density physical pixels, causing sprites, lines, and nametag typography to render noticeably soft and fuzzy.
+- **Narrow Portrait Viewport Tunnel Vision**: In `src/world/field.js:3`, `Camera` renders 1:1 world pixels. A 380px wide mobile portrait screen displays only ~11% of the 3200px park width, whereas a 1920px desktop monitor sees ~60%. Players on mobile feel cramped with minimal advance visibility of oncoming dogs, bins, or poop piles. Adding `devicePixelRatio` buffer scaling plus responsive camera zoom (0.75x–0.85x on narrow viewports) instantly makes the park feel crisp and spacious.
+- **Coordinate Projection Coupling**: `Camera.worldToScreen` and `Camera.screenToWorld` do not currently account for zoom. Introducing zoom requires adjusting coordinate projection math so that touch clicks, ball throws, and entity taps continue to map 1:1 with world coordinates.
+
+### 1.2 Missing Touch Button for Waste Pickup / Bin Disposal
+- **Sanitation Ergonomics Gap**: On desktop, pressing `[E]` contextually interacts with the world: picks up dog waste if near a poop pile, disposes of it if near a bin, or pets the dog if near Ziggy.
+- **Mobile Pain Point**: On mobile (`touch_controls.js`), there is no `[E]` button on the action pad (`btn-touch-throw`, `btn-touch-whistle`, `btn-touch-pet`, `btn-touch-leash`, `btn-touch-chat`). Mobile players are forced to tap the tiny 40px poop pile sprite on the moving canvas.
+- **Misleading In-World Badges**: In `src/main.js:1136`, `drawInteractionPrompt` draws text prompts explicitly saying `[E] Pick up waste` and `[E] Dispose in bin`, which is confusing on touch devices without a physical keyboard.
+- **Solution**: The `❤️` Pet button on the touch action pad should dynamically morph into a glowing `💩` (Pick Up Waste) or `🗑️` (Dispose in Bin) contextual action button whenever the player enters proximity (< 40px) of waste or a bin, and the in-world interaction badges should adapt their text for touch devices.
+
+### 1.3 Virtual Keyboard Viewport Handling in Proximity Chat
+- **Keyboard Clipping**: When a mobile player taps into the chat input bar within `#proximity-chat-panel`, the on-screen virtual keyboard slides up. On iOS Safari and Android Chrome, `window.visualViewport.height` shrinks (often by 300–400px), but standard `100vh` remains unchanged.
+- **Input Field Obscuration**: `#proximity-chat-panel` in `src/style.css` currently uses `max-height: calc(100vh - 100px)`. As a result, the bottom of the drawer—where the form and text input field live—gets pushed down below the top of the virtual keyboard, obscuring what the user is typing.
+- **Solution**: Bind `window.visualViewport` resize and scroll listeners to dynamically anchor `#proximity-chat-panel` height and max-height to `visualViewport.height`, ensuring the input bar remains pinned right above the keyboard.
+
+---
+
+## 2. Technical Architecture & Detailed Scope
+
+### 2.1 Track 1: High-DPI Canvas Scaling & Dynamic Camera Zoom (`src/main.js`, `src/world/field.js`)
+1. **DPI Backing Buffer**:
+   - In `initCanvas()` (`src/main.js`), determine DPR: `const dpr = Math.min(window.devicePixelRatio || 1, 3.0);`.
+   - Set canvas backing buffer dimensions:
+     ```javascript
+     this.canvas.width = Math.round(width * dpr);
+     this.canvas.height = Math.round(height * dpr);
+     this.canvas.style.width = `${width}px`;
+     this.canvas.style.height = `${height}px`;
+     ```
+   - Store `this.dpr = dpr`.
+   - In `render()`, reset and apply DPR transform:
+     ```javascript
+     this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+     ```
+     This allows all existing rendering operations (field, entities, environment, navigation arrow) to operate in logical CSS pixel space (`0..viewportWidth`, `0..viewportHeight`) while being rendered with native Retina sharpness.
+
+2. **Responsive Camera Zoom**:
+   - In `src/world/field.js:Camera`:
+     - Add `zoom = 1.0` to constructor options/properties.
+     - Add `resize(width, height, zoom = 1.0)` support.
+     - Update `apply(ctx)`:
+       ```javascript
+       ctx.save();
+       ctx.scale(this.zoom, this.zoom);
+       ctx.translate(-Math.round(this.x), -Math.round(this.y));
+       ```
+     - Update `worldToScreen(worldX, worldY)`:
+       ```javascript
+       return {
+         x: (worldX - this.x) * this.zoom,
+         y: (worldY - this.y) * this.zoom
+       };
+       ```
+     - Update `screenToWorld(screenX, screenY)`:
+       ```javascript
+       const rawX = screenX / this.zoom + this.x;
+       const rawY = screenY / this.zoom + this.y;
+       return {
+         x: Math.max(0, Math.min(this.worldWidth, rawX)),
+         y: Math.max(0, Math.min(this.worldHeight, rawY))
+       };
+       ```
+     - Update `update(dt)`:
+       - Calculate target centering taking zoom into account:
+         ```javascript
+         const viewWorldW = this.viewportWidth / this.zoom;
+         const viewWorldH = this.viewportHeight / this.zoom;
+         const targetCenterX = this.target.x - viewWorldW / 2;
+         const targetCenterY = this.target.y - viewWorldH / 2;
+         ```
+       - Clamp `this.x` and `this.y` against `this.worldWidth - viewWorldW` and `this.worldHeight - viewWorldH`.
+   - In `src/main.js`:
+     - Compute responsive zoom in `resize()`:
+       - If `width < 600px`: `zoom = Math.max(0.75, Math.min(0.85, 0.75 + (width / 600) * 0.10))` (~0.78x–0.85x).
+       - If `600px <= width < 900px`: `zoom = 0.88x`.
+       - If `width >= 900px`: `zoom = 1.0x`.
+     - Pass `zoom` to `this.camera.resize(width, height, zoom)`.
+
+### 2.2 Track 2: Contextual Mobile Sanitation Action Button & Prompts (`src/ui/touch_controls.js`, `src/main.js`, `src/style.css`)
+1. **Touch Controls Morphing**:
+   - In `src/ui/touch_controls.js`:
+     - Add method `setContextualAction(action)` where `action` can be `null`, `'pet'`, `'pickup'`, or `'dispose'`.
+     - Maintain state `this.contextualAction = action`.
+     - Update DOM element `btn-touch-pet`:
+       - If `'pickup'`: text/emoji `💩`, `aria-label: "Pick up dog waste"`, add CSS class `contextual-pickup`.
+       - If `'dispose'`: text/emoji `🗑️`, `aria-label: "Dispose waste in bin"`, add CSS class `contextual-dispose`.
+       - If `null` or `'pet'`: text/emoji `❤️`, `aria-label: "Pet Dog"`, remove contextual classes.
+     - In action pad trigger:
+       - When `btn-touch-pet` is tapped:
+         - If `contextualAction === 'pickup'`: invoke `this.callbacks.onPickup?.()` (or fallback to `onContextualAction?.('pickup')`).
+         - If `contextualAction === 'dispose'`: invoke `this.callbacks.onDispose?.()` (or fallback to `onContextualAction?.('dispose')`).
+         - Otherwise: invoke `this.callbacks.onPet?.()`.
+   - In `src/main.js`:
+     - Register `onPickup: () => this.pickUpPoop()`, `onDispose: () => this.disposePoopBag()`.
+     - During the game loop, when `activePoopPileNearPlayer` or `activeBinNearPlayer` are updated:
+       ```javascript
+       if (this.activePoopPileNearPlayer) {
+         this.touchControls?.setContextualAction('pickup');
+       } else if (this.activeBinNearPlayer && this.hasPoopBag) {
+         this.touchControls?.setContextualAction('dispose');
+       } else {
+         this.touchControls?.setContextualAction(null);
+       }
+       ```
+2. **Adaptive In-World Prompts**:
+   - In `drawInteractionPrompt(ctx, worldX, worldY, text)`:
+     - Check if touch controls or touch mode is active (`TouchControls.isTouchDevice()`).
+     - If touch mode is active:
+       - For poop: display `Tap 💩 or [E] to pick up`
+       - For bin: display `Tap 🗑️ or [E] to dispose`
+       - Desktop remains `[E] Pick up waste` and `[E] Dispose in bin`.
+3. **Contextual Action Glow Styles**:
+   - In `src/style.css`:
+     - Define `.touch-action-btn.contextual-pickup` with warm amber glow and pulsing keyframe animation.
+     - Define `.touch-action-btn.contextual-dispose` with vibrant emerald glow and pulsing keyframe animation.
+
+### 2.3 Track 3: Virtual Keyboard Viewport Handling (`src/ui/proximity_chat.js`, `src/style.css`)
+1. **VisualViewport Listener in ProximityChat**:
+   - In `src/ui/proximity_chat.js`:
+     - When `window.visualViewport` is supported, attach `resize` and `scroll` listeners:
+       ```javascript
+       const handleViewportResize = () => {
+         const vv = window.visualViewport;
+         if (!vv) return;
+         const vh = vv.height;
+         const vt = vv.offsetTop;
+         document.documentElement.style.setProperty('--vdw-viewport-height', `${vh}px`);
+         document.documentElement.style.setProperty('--vdw-viewport-top', `${vt}px`);
+         if (this.panel && this.panel.classList.contains('active')) {
+           this.adjustPanelForViewport(vh, vt);
+         }
+       };
+       window.visualViewport.addEventListener('resize', handleViewportResize);
+       window.visualViewport.addEventListener('scroll', handleViewportResize);
+       handleViewportResize();
+       ```
+     - In `adjustPanelForViewport(vh, vt)`:
+       - Ensure panel `maxHeight` is constrained: `this.panel.style.maxHeight = `${Math.min(vh - 20, 480)}px`` (or via CSS variable).
+       - When `#proximity-chat-input` receives focus, scroll input into view.
+2. **CSS Mobile Anchoring**:
+   - In `src/style.css`:
+     - In mobile media query `@media (max-width: 768px), (pointer: coarse)`:
+       - Anchor `#proximity-chat-panel`:
+         ```css
+         #proximity-chat-panel {
+           top: max(12px, calc(var(--vdw-viewport-top, 0px) + 12px));
+           max-height: calc(var(--vdw-viewport-height, 100vh) - 24px);
+           bottom: auto;
+         }
+         #proximity-chat-messages {
+           max-height: calc(var(--vdw-viewport-height, 100vh) - 140px);
+         }
+         ```
+
+### 2.4 Track 4: Testing & Verification
+1. **Unit & Mathematical Tests**:
+   - Extend `virtual_dog_walker/test/test_mobile_controls.py`:
+     - Test `Camera` with `zoom` parameter (0.75x, 0.85x, 1.0x): verify `world_to_screen`, `screen_to_world`, bounds clamping, and round-trip consistency.
+     - Test `TouchControls` contextual action transitions: verify button text, aria-label, CSS classes, and callback execution for `pet`, `pickup`, and `dispose`.
+     - Test `visualViewport` CSS variable declarations and responsive styles in `style.css`.
+2. **Integration Verification**:
+   - Run `python3 test/run_tests.py` in `virtual_dog_walker` (all test suites must pass).
+   - Run `cargo test` and `deploy_dry_run.sh` in `zero_chat`.
+
+---
+
+## 3. Acceptance Criteria
+
+- **AC-014.1**: `canvas.width` and `canvas.height` backing buffer dimensions are multiplied by `devicePixelRatio` (clamped 1.0 to 3.0), and CSS styling (`style.width`, `style.height`) maintains viewport dimensions. Canvas rendering context applies DPR transform so entities and environment render without blurriness on Retina displays.
+- **AC-014.2**: `Camera` in `src/world/field.js` supports a `zoom` property (`resize(w, h, zoom)`). On viewports narrower than 768px, a responsive zoom factor (0.75x–0.85x) is applied, expanding the visible park area on mobile by 20%–30%. Desktop viewports (>=900px) remain 1.0x.
+- **AC-014.3**: `Camera.worldToScreen` and `Camera.screenToWorld` accurately transform coordinates with `zoom`. Tapping the canvas to pet the dog, throw the tennis ball, or interact with items maps accurately to world coordinates at any zoom level.
+- **AC-014.4**: `btn-touch-pet` on the touch action pad dynamically morphs into `💩` with aria-label `"Pick up dog waste"` and glowing class `contextual-pickup` when within 40px of dog waste, and into `🗑️` with aria-label `"Dispose waste in bin"` and glowing class `contextual-dispose` when within 44px of a bin with a waste bag. It reverts to `❤️` Pet Dog otherwise.
+- **AC-014.5**: Tapping the morphed `💩` button triggers `pickUpPoop()`; tapping `🗑️` triggers `disposePoopBag()`; haptic pulse (25ms) triggers on tap. In-world interaction prompts adapt text on touch devices to reference the touch buttons.
+- **AC-014.6**: `src/style.css` includes distinct glowing animations for `.contextual-pickup` (warm amber glow) and `.contextual-dispose` (emerald glow).
+- **AC-014.7**: `#proximity-chat-panel` listens to `window.visualViewport` resize/scroll events and dynamically constrains panel height using `--vdw-viewport-height`, keeping the chat input bar visible directly above the on-screen keyboard.
+- **AC-014.8**: All existing tests in `virtual_dog_walker` (`python3 test/run_tests.py`) and `zero_chat` pass with 0 regressions, and new test cases covering camera zoom, touch button morphing, and keyboard viewport handling pass.
+
+---
+
+## 4. Proposed Brief Decomposition (Parallel, Disjoint File Sets)
+
+| Brief | Cognitive Size | Target Repo | Primary Files Affected |
+| :--- | :--- | :--- | :--- |
+| `brief-canvas-dpr-camera-zoom` | MEDIUM [M] | `virtual_dog_walker` | `src/main.js`, `src/world/field.js` |
+| `brief-contextual-touch-sanitation` | MEDIUM [M] | `virtual_dog_walker` | `src/ui/touch_controls.js`, `src/main.js` (touch callbacks & prompt text), `src/style.css` (glow styles) |
+| `brief-virtual-keyboard-viewport` | LOW [L] | `virtual_dog_walker` | `src/ui/proximity_chat.js`, `src/style.css` (mobile media queries & CSS variables) |
+| `brief-mobile-regression-tests` | LOW [L] | `virtual_dog_walker` | `test/test_mobile_controls.py` |
+
+---
+
+## 5. Blast Radius & Risk Analysis
+
+1. **Canvas DPR Scaling & Offscreen Canvases**:
+   - `src/world/environment.js` uses offscreen canvases for lighting cutouts (`_getOffscreenCanvas(w, h)`). When `w` and `h` are passed as logical CSS pixels (`this.camera.viewportWidth`, `this.camera.viewportHeight`), the offscreen canvas matches logical dimensions, and `ctx.drawImage` scales smoothly. Verified that passing logical dimensions prevents mismatch or double-scaling bugs.
+2. **Touch Coordinate Projection Parity**:
+   - Ball throw and entity tap logic in `main.js:573-605` calls `this.camera.screenToWorld(e.clientX, e.clientY)` and `this.camera.worldToScreen(...)`. Because `e.clientX` and `e.clientY` are CSS viewport coordinates, updating `screenToWorld` with `rawX = screenX / this.zoom + this.x` preserves exact tap alignment regardless of device pixel ratio or camera zoom.
+3. **Cross-Repo Independence**:
+   - Changes are strictly isolated to `virtual_dog_walker` runtime UI/rendering files and tests, while `zero_chat` maintains the OpenSpec proposal and tracking. No breaking protocol or Wasm changes are introduced.
 
 ```
 
@@ -9449,7 +9581,6 @@ Additionally, the existing sibling directory `../virtual-dog-walker` must be nor
    - `bash zero_client/tests/browser/run_test.sh` passes all 24 headless browser tests.
    - `./scripts/deploy_dry_run.sh` builds release WASM and verifies bundle.
 
-
 ```
 
 ## FILE: openspec/config.yaml
@@ -9461,7 +9592,6 @@ paths:
   changes: "openspec/changes"
   archive: "openspec/changes/archive"
   roadmaps: "openspec/roadmaps"
-
 ```
 
 ## FILE: openspec/roadmaps/archive/improved-leave-burn-lifecycle.md
@@ -9550,7 +9680,6 @@ flowchart TD
 - [x] **Track 2 (`ticket-021`)**: Web client stamps messages with `data-peer-id`, connects `#header-leave-btn` to selective peer burn + local reset, connects `#destroy-session-button` to global session burn, and handles remote burn signals.
 - [x] **Track 3 (`ticket-022`)**: Automated multi-peer tests confirm selective message burning upon peer departure and global room wipe upon burn invocation. Zero regressions across existing 91 workspace tests.
 - [x] **Track 4 (`ticket-023`)**: Automatic message purge on dirty disconnect (abrupt channel close) & opportunistic window unload in client UI and mesh topology. Zero regressions across full workspace.
-
 ```
 
 ## FILE: openspec/roadmaps/archive/multi-user-mesh-chat.md
@@ -9637,7 +9766,6 @@ flowchart TD
 - [x] **Track 2 (`ticket-026`)**: Secondary peers snap direct WebRTC DataChannels via in-band SDP relay through the host with 0 cloud server requests.
 - [x] **Track 3 (`ticket-027`)**: Header Add-Peer button located to the left of `#peer-count`, enforces single active invite lifecycle, copies quietly without tooltips, and supports dynamic N-peer counter.
 - [x] **Track 4 (`ticket-028`)**: Automated multi-node integration test suite validates full multi-user mesh lifecycle and workspace test suite passes with 100% success.
-
 ```
 
 ## FILE: openspec/roadmaps/archive/serverless-p2p-chat.md
@@ -9743,7 +9871,6 @@ flowchart TD
 - [x] Cloudflare deployment pipeline successfully deploys Worker and Pages bundle.
 - [x] Canonical specifications reconciled in `openspec/specs/overview.md`.
 - [x] Change proposals archived to `openspec/changes/archive/`.
-
 ```
 
 ## FILE: openspec/roadmaps/multi-user-mesh-chat.md
@@ -9830,7 +9957,6 @@ flowchart TD
 - [x] **Track 2 (`ticket-026`)**: Secondary peers snap direct WebRTC DataChannels via in-band SDP relay through the host with 0 cloud server requests.
 - [x] **Track 3 (`ticket-027`)**: Header Add-Peer button located to the left of `#peer-count`, enforces single active invite lifecycle, copies quietly without tooltips, and supports dynamic N-peer counter.
 - [x] **Track 4 (`ticket-028`)**: Automated multi-node integration test suite validates full multi-user mesh lifecycle and workspace test suite passes with 100% success.
-
 ```
 
 ## FILE: openspec/roadmaps/serverless-p2p-chat.md
@@ -9936,7 +10062,6 @@ flowchart TD
 - [x] Cloudflare deployment pipeline successfully deploys Worker and Pages bundle.
 - [x] Canonical specifications reconciled in `openspec/specs/overview.md`.
 - [x] Change proposals archived to `openspec/changes/archive/`.
-
 ```
 
 ## FILE: openspec/specs/overview.md
@@ -10376,10 +10501,14 @@ Unification & Multi-Application P2P Infrastructure (unification-001 through unif
     * Entity Simulation Delegation: `CompanionDog.update()` delegates progressive spring-damper leash cushioning (65px..105px) directly to `dog_walker_core::step_leash_constraint` before 105px hard boundary clamping.
     * Dual Wasm Build: `scripts/build_wasm.sh` compiling both `zero_mesh` (to `src/wasm/`) and `dog_walker_core` (to `src/wasm_core/`), packaged into `dist/`.
     * Strangler-Fig Bridge: `src/engine/wasm_sim_bridge.js` delegating frame simulation ticks to `WasmWorldSim` while transparently preserving pure JS math fallbacks for headless Python test runners.
+  - Mobile UI, Scaling & Contextual Input Polish (unification-014):
+    * High-DPI Retina Backing Buffer: Canvas dimensions scaled by `devicePixelRatio` (1.0..3.0) with CSS layout dimensions constrained; identity buffer clear and DPR context transform eliminate Retina blurriness.
+    * Dynamic Viewport Zoom & Projection: `Camera` responsive zoom (`0.75x–0.85x` on viewports `< 768px`, `1.0x` on desktop) with frustum culling awareness and bi-directional `worldToScreen`/`screenToWorld` zoom transformations.
+    * Contextual Touch Sanitation Action: `TouchControls.setContextualAction` dynamically morphing `btn-touch-pet` into `💩` near dog waste (< 40px) and `🗑️` near bins (< 44px) with waste bag, triggering `pickUpPoop` and `disposePoopBag` with pulsing amber/emerald glowing animations (`.contextual-pickup`, `.contextual-dispose`) and adaptive in-world canvas prompts.
+    * Virtual Keyboard Viewport Anchoring: `ProximityChat` dynamically monitoring `window.visualViewport` `resize` and `scroll` events, updating `--vdw-viewport-height` and pinning `#proximity-chat-panel` above the mobile on-screen keyboard.
 
-Total: All repository test suites passing with zero regressions across virtual_dog_walker (all 22 suites), zero_protocol (109 tests), zero_network (19 tests), and zero_chat (36 tests).
+Total: All repository test suites passing with zero regressions across virtual_dog_walker (all 26 suites), zero_protocol (109 tests), zero_network (19 tests), and zero_chat (36 tests).
 ```
-
 
 ```
 
@@ -10498,7 +10627,6 @@ ls -lh dist/pkg/
 echo "================================================================="
 echo " Dry-run verification completed successfully!"
 echo "================================================================="
-
 ```
 
 ## FILE: scripts/install_hooks.sh
@@ -10506,7 +10634,6 @@ echo "================================================================="
 #!/usr/bin/env bash
 # One-time setup: use the versioned hooks in .githooks/
 cd "$(git rev-parse --show-toplevel)" && git config core.hooksPath .githooks && echo "Git hooks installed (.githooks)"
-
 ```
 
 ## FILE: tests/e2e_handshake.rs
@@ -11298,7 +11425,6 @@ fn test_req_005_5_complete_e2e_handshake_and_encrypted_chat_roundtrip() {
         ChatUi::verify_zero_persistence().expect("post-termination persistence audit");
     });
 }
-
 ```
 
 ## FILE: tests/mesh_simulation_test.rs
@@ -16268,11 +16394,10 @@ fn test_req_031_8_reconcile_higher_id_falls_back_after_grace() {
     assert_eq!(charlie_mesh.open_peers(), 2);
     assert_eq!(bob_mesh.open_peers(), 2);
 }
-
 ```
 
 ## FILE: zero_chat.code-workspace
-```json
+```
 {
 	"folders": [
 		{
@@ -16309,7 +16434,6 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 zero_protocol = { path = "../../zero_protocol/crates/zero_protocol" }
 zero_mesh = { path = "../../zero_protocol/crates/zero_mesh" }
-
 ```
 
 ## FILE: zero_client/index.html
@@ -20274,7 +20398,6 @@ zero_mesh = { path = "../../zero_protocol/crates/zero_mesh" }
     </script>
 </body>
 </html>
-
 ```
 
 ## FILE: zero_client/src/lib.rs
@@ -20292,7 +20415,6 @@ pub use zero_mesh::invite::*;
 pub use zero_mesh::mesh::*;
 #[allow(unused_imports)]
 pub use zero_mesh::webrtc::*;
-
 ```
 
 ## FILE: zero_client/style.css
@@ -21677,7 +21799,6 @@ html.keyboard-open .chat-layout {
     font-size: 1rem;
   }
 }
-
 ```
 
 ## FILE: zero_client/tests/browser/mock_environment.js
@@ -23124,7 +23245,6 @@ html.keyboard-open .chat-layout {
     }
 
 })(typeof globalThis !== 'undefined' ? globalThis : this);
-
 ```
 
 ## FILE: zero_client/tests/browser/run_test.py
@@ -23181,7 +23301,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 ```
 
 ## FILE: zero_client/tests/browser/run_test.sh
@@ -23189,7 +23308,6 @@ if __name__ == "__main__":
 #!/bin/sh
 set -e
 python3 "$(dirname "$0")/run_test.py"
-
 ```
 
 ## FILE: zero_client/tests/browser/test_mesh_scenario.js
@@ -26719,7 +26837,6 @@ runTests().then(() => {
     }
     throw err;
 });
-
 ```
 
 ## FILE: zero_client/tests/e2e_handshake.rs
@@ -27511,7 +27628,6 @@ fn test_req_005_5_complete_e2e_handshake_and_encrypted_chat_roundtrip() {
         ChatUi::verify_zero_persistence().expect("post-termination persistence audit");
     });
 }
-
 ```
 
 ## FILE: zero_client/tests/invite_tests.rs
@@ -27801,7 +27917,6 @@ fn test_req_004_2_fragment_unpacking_and_tamper_rejection() {
         InviteError::MissingPayload
     );
 }
-
 ```
 
 ## FILE: zero_client/tests/mesh_simulation_test.rs
@@ -32771,7 +32886,6 @@ fn test_req_031_8_reconcile_higher_id_falls_back_after_grace() {
     assert_eq!(charlie_mesh.open_peers(), 2);
     assert_eq!(bob_mesh.open_peers(), 2);
 }
-
 ```
 
 ## FILE: zero_client/tests/test_zero_chat_widget.js
@@ -33273,7 +33387,6 @@ fn test_req_031_8_reconcile_higher_id_falls_back_after_grace() {
     print("ALL ZEROCATWIDGET UNIT TESTS PASSED SUCCESSFULLY!");
     print("===============================================================================");
 })();
-
 ```
 
 ## FILE: zero_client/tests/test_zero_chat_widget.py
@@ -33310,7 +33423,6 @@ class TestZeroChatWidget(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 ```
 
 ## FILE: zero_client/tests/webrtc_tests.rs
@@ -33608,7 +33720,6 @@ fn test_bundle_sdp_with_candidates_deduplication_and_crlf() {
     );
     assert!(bundled.ends_with("a=end-of-candidates\r\n"));
 }
-
 ```
 
 ## FILE: zero_client/widget/zero_chat_widget.css
@@ -33995,7 +34106,6 @@ fn test_bundle_sdp_with_candidates_deduplication_and_crlf() {
   transform: none;
   box-shadow: none;
 }
-
 ```
 
 ## FILE: zero_client/widget/zero_chat_widget.js
@@ -34569,6 +34679,5 @@ export class ZeroChatWidget {
 }
 
 export default ZeroChatWidget;
-
 ```
 
