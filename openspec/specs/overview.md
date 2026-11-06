@@ -433,7 +433,12 @@ Unification & Multi-Application P2P Infrastructure (unification-001 through unif
     * Entity Simulation Delegation: `CompanionDog.update()` delegates progressive spring-damper leash cushioning (65px..105px) directly to `dog_walker_core::step_leash_constraint` before 105px hard boundary clamping.
     * Dual Wasm Build: `scripts/build_wasm.sh` compiling both `zero_mesh` (to `src/wasm/`) and `dog_walker_core` (to `src/wasm_core/`), packaged into `dist/`.
     * Strangler-Fig Bridge: `src/engine/wasm_sim_bridge.js` delegating frame simulation ticks to `WasmWorldSim` while transparently preserving pure JS math fallbacks for headless Python test runners.
+  - Mobile UI, Scaling & Contextual Input Polish (unification-014):
+    * High-DPI Retina Backing Buffer: Canvas dimensions scaled by `devicePixelRatio` (1.0..3.0) with CSS layout dimensions constrained; identity buffer clear and DPR context transform eliminate Retina blurriness.
+    * Dynamic Viewport Zoom & Projection: `Camera` responsive zoom (`0.75x–0.85x` on viewports `< 768px`, `1.0x` on desktop) with frustum culling awareness and bi-directional `worldToScreen`/`screenToWorld` zoom transformations.
+    * Contextual Touch Sanitation Action: `TouchControls.setContextualAction` dynamically morphing `btn-touch-pet` into `💩` near dog waste (< 40px) and `🗑️` near bins (< 44px) with waste bag, triggering `pickUpPoop` and `disposePoopBag` with pulsing amber/emerald glowing animations (`.contextual-pickup`, `.contextual-dispose`) and adaptive in-world canvas prompts.
+    * Virtual Keyboard Viewport Anchoring: `ProximityChat` dynamically monitoring `window.visualViewport` `resize` and `scroll` events, updating `--vdw-viewport-height` and pinning `#proximity-chat-panel` above the mobile on-screen keyboard.
 
-Total: All repository test suites passing with zero regressions across virtual_dog_walker (all 22 suites), zero_protocol (109 tests), zero_network (19 tests), and zero_chat (36 tests).
+Total: All repository test suites passing with zero regressions across virtual_dog_walker (all 26 suites), zero_protocol (109 tests), zero_network (19 tests), and zero_chat (36 tests).
 ```
 
