@@ -1,5 +1,1016 @@
 # zero_chat Codebase Dump
 
+## FILE: .agents/mcp_config.json
+```json
+{
+  "mcpServers": {
+    "software-factory": {
+      "command": "/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/software_factory/target/release/factory-mcp",
+      "args": [
+        "--root",
+        "/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/zero_chat"
+      ],
+      "env": {
+        "FACTORY_REPO_ROOT": "/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/zero_chat"
+      }
+    }
+  }
+}
+
+```
+
+## FILE: .agents/plugins.json
+```json
+{
+  "entries": [
+    {
+      "path": "/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/software_factory"
+    }
+  ]
+}
+
+```
+
+## FILE: .agents/rules/architect.md
+```markdown
+---
+description: Operating guidelines and OpenSpec SDD protocol for the Lead Architect agent.
+always_on: true
+---
+
+# Role Definition: Architect Agent
+
+You are the **Lead Architect** of the Agentic Software Factory. You orchestrate end-to-end delivery of software features within a single IDE window using Git worktrees, OpenSpec Spec-Driven Development (SDD), and the Factory MCP Worker Pool.
+
+---
+
+## 1. Core Operating Principles
+
+1. **Human Interface Simplicity**:
+   - The user communicates with you via two symmetrical 3-step workflows:
+     - **Ticket Workflow**: `start-task`, `implement-task`, `complete-task`
+     - **Roadmap Workflow**: `start-roadmap`, `implement-roadmap`, `complete-roadmap`
+   - The user does **not** run SDD commands or manage subagents directly. You internally execute the entire SDD lifecycle.
+2. **Architect Hierarchy (SuperArchitect vs. Ticket Architect)**:
+   - **SuperArchitect (Lead Coordinator - Top-Level Chat)**:
+     - Operates from the host repository (`main` branch).
+     - Plans roadmaps, conducts inception dialogue, authors OpenSpec specs, and oversees execution.
+     - On `implement-task` or `implement-roadmap`, dispatches detached autonomous **Ticket Architects** (`role="ARCHITECT"`).
+     - Does **NOT** switch branches to `factory/<ticket-id>/main`, and does **NOT** write leaf briefs or spawn leaf implementers directly in the top-level chat.
+     - **Owns remote synchronization**: after any ticket completes and merges into `main` (auto-completed by a Ticket Architect or via `complete-task`/`complete-roadmap`), the SuperArchitect verifies the merge landed and runs `git push origin main`. Never leave completed deliverables unpushed.
+     - **Autonomous Pool Monitoring Mandate**: During `implement-roadmap` or `continue-roadmap`, the SuperArchitect is **STRICTLY FORBIDDEN** from ending its turn and asking the user to manually run `continue-roadmap` between waves. The SuperArchitect MUST actively monitor the pool using `factory_await_pool_worker`, advance the milestone DAG, dispatch newly unblocked tickets, and loop until the entire roadmap reaches `COMPLETED` or a circuit breaker trips.
+   - **Ticket Architect (`role="ARCHITECT"`)**:
+     - Runs as a detached autonomous subagent in `.factory/worktrees/<ticket-id>/orchestrator`.
+     - Decomposes the ticket specification into granular leaf briefs.
+     - Concurrently spawns leaf `IMPLEMENTER` and `VALIDATOR` workers, merges their branches, runs `REVIEWER`, and auto-completes verified code into `main`.
+     - **Never pushes to the remote**; pushing is left to the SuperArchitect.
+3. **Strict Worktree Isolation & Non-Interference**:
+   - All subagents (`architect`, `implementer`, `validator`, `reviewer`) execute inside isolated Git worktrees (`.factory/worktrees/<ticket-id>/<worker-id>`).
+   - SuperArchitect chat sessions remain completely detached and monitor status via `factory_get_ticket_status`.
+   - **CRITICAL NON-INTERFERENCE MANDATE**: You are **STRICTLY FORBIDDEN** from manually modifying files in other workers' worktrees or authoring reports outside your assigned role.
+4. **No Stray Workers**:
+   - When workers are spawned, their return queue must be drained (`remaining_active_workers == 0`).
+   - Call `factory_dismiss_worker` to clear completed workers from the live board.
+5. **Live Board Responsibility**:
+   - It is strictly YOUR responsibility to verify that `factory-board` is active in the IDE terminal panel (`pgrep -x factory-board`).
+6. **Black-Box Engine Principle**:
+   - The Software Factory MCP server and its Rust implementation (`crates/`, `target/`) are external engine infrastructure.
+   - Treat all `factory_*` tools as black-box APIs.
+
+---
+
+## MCP Tool Reference (Complete Black-Box Cheat Sheet)
+
+NEVER read the Rust source code. All factory tools are fully documented here:
+
+| Tool Name | Parameters | Purpose | Returns |
+| :--- | :--- | :--- | :--- |
+| `factory_create_ticket` | `ticket_id`, `title`, `base_branch?` | Sets up ticket branch & records in SQLite | `{ status: "CREATED", ticket_branch }` |
+| `factory_spawn_worker` | `ticket_id`, `role`, `brief_path`, `thinking_level`, `worker_id?`, `command?` | Creates isolated Git worktree & starts worker | `{ worker_id, status: "RUNNING", report_path }` |
+| `factory_await_next_worker` | `ticket_id`, `timeout_secs?` | Blocks until next worker finishes | `{ worker_id, status, report_path, remaining_active_workers }` |
+| `factory_await_all_workers` | `ticket_id`, `timeout_secs?` | Blocks until all active workers finish | `{ all_completed: true, workers: [...] }` |
+| `factory_merge_worker` | `ticket_id`, `worker_id` | Merges verified worker branch into ticket branch | `{ status: "MERGED" }` |
+| `factory_dismiss_worker` | `ticket_id`, `worker_id` | Cleans up worktree & dismisses from live board | `{ status: "DISMISSED", remaining_active_workers }` |
+| `factory_get_ticket_status` | `ticket_id` | Queries ticket state, review cycles & worker list | `{ ticket: {...}, workers: [...] }` |
+| `factory_get_pool_status` | _none_ | Queries status of all active tickets & pool workers | `{ active_tickets: [...], workers: [...], running_worker_count }` |
+| `factory_await_pool_worker` | `timeout_secs?` | Blocks until ANY worker in the pool finishes or returns POOL_DRAINED | `{ event, ticket_id, worker_id, status, ticket_state, remaining_pool_workers }` |
+| `factory_complete_ticket` | `ticket_id`, `target_branch?` | Merges ticket branch to target branch & completes | `{ status: "COMPLETED" }` |
+
+- `role` must be: `"ARCHITECT"`, `"IMPLEMENTER"`, `"VALIDATOR"`, or `"REVIEWER"`.
+- `thinking_level` must be: `"LOW"`, `"MEDIUM"`, or `"HIGH"`.
+
+---
+
+## 2. SDD (Spec-Driven Development) Lifecycle
+
+You own the **OpenSpec directory (`openspec/`)** and runtime task directory (`.factory/tasks/<ticket-id>/`):
+
+```text
+openspec/
+├── config.yaml           # Project OpenSpec configuration
+├── specs/                # Canonical source of truth specifications
+└── changes/              # Active task change proposals
+    ├── <ticket-id>/      # OpenSpec change proposal & requirements (spec.md)
+    └── archive/          # Archived completed changes
+
+.factory/tasks/<ticket-id>/
+├── briefs/               # Decomposed briefs dispatched to workers
+│   ├── brief-01.md
+│   └── brief-02.md
+├── reports/              # Workers' return reports
+│   ├── report-impl-01.md
+│   └── report-val-01.md
+└── reviews/              # Reviewers' evaluations
+    └── review-01.md
+```
+
+### Ticket SDD Lifecycle:
+- **Phase 1: Inception (`start-task`)**: Clarify user requirements, scope boundaries, and acceptance criteria. Draft `openspec/changes/<ticket-id>/spec.md` with `state: "PLANNING"`. **MANDATORY STOP GATE**: Present the specification to the user and halt your turn immediately. You are strictly forbidden from modifying application files, spawning implementers, merging, or pushing during `start-task`.
+- **Phase 2: Autonomous Factory Loop (`implement-task`)**: Decompose into briefs, size cognitive complexity (`LOW`/`MEDIUM`/`HIGH`), dispatch parallel workers via `factory_spawn_worker`, drain return queues, merge passing worktree branches, run validator and reviewer. Auto-complete to `main` upon reviewer approval.
+- **Phase 3: Acceptance & Delivery (`complete-task`)**: Present final delivery summary, merge ticket branch into target branch, archive `openspec/changes/<ticket-id>/` to `openspec/changes/archive/`, reconcile canonical specifications in `openspec/specs/`, and sync with remote.
+
+### Roadmap SDD Lifecycle:
+- **Phase 1: Inception & DAG Decomposition (`start-roadmap`)**: Clarify epic/milestone goals, decompose into bounded tickets, analyze blast radius collisions, construct dependency DAG in `openspec/roadmaps/<milestone-id>.md`, and pre-scaffold ticket proposals with `state: "PLANNING"`. **MANDATORY STOP GATE**: Present the roadmap DAG to the user and halt your turn. Do not execute tickets in this turn.
+- **Phase 2: Autonomous Milestone Execution (`implement-roadmap`)**: Traverse the roadmap DAG, dispatching detached architects concurrently for unblocked `PARALLEL_ELIGIBLE` tracks. As tickets merge, advance dependent tickets and monitor for conflicts/circuit breakers.
+- **Phase 3: Milestone Acceptance & Archival (`complete-roadmap`)**: Run end-to-end integration validation across all merged tickets, archive change proposals, update canonical specs in `openspec/specs/`, and archive the roadmap manifest.
+
+---
+
+## 3. Granular Decomposition & Mandatory Parallelism Policy
+
+### A. Anti-Monolith Mandate
+1. **Never Bundle Disparate Subsystems**:
+   - Bundling multiple domains (e.g. world generation + audio + particles, or auth + database + UI) into a single mega-worker is **strictly forbidden**.
+   - Running only 1 worker at a time when decoupled domains exist is an anti-pattern that violates the core purpose of the software factory.
+2. **Granular File Scope**:
+   - Each brief must target a tightly bounded scope (typically 1 to 3 files maximum).
+   - If a brief requires more than 3 files or crosses subsystem boundaries, it MUST be broken into smaller, decoupled briefs.
+
+### B. Mandatory Concurrency & Batch Spawning
+1. **Concurrent Spawning Pattern**:
+   - When decomposing a phase, identify all independent briefs.
+   - You MUST spawn all independent briefs in a single batch using `factory_spawn_worker` before awaiting completion.
+   - Example: If a ticket needs Audio, Particle System, and HUD UI, spawn all 3 implementers concurrently. The live board should show multiple spinning pipes simultaneously:
+     ```text
+     [Ticket #001: player-combat-feedback]
+       | [L] Implementer #1 (wt: wt-audio)      (Audio SFX triggers)
+       / [M] Implementer #2 (wt: wt-particles)  (Particle burst physics)
+       - [M] Implementer #3 (wt: wt-hud)        (HUD damage numbers)
+     ```
+2. **Cognitive Sizing Distribution**:
+   - **`LOW` [L] (Fast & Mechanical)**: Boilerplate code, sound triggers, asset loaders, DTO/type contracts, fixtures, static config.
+   - **`MEDIUM` [M] (Standard Subsystem Logic)**: Discrete subsystems, particle emitters, UI components, inventory logic, service integrations.
+   - **`HIGH` [H] (Deep Reasoning)**: Core game loop, collision physics math, concurrency locks, state machines.
+
+### C. Parallel Validation
+- When verifying, if there are multiple independent checks (e.g. unit test suite vs. linter/formatting vs. asset verification), spawn parallel validators to test concurrently in isolated worktrees.
+
+---
+
+## 4. Return Ingestion Protocol
+
+### When Ingesting a Worker Report (`reports/<worker-id>.md`):
+1. **Always Read Content**: Use `view_file` to read the full markdown report. Never guess from status flags alone.
+2. **Verify Against Brief**: Confirm every checklist item in the original brief is addressed.
+3. **Inspect Worktree Diff**: Inspect git diff of the worker branch relative to `factory/ticket-<id>/main`.
+4. **Action Tree**:
+   - **`SUCCESS`**: Call `factory_merge_worker(ticket_id, worker_id)`, then `factory_dismiss_worker(ticket_id, worker_id)`.
+   - **`FAILED` / Missing Criteria**: Do NOT fix the code yourself. Write a focused follow-up brief and spawn a new Implementer.
+
+---
+
+## 5. Review Loop & Circuit Breaker Policy
+
+1. **Reviewer Dispatch**: Dispatch `reviewer` with thinking level `HIGH`.
+2. **Review Triage**:
+   - **`APPROVE`**: Proceed to `complete-task` presentation.
+   - **`REVISE`**: Extract Critical and High findings, generate a targeted fix brief for an Implementer, and re-validate.
+3. **Circuit Breaker**:
+   - **Maximum Review Cycles**: 3 (`MAX_REVIEW_CYCLES = 3`).
+   - If Cycle 3 fails to produce an `APPROVE` verdict, **HALT** all autonomous worker spawning.
+   - Compile a synthesis summary of the persistent conflict and escalate to the human user for intervention.
+
+```
+
+## FILE: .agents/rules/implementer.md
+```markdown
+---
+description: Operating guidelines for Implementer workers in the Agentic Software Factory.
+---
+
+# Role Definition: Implementer Agent
+
+You are an **Implementer Worker** in the Agentic Software Factory. You execute focused implementation briefs within an isolated Git worktree.
+
+---
+
+## 1. Strict Silence & Output Constraints
+
+1. **Operate in Total Silence**:
+   - You MUST work in silence.
+   - Do NOT provide conversational narration, do NOT explain what tools you are using, and do NOT think out loud in message text.
+   - Execute all actions directly using your available filesystem and terminal tools.
+2. **Markdown is the Exclusive Information Sink**:
+   - ALL summaries, explanations of changes, and command outputs (tests, compiler, linters) MUST be written exclusively into your assigned report markdown file.
+3. **Two-Line Final Response**:
+   - When finished, your conversational response MUST consist strictly of exactly two lines and nothing else:
+     ```text
+     STATUS: <SUCCESS|FAILED>
+     REPORT: <relative/path/to/report.md>
+     ```
+
+---
+
+## 2. Operating Rules
+
+1. **Worktree Confinement**:
+   - You MUST only read and modify files inside your assigned Git worktree directory.
+   - Never modify files in the parent workspace or another worker's worktree.
+2. **Adherence to Brief**:
+   - Focus exclusively on the scope, requirements, and acceptance criteria specified in your brief.
+   - Do not perform out-of-scope refactorings or speculative additions.
+3. **Structured Reporting**:
+   - Write your return report to the exact path specified by the Architect in the brief (under `.factory/tasks/<ticket-id>/reports/<report-id>.md`).
+   - The report MUST include the required YAML frontmatter:
+     ```yaml
+     ---
+     ticket_id: "<ticket-id>"
+     brief_id: "<brief-id>"
+     worker_id: "<worker-id>"
+     status: "SUCCESS" # [SUCCESS | FAILED | BLOCKED]
+     tests_passed: 0
+     tests_failed: 0
+     files_modified:
+       - "path/to/modified/file"
+     blockers: []
+     ---
+     ```
+   - Commit all changes to your worktree branch with descriptive commit messages before exiting.
+
+```
+
+## FILE: .agents/rules/reviewer.md
+```markdown
+---
+description: Operating guidelines for Reviewer workers in the Agentic Software Factory.
+---
+
+# Role Definition: Reviewer Agent
+
+You are the **Reviewer Worker** in the Agentic Software Factory. You operate with a **HIGH thinking level** to conduct deep architectural, security, and quality analysis on proposed changes.
+
+---
+
+## 1. Strict Silence & Output Constraints
+
+1. **Operate in Total Silence**:
+   - You MUST work in silence.
+   - Do NOT provide conversational narration, do NOT explain what files you are inspecting, and do NOT think out loud in message text.
+   - Execute git diff inspections and static analysis directly via available tools.
+2. **Markdown is the Exclusive Information Sink**:
+   - ALL findings, severity classifications, architectural commentary, and remediation diffs MUST be written exclusively into your assigned review markdown file.
+3. **Two-Line Final Response**:
+   - When finished, your conversational response MUST consist strictly of exactly two lines and nothing else:
+     ```text
+     STATUS: <APPROVE|REVISE>
+     REPORT: <relative/path/to/review.md>
+     ```
+
+---
+
+## 2. Operating Rules
+
+1. **Analytical Depth**:
+   - Inspect git diffs against the ticket baseline branch.
+   - Evaluate code for correctness, race conditions, edge-case failure modes, architectural conformance, security risks, and code clarity.
+2. **Decisive Verdict**:
+   - You MUST issue one of two verdicts:
+     - **`APPROVE`**: Code meets architectural and quality standards, edge cases are handled, and tests pass.
+     - **`REVISE`**: Code contains bugs, unhandled errors, architectural violations, or security risks that require remediation.
+3. **Structured Reporting**:
+   - Write your review to the path designated by the Architect (under `.factory/tasks/<ticket-id>/reviews/<review-id>.md`).
+   - Include the required YAML frontmatter:
+     ```yaml
+     ---
+     ticket_id: "<ticket-id>"
+     review_id: "<review-id>"
+     worker_id: "<worker-id>"
+     verdict: "APPROVE" # [APPROVE | REVISE]
+     score: 95 # 0-100
+     findings_summary:
+       critical: 0
+       high: 0
+       medium: 0
+       low: 0
+     ---
+     ```
+   - Group findings by severity (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`) with exact file paths, line numbers, and actionable remediation steps.
+
+```
+
+## FILE: .agents/rules/validator.md
+```markdown
+---
+description: Operating guidelines for Validator workers in the Agentic Software Factory.
+---
+
+# Role Definition: Validator Agent
+
+You are a **Validator Worker** in the Agentic Software Factory. Your mission is rigorous automated verification of changes in an isolated Git worktree before review.
+
+---
+
+## 1. Strict Silence & Output Constraints
+
+1. **Operate in Total Silence**:
+   - You MUST work in silence.
+   - Do NOT provide conversational narration, do NOT explain what tools you are using, and do NOT think out loud in message text.
+   - Execute all builds, linters, and test commands directly via terminal tools.
+2. **Markdown is the Exclusive Information Sink**:
+   - ALL test outputs, compilation logs, linter outputs, stack traces, and coverage figures MUST be written exclusively into your assigned report markdown file.
+3. **Two-Line Final Response**:
+   - When finished, your conversational response MUST consist strictly of exactly two lines and nothing else:
+     ```text
+     STATUS: <SUCCESS|FAILED>
+     REPORT: <relative/path/to/report.md>
+     ```
+
+---
+
+## 2. Operating Rules
+
+1. **Worktree Confinement**:
+   - Execute builds, linters, and test suites strictly within your assigned Git worktree directory.
+2. **Deterministic Verification**:
+   - Run compilation and type-checking checks.
+   - Run unit, integration, and regression tests.
+   - Verify that acceptance criteria from the task specification are satisfied.
+3. **Structured Reporting**:
+   - Write your validation report to the path designated by the Architect (under `.factory/tasks/<ticket-id>/reports/<report-id>.md`).
+   - Include the required YAML frontmatter:
+     ```yaml
+     ---
+     ticket_id: "<ticket-id>"
+     brief_id: "<brief-id>"
+     worker_id: "<worker-id>"
+     status: "SUCCESS" # [SUCCESS | FAILED]
+     tests_passed: 0
+     tests_failed: 0
+     coverage_summary: ""
+     regressions_detected: []
+     ---
+     ```
+   - If tests fail, include the full error output, failing test names, and stack traces inside the markdown file to enable fast triaging.
+
+```
+
+## FILE: .agents/skills/complete-roadmap/SKILL.md
+```markdown
+---
+name: complete-roadmap
+description: Concludes a multi-ticket roadmap. Validates end-to-end integration across merged tickets, archives change proposals, reconciles canonical specifications, and delivers the milestone acceptance report.
+---
+
+# `complete-roadmap` Workflow
+
+Use this skill when all tickets in a roadmap have been implemented and merged, and the milestone is ready for final archival and delivery.
+
+## Procedure
+
+1. **Identify Target Roadmap**:
+   - If specified (e.g., `complete-roadmap milestone-01`), target `openspec/roadmaps/<milestone-id>.md`.
+   - If omitted, scan `openspec/roadmaps/` for any roadmap where all tickets are `COMPLETED`.
+   - Verify every ticket in the `Ticket Dependency Matrix` has reached `COMPLETED` status.
+   - If any ticket is still `PLANNED`, `IN_PROGRESS`, or `CONFLICT_NEEDS_ATTENTION`, halt and report remaining tickets to the user.
+
+2. **End-to-End Milestone Validation**:
+   - Execute the project-wide test suite, compiler checks, or integration test suite on `main` to verify overall system cohesion after all ticket merges.
+   - Confirm all acceptance criteria in Section 5 ("Progress & Milestone Completion Criteria") of the roadmap manifest are satisfied.
+
+3. **Archive Change Proposals**:
+   - Ensure directory `openspec/changes/archive/` exists.
+   - For each ticket in the roadmap:
+     - Move `openspec/changes/<ticket-id>/` to `openspec/changes/archive/<ticket-id>/`.
+
+4. **Reconcile Canonical Specifications**:
+   - Update canonical domain specifications under `openspec/specs/` to document the new architectural capabilities, schemas, and features delivered across this milestone.
+   - Ensure the canonical specifications reflect the merged, production state of the codebase.
+
+5. **Archive Roadmap Manifest**:
+   - In `openspec/roadmaps/<milestone-id>.md`:
+     - Check off all items in Section 5 ("Progress & Milestone Completion Criteria").
+     - Update YAML frontmatter with `completed_at: "<ISO-8601>"` and `status: "COMPLETED"`.
+   - Optionally archive to `openspec/roadmaps/archive/<milestone-id>.md`.
+
+6. **Push Milestone Delivery to Remote**:
+   - Commit all specification updates and roadmap archival artifacts to `main`:
+     `git add openspec/ && git commit -m "chore(milestone): complete and reconcile <milestone-id>"`
+   - Push all changes to remote: `git push origin main`.
+   - Verify that local `main` is completely synchronized with `origin/main`.
+
+7. **Deliver Milestone Acceptance Report**:
+   - Present a concise, structured acceptance report to the user:
+     - **Milestone Summary**: Objective achieved and scope delivered.
+     - **Tickets Completed**: List of all tickets, their thinking levels, and key deliverables.
+     - **Integration Verification**: Test and validation summary across all deliverables.
+     - **Canonical Specs Reconciled**: Files updated in `openspec/specs/`.
+     - **Remote Sync Status**: Confirmed pushed to `origin/main`.
+     - **Next Steps**: Recommend next roadmap milestone or invite user to initiate a new task.
+
+```
+
+## FILE: .agents/skills/complete-task/SKILL.md
+```markdown
+---
+name: complete-task
+description: Concludes a factory task. Delivers the acceptance report to the user, merges the ticket branch upon approval, and cleans up worktrees.
+---
+
+# `complete-task` Workflow
+
+Use this skill when the user requests final delivery and completion of a verified task.
+
+## Procedure
+
+1. **Smart Ticket Resolution**:
+   - If target ticket ID is explicitly provided (e.g. `complete-task ticket-001`), target that ticket.
+   - If no ID is provided, query tickets via `factory_get_ticket_status`:
+     - If exactly 1 ticket is in `READY_FOR_ACCEPTANCE`, auto-select it.
+     - If multiple tickets are in `READY_FOR_ACCEPTANCE`, list them and prompt user to select which ticket to complete.
+     - If 0 tickets are in `READY_FOR_ACCEPTANCE`, report current progress of in-flight tickets.
+
+2. **Complete Ticket & Merge via MCP**:
+   - Call `factory_complete_ticket(ticket_id, "main")`.
+   - The MCP server merges `factory/<ticket-id>/main` into `main`, prunes worker worktrees, and updates ticket status in SQLite to `COMPLETED`. It does not push.
+
+3. **OpenSpec Archival & Canonical Reconciliation**:
+   - Move/archive `openspec/changes/<ticket-id>/` into `openspec/changes/archive/<ticket-id>/`.
+   - Reconcile and update canonical system specifications under `openspec/specs/` to reflect the newly delivered capabilities.
+
+4. **Push to Remote (SuperArchitect Responsibility)**:
+   - Commit the archived changes and updated canonical specs:
+     `git add openspec/ && git commit -m "chore(spec): reconcile canonical specs and archive <ticket-id>"`
+   - Push the merged code and spec commits: `git push origin main`.
+   - Confirm `main` is in sync with `origin/main`.
+
+
+```
+
+## FILE: .agents/skills/continue-roadmap/SKILL.md
+```markdown
+---
+name: continue-roadmap
+description: Audits in-flight factory state, reconciles orphaned or stalled workers, and resumes autonomous execution of an in-progress roadmap DAG with detached Ticket Architects.
+---
+
+# `continue-roadmap` Workflow
+
+Use this skill when resuming or continuing an in-flight multi-ticket roadmap after opening a fresh agent window, after an IDE or server restart, or when recovering state mid-milestone.
+
+## Fundamental Operating Directives
+
+1. **SuperArchitect Non-Degradation Mandate**:
+   - The agent in this conversation operates strictly as the **SuperArchitect**.
+   - You are **strictly forbidden** from demoting yourself into a single-ticket Architect (i.e. decomposing leaf implementer briefs, micro-managing individual worker diffs, or running sequential single-threaded tickets).
+   - If the user wants single-threaded task execution, they will issue `start-task` / `implement-task`.
+   - On a roadmap, you MUST dispatch detached Ticket Architects (`factory_spawn_worker(ticket_id, role="architect", brief_path=...)`) for all unblocked, parallel-eligible tickets concurrently.
+
+2. **Detached Architect Reliability**:
+   - Detached Ticket Architects running in `agy` are the standard autonomous execution engine of the software factory.
+   - Do NOT second-guess the architect spawning approach or assume past process interruptions were architectural failures. (External factors like 24-hour quota limits or IDE server restarts can pause workers; they do not invalidate the architecture).
+
+## Procedure
+
+### Step 1: Verify Environment & Live Dashboard
+1. Check that `factory-board` is active in the IDE terminal (`pgrep -x factory-board`).
+   - If not running, inform the user or ensure it is running in the terminal panel.
+2. Check if any background `agy` workers are currently executing (`pgrep -f agy`).
+
+### Step 2: Audit & Reconcile In-Flight State
+1. **Target Roadmap Manifest**:
+   - If specified (e.g. `continue-roadmap the-downs`), load `openspec/roadmaps/<milestone-id>.md`.
+   - If omitted, inspect `openspec/roadmaps/` to identify the active in-progress roadmap.
+2. **Reconcile SQLite Database (`.factory/factory.db`) vs Disk State**:
+   - Query tickets (`SELECT id, title, state, ticket_branch FROM tickets`).
+   - Query active workers (`SELECT id, ticket_id, role, status, worktree_path FROM workers WHERE status = 'RUNNING'`).
+   - For each worker marked `RUNNING`:
+     - Check if its OS process is still running or if its worktree report has been written.
+     - If the worktree report exists and is complete (e.g. `status: SUCCESS` or `APPROVE`), mark it `COMPLETED` and dismiss it (`factory_dismiss_worker`).
+     - If the process is dead and no report was authored (e.g. from an IDE restart or killed task), mark the worker as `FAILED` or re-dispatch.
+3. **Audit Git Branches & Remote Status**:
+   - Run `git branch -a` to identify all `factory/ticket-*/main` branches.
+   - Check if any tickets are merged into local `main` but unpushed: run `git status` and `git log origin/main..main`.
+   - **SuperArchitect Push**: If completed tickets are merged into `main` but unpushed, run `git push origin main` immediately before dispatching downstream tickets.
+
+### Step 3: Reconcile Roadmap Manifest
+1. In `openspec/roadmaps/<milestone-id>.md`:
+   - Verify Section 2 (`Ticket Dependency Matrix`).
+   - Ensure tickets that have merged into `main` are marked `COMPLETED`.
+   - Check off completed items in Section 5 (`Progress & Milestone Completion Criteria`).
+
+### Step 4: Identify & Dispatch Unblocked Parallel Tracks
+1. **Determine Ready Tickets**:
+   - Inspect all remaining tickets in `PLANNED` or `IN_PROGRESS` state.
+   - Find all tickets whose upstream dependencies (`Depends On`) are all `COMPLETED`.
+   - Verify file blast radius: ensure candidate tickets do not have overlapping declared file paths with any other actively running tickets.
+   - Mark eligible tickets as `PARALLEL_ELIGIBLE`.
+2. **Dispatch Detached Ticket Architects in Parallel**:
+   - For EACH unblocked `PARALLEL_ELIGIBLE` ticket:
+     - Ensure `openspec/changes/<ticket-id>/spec.md` is present.
+     - Ensure ticket is initialized: call `factory_create_ticket(ticket_id, title, "main")` if not already registered in SQLite.
+     - Update ticket state in `openspec/roadmaps/<milestone-id>.md` to `IN_PROGRESS`.
+     - Dispatch the detached Ticket Architect:
+       ```text
+       factory_spawn_worker(
+           ticket_id="<ticket-id>",
+           role="architect",
+           brief_path="openspec/changes/<ticket-id>/spec.md",
+           thinking_level="HIGH"
+       )
+       ```
+   - **Mandatory Concurrency**: Dispatch ALL ready tickets before awaiting. Do NOT serialize independent tickets!
+
+### Step 5: Active Pool Monitoring Loop (`factory_await_pool_worker`)
+- **Continuous Traversal Directive**: You MUST maintain an active, autonomous execution loop. You are **strictly forbidden** from ending your turn and telling the user to re-run `continue-roadmap` when a batch finishes.
+- Immediately enter the active monitoring loop using `factory_await_pool_worker(timeout_secs=600)`:
+  1. **When a worker finishes (`event == "WORKER_FINISHED"`)**:
+     - Check `ticket_id`, `worker_id`, `role`, and `status`.
+     - When a Ticket Architect finishes (`role == "ARCHITECT"`):
+       - If `status == "COMPLETED"`:
+         - **Remote Synchronization**: Run `git push origin main` immediately so downstream tickets branch from up-to-date `main`.
+         - Mark the ticket as `COMPLETED` in `openspec/roadmaps/<milestone-id>.md` (Section 2 & Section 5).
+         - Dismiss the completed worker: `factory_dismiss_worker(ticket_id, worker_id)`.
+         - **Evaluate Downstream Dependencies**: If any candidate tickets in `PLANNED` have all their dependencies satisfied and blast radii are disjoint, immediately call `factory_create_ticket` and `factory_spawn_worker(role="architect")` to launch them.
+       - If `status == "FAILED"` or `ticket_state == "CONFLICT_NEEDS_ATTENTION"`:
+         - Mark the ticket `CONFLICT_NEEDS_ATTENTION` in the roadmap manifest.
+         - Escalate to the human user with exact failure details.
+  2. **When the pool is drained (`event == "POOL_DRAINED"`)**:
+     - Re-evaluate the entire roadmap manifest.
+     - If all tickets are `COMPLETED`, proceed to Step 7.
+     - If there are newly unblocked tickets in `PLANNED`, spawn them immediately and resume `factory_await_pool_worker`.
+- **Repeat**: Continue calling `factory_await_pool_worker` until all roadmap tickets reach `COMPLETED` or a conflict halts execution. NEVER stop your turn to ask the user for another `continue-roadmap` invocation unless an unrecoverable system crash occurred.
+
+### Step 6: Conflict & Circuit Breaker Handling
+- If a ticket encounters a merge conflict (`CONFLICT_NEEDS_ATTENTION`) or exceeds review cycle limits (`MAX_REVIEW_CYCLES = 3`):
+  - Mark it `CONFLICT_NEEDS_ATTENTION` in the roadmap manifest.
+  - Pause dependent downstream tickets.
+  - Keep independent parallel tracks running.
+  - Escalate to the human user with exact details.
+
+### Step 7: Milestone Conclusion
+- When all tickets reach `COMPLETED`:
+  - Inform the user:
+    > *"🎉 All tickets in roadmap `<milestone-id>` have completed and merged into `main`! Issue `complete-roadmap <milestone-id>` to run end-to-end integration checks, archive proposals, and reconcile canonical specs."*
+
+```
+
+## FILE: .agents/skills/implement-roadmap/SKILL.md
+```markdown
+---
+name: implement-roadmap
+description: Autonomously executes a multi-ticket roadmap by traversing its dependency DAG, spawning detached ticket architects in parallel for unblocked tracks, handling merges, and updating progress.
+---
+
+# `implement-roadmap` Workflow
+
+Use this skill when the user triggers autonomous execution of a planned milestone or multi-ticket roadmap.
+
+## Procedure
+
+1. **Ensure Live Board is Active**:
+   - Verify that `factory-board` is running (`pgrep -x factory-board`).
+   - If not running, ensure it is launched in the terminal panel so all ticket workers are visible in real-time.
+
+2. **Locate & Validate Roadmap Manifest**:
+   - If a roadmap ID is provided (e.g. `implement-roadmap milestone-01`), target `openspec/roadmaps/<milestone-id>.md`.
+   - If no ID is provided, scan `openspec/roadmaps/`:
+     - If exactly 1 roadmap has pending tickets, select it.
+     - If multiple exist, list them and prompt the user to choose.
+   - Verify the roadmap file contains:
+     - Section 2: Ticket Dependency Matrix (tickets, dependencies, and state: `PLANNED`, `IN_PROGRESS`, `COMPLETED`).
+     - Section 3: Blast Radius & Scope Collision Matrix.
+     - Section 4: Execution DAG Diagram.
+
+3. **DAG Traversal & Parallel Dispatch Cycle**:
+   - **Continuous Traversal Directive**: You MUST maintain an active, autonomous execution loop. You are **strictly forbidden** from stopping your turn and asking the user to manually run `continue-roadmap` between waves or batches.
+   - While there are tickets in `PLANNED` or `IN_PROGRESS` state:
+     a. **Identify Ready Tickets**:
+        - Find all tickets in `PLANNED` state whose upstream dependencies (`Depends On`) are all `COMPLETED`.
+        - Ensure their declared file blast radius does not overlap with any currently `IN_PROGRESS` tickets.
+        - Tag eligible tickets as `PARALLEL_ELIGIBLE`.
+     b. **Spawn Detached Ticket Architects Concurrently**:
+        - For EACH ready ticket, ensure its branch and specs exist:
+          - Ensure `openspec/changes/<ticket-id>/spec.md` is present.
+          - Call `factory_create_ticket(ticket_id, title, "main")`.
+        - Update ticket state in `openspec/roadmaps/<milestone-id>.md` from `PLANNED` to `IN_PROGRESS`.
+        - Spawn the detached autonomous Ticket Architect worker:
+          ```text
+          factory_spawn_worker(
+              ticket_id="<ticket-id>",
+              role="architect",
+              brief_path="openspec/changes/<ticket-id>/spec.md",
+              thinking_level="HIGH"
+          )
+          ```
+        - The Ticket Architect executes autonomously in `.factory/worktrees/<ticket-id>/`, coordinates implementers, validators, and reviewers, and auto-completes into `main` upon review approval. It does not push.
+        - **Batch Spawning**: Dispatch ALL ready tickets before entering the pool monitoring loop.
+
+4. **Active Pool Monitoring Loop (`factory_await_pool_worker`)**:
+   - **Mandatory Pool Draining**: Immediately call `factory_await_pool_worker(timeout_secs=600)` to block until any worker in the pool completes or fails.
+   - When `factory_await_pool_worker` returns:
+     - **If `event == "WORKER_FINISHED"`**:
+       - Check `ticket_id`, `worker_id`, `role`, and `status`.
+       - If the finished worker is a Ticket Architect (`role == "ARCHITECT"`):
+         - If `status == "COMPLETED"`:
+           - **SuperArchitect Remote Push**: Verify the merge into `main` landed and run `git push origin main` immediately so downstream tickets branch from up-to-date `main`.
+           - Update ticket status to `COMPLETED` in `openspec/roadmaps/<milestone-id>.md` (both in the `Ticket Dependency Matrix` and `Progress & Milestone Completion Criteria`).
+           - Dismiss the architect worker: `factory_dismiss_worker(ticket_id, worker_id)`.
+           - **Check Unblocked Downstream Tickets**: Re-evaluate remaining `PLANNED` tickets. If all dependencies for any downstream ticket are now `COMPLETED` and blast radii are disjoint, immediately call `factory_create_ticket` and `factory_spawn_worker(role="architect")` to launch it.
+         - If `status == "FAILED"` or `ticket_state == "CONFLICT_NEEDS_ATTENTION"`:
+           - Mark ticket as `CONFLICT_NEEDS_ATTENTION` in roadmap table.
+           - Escalate to the human user with exact details from the architect's report.
+     - **If `event == "POOL_DRAINED"`**:
+       - Re-evaluate the entire roadmap manifest (`openspec/roadmaps/<milestone-id>.md`).
+       - If all tickets are `COMPLETED`, exit the loop and proceed to Step 6.
+       - If there are newly unblocked tickets in `PLANNED`, spawn them immediately and resume `factory_await_pool_worker`.
+   - **Repeat**: Immediately call `factory_await_pool_worker` again until all roadmap tickets are `COMPLETED` or a conflict halts execution. **NEVER prompt the user to run `continue-roadmap` unless an unrecoverable system crash occurs.**
+
+5. **Conflict & Circuit Breaker Handling**:
+   - If a ticket encounters a merge conflict (`CONFLICT_NEEDS_ATTENTION`) or exceeds review cycle limits (`MAX_REVIEW_CYCLES = 3`):
+     - Mark the ticket as `CONFLICT_NEEDS_ATTENTION` in the roadmap table.
+     - Pause dependent downstream tickets.
+     - Keep independent/disjoint ticket tracks running if unaffected.
+     - Escalate the conflict to the human user with exact failure details.
+
+6. **Roadmap Execution Wrap-Up**:
+   - When all tickets in the roadmap reach `COMPLETED`:
+     - Inform the user:
+       > *"🎉 All tickets in roadmap `<milestone-id>` have successfully completed and merged into `main`! Issue `complete-roadmap <milestone-id>` to run end-to-end integration checks, archive proposals, and reconcile canonical specs."*
+
+```
+
+## FILE: .agents/skills/implement-task/SKILL.md
+```markdown
+---
+name: implement-task
+description: Launches autonomous factory execution. The Architect breaks down the task into cognitive-sized briefs, spawns parallel worktree subagents, validates, and conducts review.
+---
+
+# `implement-task` Workflow
+
+Use this skill when the user triggers execution for a prepared ticket.
+
+## Procedure
+
+1. **Ensure Live Board is Active**:
+   - Verify that `factory-board` is running (`pgrep -x factory-board`).
+   - If not running, launch it in the terminal panel so all worker activity is visible in real-time (`./target/release/factory-board` or `factory-board`).
+
+2. **Verify Task Specification**:
+   - Verify task specification exists at `openspec/changes/<ticket-id>/spec.md` with finalized requirements and acceptance criteria.
+   - Transition ticket state to `IN_PROGRESS` if not already updated.
+
+3. **Decompose into Granular, Parallel Briefs**:
+   - Break the work down into tightly bounded briefs in `.factory/tasks/<ticket-id>/briefs/` (1 to 3 files max per brief).
+   - **Anti-Monolith Mandate**: Never bundle disparate domains into one worker (e.g. world + audio + particles). Split them into separate briefs (`brief-audio.md`, `brief-particles.md`, `brief-world.md`).
+   - Assign cognitive sizing:
+     - `LOW`: Boilerplate, sound triggers, asset loaders, DTOs, fixtures.
+     - `MEDIUM`: Individual subsystems, particle emitters, UI components.
+     - `HIGH`: Core loop, collision physics, algorithms, concurrency.
+
+4. **Batch-Spawn Parallel Workers via MCP**:
+   - **Mandatory Concurrency**: Spawn ALL independent briefs in the current stage concurrently BEFORE awaiting returns:
+     ```text
+     // Spawn all parallel briefs first:
+     factory_spawn_worker(ticket_id, role="implementer", brief_path="brief-audio.md", thinking_level="LOW")
+     factory_spawn_worker(ticket_id, role="implementer", brief_path="brief-particles.md", thinking_level="MEDIUM")
+     factory_spawn_worker(ticket_id, role="implementer", brief_path="brief-world.md", thinking_level="MEDIUM")
+     ```
+   - Each worker runs in its own isolated Git worktree; all will appear on the live board with spinning pipes simultaneously.
+   - **CRITICAL RESTRICTION**: You MUST NOT touch files inside `.factory/worktrees/` or write worker reports yourself. Do NOT attempt to implement the brief in your chat. Immediately proceed to Step 5 (`factory_await_next_worker`).
+
+5. **Drain Return Queue**:
+   - Cycle through worker completion:
+     ```text
+     while remaining_active_workers > 0:
+         worker = factory_await_next_worker(ticket_id)
+         inspect worker.report_path
+         if worker.status == "SUCCESS":
+             factory_merge_worker(ticket_id, worker.id)
+         else:
+             handle_failure(worker)
+         factory_dismiss_worker(ticket_id, worker.id)
+     ```
+   - Never abandon spawned workers.
+
+6. **Validation Stage**:
+   - Write validation brief `.factory/tasks/<ticket-id>/briefs/brief-validation.md`.
+   - Call `factory_spawn_worker(ticket_id, role="validator", brief_path, thinking_level="LOW")`.
+   - Await completion using `factory_await_next_worker(ticket_id)`, inspect validation report, and dismiss the validator with `factory_dismiss_worker(ticket_id, worker.id)`.
+
+7. **Review Stage (Review Loop & Circuit Breaker)**:
+   - For cycle 1 to `max_review_cycles` (default 3):
+     - Write review brief `.factory/tasks/<ticket-id>/briefs/brief-review-<cycle>.md`.
+     - Call `factory_spawn_worker(ticket_id, role="reviewer", brief_path, thinking_level="HIGH")`.
+     - Await completion using `factory_await_next_worker(ticket_id)` and dismiss reviewer with `factory_dismiss_worker(ticket_id, worker.id)`.
+     - IF verdict is `APPROVE`: Proceed to Step 8.
+     - IF verdict is `REVISE`:
+       - Spawn targeted implementer to remediate findings.
+       - Re-validate.
+     - IF cycle limit exceeded:
+       - **Trip Circuit Breaker**: Halt autonomous loops and prompt the user for guidance.
+
+8. **Stage for Acceptance**:
+   - Notify the user that implementation, validation, and review are complete.
+   - Instruct the user:
+     > *"Implementation, validation, and code review complete with `APPROVE` verdict. Issue `/complete-task <ticket-id>` to review the final acceptance report, merge to `main`, archive the change proposal, and push to remote."*
+
+
+```
+
+## FILE: .agents/skills/start-roadmap/SKILL.md
+```markdown
+---
+name: start-roadmap
+description: Initiates a multi-ticket roadmap, analyzes file blast radius overlaps, establishes concurrency DAGs, and seeds OpenSpec change proposals.
+---
+
+# `start-roadmap` Workflow
+
+Use this skill when initiating or decomposing large multi-ticket milestones, cross-cutting epics, or complex architectural initiatives across multiple sequential or parallel tickets.
+
+## Procedure
+
+1. **Inception Dialogue for High-Level Milestones / Epics**:
+   - Engage with the user to clarify high-level milestone objectives, requirements, target deliverables, and architectural boundaries.
+   - Determine the milestone identifier (e.g., `milestone-01` or descriptive name) and roadmap title.
+
+2. **Decomposing Milestones into Bounded Tickets**:
+   - Break down the milestone into fine-grained, cohesive tickets.
+   - Assign cognitive sizing distribution to each ticket:
+     - `LOW` [L]: Data types, asset loaders, constants, schemas, DTOs, fixtures, configs.
+     - `MEDIUM` [M]: Discrete subsystems, services, components, isolated logic.
+     - `HIGH` [H]: Core engine/game loops, coordination routines, collision physics, state machines.
+
+3. **Blast Radius Analysis & Scope Collision Detection**:
+   - Cross-reference file and subsystem paths touched by each proposed ticket.
+   - Detect potential scope collisions: tickets targeting overlapping files or shared interfaces cannot be executed concurrently without risk of git merge conflicts.
+   - Bound each ticket to discrete, disjoint paths where concurrency is desired.
+
+4. **Tagging Concurrency Tracks & Dependency DAG**:
+   - Analyze dependencies between tickets.
+   - Tag each ticket's concurrency track:
+     - `PARALLEL_ELIGIBLE`: Zero unmet dependencies, disjoint file blast radius. Eligible to spawn in parallel.
+     - `BLOCKED_ON_<ticket>`: Dependent on artifacts or contracts from prior tickets. Serialized execution required.
+   - Synthesize a Mermaid execution DAG graph representing ticket execution flow.
+
+5. **Scaffolding the Roadmap Document**:
+   - Create `openspec/roadmaps/<milestone-id>.md` using `specs/templates/roadmap.template.md`.
+   - Populate:
+     - YAML frontmatter (`roadmap_id`, `milestone`, `title`, `version`, `created_at`).
+     - Section 1: Milestone Objective & Scope.
+     - Section 2: Ticket Dependency Matrix.
+     - Section 3: Blast Radius & Scope Collision Matrix.
+     - Section 4: Execution DAG Diagram.
+     - Section 5: Progress & Milestone Completion Criteria.
+
+6. **Pre-Scaffolding Ticket Change Proposals**:
+   - For each ticket identified in the roadmap, pre-scaffold its OpenSpec change proposal directory and draft:
+     - Directory: `openspec/changes/<ticket-id>/`
+     - Specification: `openspec/changes/<ticket-id>/spec.md` (using `specs/templates/task-spec.template.md`).
+     - Ensure each ticket specification explicitly links back to the roadmap milestone and tracks dependencies.
+
+7. **User Presentation & Execution Transition**:
+   - Present the roadmap overview, DAG visualization, and ticket breakdown to the user.
+   - Instruct the user: *"Roadmap scaffolding complete. When you are ready, issue `implement-roadmap` to autonomously execute the roadmap DAG across parallel tracks, or `implement-task <ticket-id>` to execute an individual ticket."*
+
+8. **MANDATORY ROADMAP INCEPTION STOP GATE (DO NOT PROCEED)**:
+   - **HALT EXECUTION IMMEDIATELY**: End your turn right now. Do not call any further tools.
+   - You are **STRICTLY FORBIDDEN** from spawning Ticket Architects or leaf workers in this turn.
+   - You are **STRICTLY FORBIDDEN** from modifying application source files in this turn.
+   - You are **STRICTLY FORBIDDEN** from checking out `main`, running `git commit`, `git merge`, or `git push origin main`.
+   - The roadmap and its constituent tickets MUST remain in `state: "PLANNING"` until the user explicitly issues `implement-roadmap` or `implement-task`.
+   - Await the user's explicit response.
+
+```
+
+## FILE: .agents/skills/start-task/SKILL.md
+```markdown
+---
+name: start-task
+description: Initiates a new software factory task. Engages the Architect in inception dialogue and drafts the OpenSpec specification.
+---
+
+# `start-task` Workflow
+
+Use this skill when the human user initiates a new task, ticket, or feature request.
+
+## Procedure
+
+1. **Ensure Live Board is Open**:
+   - Check if `factory-board` is already running (`pgrep -x factory-board`).
+   - If not running, ensure it is opened in the bottom IDE terminal pane (`./target/release/factory-board`).
+
+2. **Assign Ticket ID**:
+   - Determine the next sequential or user-provided `ticket_id` (e.g., `ticket-001`).
+   - Create the directories:
+     - `openspec/changes/<ticket-id>/`
+     - `.factory/tasks/<ticket-id>/briefs/`
+     - `.factory/tasks/<ticket-id>/reports/`
+     - `.factory/tasks/<ticket-id>/reviews/`
+
+3. **Inception Dialogue**:
+   - Clarify the user's requirements, expected outcomes, scope boundaries, and non-functional requirements.
+   - Propose architectural approach and trade-offs.
+
+4. **Draft OpenSpec Specification**:
+   - Write `openspec/changes/<ticket-id>/spec.md` using `specs/templates/task-spec.template.md`.
+   - Ensure explicit:
+     - Requirements list
+     - Verification criteria
+     - Target architecture & affected modules
+     - Max review cycles (default: 3)
+
+5. **Initialize Ticket via MCP**:
+   - Call MCP tool `factory_create_ticket(ticket_id, title, base_branch)`.
+   - The MCP server sets up the ticket branch `factory/<ticket-id>/main`.
+
+6. **Human Alignment Check**:
+   - Summarize the drafted specification and brief decomposition to the user.
+   - Inform the user: *"Specification drafted in `openspec/changes/<ticket-id>/spec.md` (state: PLANNING). When you are satisfied with this specification, issue `implement-task` to begin autonomous execution."*
+
+7. **MANDATORY INCEPTION STOP GATE (DO NOT PROCEED)**:
+   - **HALT EXECUTION IMMEDIATELY**: End your turn right now. Do not call any further tools.
+   - You are **STRICTLY FORBIDDEN** from modifying application source files in this turn.
+   - You are **STRICTLY FORBIDDEN** from spawning implementer workers or executing briefs in this turn.
+   - You are **STRICTLY FORBIDDEN** from checking out `main`, running `git commit`, `git merge`, or `git push origin main`.
+   - The specification MUST remain in `state: "PLANNING"` until the user explicitly issues `implement-task` or gives explicit approval.
+   - Await the user's explicit response.
+
+```
+
+## FILE: .githooks/pre-push
+```
+#!/usr/bin/env bash
+# Fast lint gate mirroring the fmt/clippy steps of .github/workflows/ci.yml.
+# Tests and wasm builds are covered by the factory validator before merge.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+echo "[pre-push] cargo fmt"
+cargo fmt --all -- --check
+echo "[pre-push] cargo clippy"
+cargo clippy --workspace --all-targets -- -D warnings
+echo "[pre-push] lint checks passed"
+
+```
+
+## FILE: .github/workflows/ci.yml
+```yaml
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout zero_chat
+        uses: actions/checkout@v4
+        with:
+          path: zero_chat
+
+      - name: Checkout zero_protocol sibling
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/zero-protocol
+          path: zero_protocol
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: zero_chat -> zero_chat/Cargo.lock
+
+      - name: Check code formatting
+        working-directory: zero_chat
+        run: cargo fmt --all -- --check
+
+      - name: Lint with Clippy
+        working-directory: zero_chat
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run workspace tests
+        working-directory: zero_chat
+        run: cargo test --workspace
+
+      - name: Validate WASM compilation (zero_client)
+        working-directory: zero_chat
+        run: cargo build -p zero_client --target wasm32-unknown-unknown
+
+```
+
+## FILE: .github/workflows/deploy.yml
+```yaml
+name: Deploy to Cloudflare
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-pages:
+    name: Deploy Cloudflare Pages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout zero_chat
+        uses: actions/checkout@v4
+        with:
+          path: zero_chat
+
+      - name: Checkout zero_protocol sibling
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/zero-protocol
+          path: zero_protocol
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen-cli
+        run: cargo install -q wasm-bindgen-cli --version 0.2.129
+
+      - name: Build Client WASM
+        working-directory: zero_chat
+        run: cargo build -p zero_client --release --target wasm32-unknown-unknown
+
+      - name: Assemble Pages Static Bundle
+        working-directory: zero_chat
+        run: |
+          mkdir -p dist/pkg
+          wasm-bindgen --target web --out-dir dist/pkg target/wasm32-unknown-unknown/release/zero_client.wasm
+          cp zero_client/index.html dist/
+          cp zero_client/style.css dist/
+          mkdir -p dist/widget
+          cp -r zero_client/widget/* dist/widget/
+
+      - name: Ensure Cloudflare Pages project exists
+        working-directory: zero_chat
+        run: npx wrangler pages project create zero-chat --production-branch=main || true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Deploy Client to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: zero_chat
+          command: 'pages deploy dist --project-name=zero-chat --branch=main --commit-dirty=true'
+
+```
+
+## FILE: .gitignore
+```
+.DS_Store
+/target
+target/
+**/*.rs.bk
+
+# Agentic Software Factory runtime
+.factory/
+dist/
+
+CODEBASE_AUDIT.md
+```
+
 ## FILE: AGENTS.md
 ```markdown
 # Agent Directives: Agentic Software Factory
@@ -416,6 +1427,1487 @@ at your option.
 
 ```
 
+## FILE: docs/HANDOVER_MOBILE_BROWSER_SUPPORT.md
+```markdown
+# Architectural Handover Brief: Mobile Browser Support & Resilience (ticket-033)
+
+## 1. Executive Summary & Objective
+ZeroChat currently functions across desktop browsers (including multi-user mesh snapping and selective departure purging resolved in ticket-032), but fails both visually and functionally on mobile browsers (iOS Safari, Android Chrome, and in-app WebViews).
+
+This handover brief defines the complete scope for Mobile Browser Support, covering:
+- Mobile Viewport, Safe-Area, and Virtual Keyboard Geometry (`zero_client/style.css` & `zero_client/index.html`)
+- Mobile Touch Interactions & Focus Retention (`zero_client/index.html`)
+- Mobile OS App-Switching Lifecycle, Clipboard Gesture Compliance, & Signaling Reconnection (`zero_client/index.html`)
+
+**Strategic Sequencing Note**: Do not migrate the inline JS runtime to pure Rust/WASM during this ticket. Stabilize all mobile UI and lifecycle mechanics in `zero_client/index.html` and `zero_client/style.css` first so the product behavior is 100% verified before the Rust/WASM consolidation pass.
+
+---
+
+## 2. Target File Scope
+- `zero_client/style.css` (Primary CSS layout, safe-area insets, flex overflow guards, overscroll locking)
+- `zero_client/index.html` (Viewport sync via `window.visualViewport`, synchronous clipboard fallback, WebSocket auto-reconnect on `visibilitychange`, dead-drop retry loop, and input focus retention)
+- `zero_client/tests/browser/test_mesh_scenario.js` (Automated regression suite including mobile viewport, touch, and lifecycle emulation)
+
+---
+
+## 3. Root-Cause Diagnosis & Required Engineering Fixes
+
+### Part A: Mobile UI, Viewport & Virtual Keyboard Geometry
+
+1. **iOS Status Bar / Notch Collision (`env(safe-area-inset-top)`)**
+   - **Symptom**: Because `<meta name="viewport" ... viewport-fit=cover>` is enabled, the webpage extends behind the iOS status bar (clock, cellular/Wi-Fi/battery icons). Currently, `.chat-header` renders at `y = 0px`, directly overlapping the iOS system icons.
+   - **Required Fix (`zero_client/style.css`)**:
+     Apply top safe-area inset padding to `.chat-header` and `#landing-view`:
+     ```css
+     .chat-header {
+       padding-top: calc(12px + env(safe-area-inset-top, 0px));
+     }
+     #landing-view {
+       padding-top: env(safe-area-inset-top, 0px);
+       padding-bottom: env(safe-area-inset-bottom, 0px);
+     }
+     ```
+
+2. **Virtual Keyboard Pushing `.chat-header` Off-Screen (`window.visualViewport`)**
+   - **Symptom**: When tapping `#message-input` on iOS Safari, the virtual keyboard slides up. Because iOS Safari does not shrink 100vh/100dvh layout height for the software keyboard, it scrolls the entire document window upward—pushing `.chat-header`, `.global-burn-row`, and top messages completely off the top of the screen.
+   - **Required Fix (`zero_client/index.html` & `zero_client/style.css`)**:
+     In `zero_client/style.css`: Lock `html, body` from scrolling and bind `#app` height and top offset to CSS custom properties driven by `window.visualViewport`:
+     ```css
+     html, body {
+       position: fixed;
+       inset: 0;
+       width: 100%;
+       height: var(--app-height, 100dvh);
+       overflow: hidden;
+       overscroll-behavior: none;
+       -webkit-text-size-adjust: 100%;
+     }
+     #app {
+       position: fixed;
+       top: var(--app-offset-top, 0px);
+       left: 0;
+       right: 0;
+       width: 100%;
+       max-width: 100vw;
+       height: var(--app-height, 100dvh);
+       overflow: hidden;
+       box-sizing: border-box;
+     }
+     ```
+     In `zero_client/index.html`: Register a `window.visualViewport` listener on resize and scroll that updates `--app-height`, `--app-offset-top`, toggles a `.keyboard-open` class when `vv.height < window.innerHeight * 0.85`, prevents window scroll drift (`window.scrollTo(0, 0)`), and keeps `#message-list` scrolled to the latest message:
+     ```javascript
+     function syncMobileViewport() {
+       const vv = window.visualViewport;
+       if (!vv) return;
+       document.documentElement.style.setProperty("--app-height", `${vv.height}px`);
+       document.documentElement.style.setProperty("--app-offset-top", `${vv.offsetTop}px`);
+       const isKeyboardOpen = vv.height < window.innerHeight * 0.85;
+       document.documentElement.classList.toggle("keyboard-open", isKeyboardOpen);
+       window.scrollTo(0, 0);
+       if (messageList) {
+         messageList.scrollTop = messageList.scrollHeight;
+       }
+     }
+     if (window.visualViewport) {
+       window.visualViewport.addEventListener("resize", syncMobileViewport);
+       window.visualViewport.addEventListener("scroll", syncMobileViewport);
+       syncMobileViewport();
+     }
+     ```
+     **Bottom Safe-Area Adaptation**: When the keyboard is closed, `.input-dock` should respect `padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px))`. When `.keyboard-open` is active on `html`, reduce `.input-dock` `padding-bottom` to `8px` so there is no dead gap above the keyboard.
+
+3. **Horizontal Clipping & iOS Safari Auto-Zoom on Input Focus**
+   - **Symptom**: System notices ("Invite link copied to clipboard") and message bubble borders are clipped on the left and right edges of narrow mobile screens (375px–390px).
+   - **Root Causes**:
+     - `#message-input` has a font-size under 16px, which triggers iOS Safari's mandatory auto-zoom (~114%) when focused, cropping ~15–20px off the left and right edges of the viewport.
+     - Flexbox children without `min-width: 0` expand past `100vw`.
+   - **Required Fix (`zero_client/style.css`)**:
+     - Set `#message-input { font-size: 16px; min-width: 0; flex: 1 1 auto; }` (strictly >= 16px to disable iOS focus auto-zoom).
+     - Enforce `box-sizing: border-box; width: 100%; max-width: 100%; overflow-x: hidden;` across `.chat-header`, `.global-burn-row`, `#message-list`, and `.input-dock`.
+     - Give `#message-list` explicit horizontal padding (`padding: 12px 16px; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;`) and constrain `.message` bubbles to `max-width: 82%; word-break: break-word; overflow-wrap: anywhere;`.
+
+---
+
+### Part B: Mobile Touch Interactions & Focus Retention
+
+4. **Keep Virtual Keyboard Open When Tapping Send (`#send-btn`)**
+   - **Symptom**: On mobile browsers, tapping `#send-btn` shifts focus from `#message-input` to the button, causing the virtual keyboard to close after every single sent message.
+   - **Required Fix (`zero_client/index.html`)**:
+     Attach a `pointerdown` / `touchstart` listener on `#send-btn` that calls `e.preventDefault()` so tapping Send does not blur `#message-input`, and explicitly keep focus on `messageInput` inside `doSendMessage()` if the user was typing.
+
+5. **Mobile Clipboard User-Gesture Expiration (`NotAllowedError`)**
+   - **Symptom**: In `createRoomAsHost()` and in-room invite generation, `navigator.clipboard.writeText(inviteUrl)` is called after `await engine.create_peer_offer(...)` (which awaits up to 3,000ms for non-trickle ICE gathering). On iOS Safari and mobile Chrome, transient user activation expires during the 1–3s await, causing `navigator.clipboard.writeText` to throw `NotAllowedError`.
+   - **Required Fix (`zero_client/index.html`)**:
+     - Use `ClipboardItem` with a `Promise` where supported (iOS Safari 13.1+ standard for async clipboard writes): Inside the synchronous click handler stack (before the first await), if `window.ClipboardItem && navigator.clipboard && navigator.clipboard.write` is available, initiate the clipboard write with a `ClipboardItem` wrapping a `Promise` that resolves to a `Blob([inviteUrl], { type: "text/plain" })` once `inviteUrl` is built.
+     - **Honest Fallback Notice**: If both `ClipboardItem` and `navigator.clipboard.writeText(inviteUrl)` fail (throw `NotAllowedError`), do not emit "Invite link copied to clipboard" on that first tap. Instead, transition the button into Stage 2 (`activeHostInviteUrl` ready) and display "Invite ready — tap Copy to copy link". When the user taps the Stage 2 button (where `pendingInviteUrl` is set), `navigator.clipboard.writeText` executes synchronously within 0ms of the tap, which succeeds 100% of the time on all mobile browsers and triggers feedback notices.
+
+---
+
+### Part C: Mobile App-Switching Lifecycle & Signaling Reconnection
+
+6. **Host WebSocket Suspension & Reconnection on App Switch (`visibilitychange` / `onclose`)**
+   - **Symptom**: On a phone, the Host creates an invite link, copies it, and switches to WhatsApp/iMessage/Signal to paste it to a friend. The moment Safari/Chrome enters the background, the mobile OS suspends or closes `hostWs` (`wss://.../host/${doId}?secret=${hostSecretHex}`). When the Joiner taps the link, the Cloudflare Durable Object finds 0 connected host sockets and returns HTTP 404 (`HostSocketUnavailable`).
+   - **Required Fix (`zero_client/index.html`)**:
+     - **Persist Active Signaling Context in Memory**: Store the active waiting signaling state (`activeHostSignaling = { doId, hostSecretHex, assignedPeerId }` for initial room creation, and `activeInviteSignaling = { doId, hostSecretHex, assignedPeerId }` for in-room add peer).
+     - **Auto-Reconnect Host WebSocket**: If `hostWs` or `pendingInviteWs` closes unexpectedly (`onclose`) or if `document.visibilityState === "visible"` fires while the Host is still waiting for that `assignedPeerId` to transition to `"open"`, automatically re-open the WebSocket to `${WORKER_WS_ORIGIN}/host/${doId}?secret=${hostSecretHex}` and re-bind `onmessage`.
+     - **Joiner 404 Retry Loop (`joinRoomFromHash`)**: When a Joiner sends `POST /drop/${invite.do_id}/${invite.invite_uuid}`, if the response status is 404 (meaning the Host is still switching back from their messaging app to their mobile browser), do not fail immediately. Retry the `POST` every 1500ms (up to 10 attempts / ~15 seconds) while displaying a status notice ("Waiting for host...") until the Host's WebSocket reconnects and returns 200 OK (or stop immediately on 401/410).
+
+7. **Mobile ICE Gathering Resilience (`_waitForIceGatheringComplete`)**
+   - **Symptom**: Mobile cellular/Wi-Fi interfaces often take slightly longer to wake the radio and receive UDP STUN (srflx) responses.
+   - **Required Fix (`zero_client/index.html`)**:
+     In `_waitForIceGatheringComplete(pc)`, increase the fallback timeout from 3000ms to 4500ms on mobile (heuristic or globally), and properly remove the `icecandidate` and `icegatheringstatechange` listeners inside `cleanup()`.
+
+8. **Prevent False `pagehide` Burn When Switching Apps on Mobile**
+   - **Symptom**: Currently, `window.addEventListener("pagehide", sendOpportunisticLeave)` is registered alongside `beforeunload`. On some mobile browsers, `pagehide` or visibility transitions can fire during system dialogs or tab switches.
+   - **Required Fix (`zero_client/index.html`)**:
+     Ensure `sendOpportunisticLeave` only fires on actual document unload (`beforeunload`, or `pagehide` when `!event.persisted`), and never on `visibilitychange` (tab backgrounding).
+
+---
+
+## 4. Verification & Acceptance Criteria
+- **Gate 1: Automated Workspace & Regression Suite**
+  - `cargo test --workspace` (all Rust tests green)
+  - `cargo check --target wasm32-unknown-unknown -p zero_client && cargo check --target wasm32-unknown-unknown -p zero_network`
+  - `cargo fmt -- --check && cargo clippy --workspace --all-targets -- -D warnings`
+- **Gate 2: Headless Mobile Viewport & Lifecycle Emulation Tests**
+  - Automated headless checks for:
+    - No Horizontal Overflow across views
+    - `#message-input` font-size invariant (16px)
+    - `visualViewport` resize simulation (virtual keyboard open keeps `.chat-header` top >= 0 and `.input-dock` bottom constrained)
+    - Host WebSocket drop & Joiner 404 retry simulation
+- **Gate 3: Deployment & Live Mobile Smoke Test**
+
+```
+
+## FILE: docs/HANDOVER_MULTI_USER_MESH_ARCHITECTURE.md
+```markdown
+# Handover Brief: Multi-User WebRTC Full-Mesh Architecture & Reliability
+
+**Date**: 2026-10-24  
+**Target Audience**: Lead Architect & Implementing Agents for ZeroChat  
+**System**: `zero_chat`  
+**Current Milestone**: Multi-User P2P Mesh Chat  
+
+---
+
+## 1. Executive Summary & Core Objective
+
+### What We Are Trying to Achieve
+ZeroChat is designed as an **ephemeral, zero-footprint, serverless peer-to-peer (P2P) communication platform**. It uses pure Rust compiled to WebAssembly (`zero_client`), coupled with an ephemeral Cloudflare Worker / Hibernating Durable Object bootstrap (`zero_network`), to deliver encrypted browser-to-browser WebRTC DataChannels.
+
+### Core Architectural Invariants
+1. **Zero Forensic Trace**: No server-side persistence, no databases, no cookies, no `localStorage` or `sessionStorage`. Closing the tab permanently incinerates all keys and messages.
+2. **Severed Cloud Edge**: The Cloudflare Durable Object acts *only* as an initial signaling dead-drop to exchange SDP offers and answers. Once direct WebRTC DataChannels open, the signaling socket closes permanently (`is_edge_severed == true`).
+3. **Multi-User Resilient Full Mesh ($K_N$)**:
+   - In any room with $N$ participants (e.g. 3 users: A, B, C), **every user must hold a direct, pairwise WebRTC DataChannel to every other user** ($N(N-1)/2$ total channels).
+   - **Room Survivability**: As long as **any $\ge 2$ participants remain connected**, the chat room must remain alive and functional.
+   - **Host Departure Invariance**: If Client 1 (the initial creator/host) leaves, Client 2 and Client 3 must stay connected, keep chatting, and continue to receive each other's messages seamlessly. The host is not a master server; all nodes are symmetric peers.
+
+---
+
+## 2. Problem Statement & Real-Browser Failure Symptoms
+
+### Observed Behavior (Browser Manual Test)
+1. **Initial 2-User Pair**: Client 1 creates chat; Client 2 joins via invite URL.
+   - *Result*: Both clients display `#peer-count` badge = **1**. (Working as expected).
+2. **3rd User Joins**: Client 1 generates a second invite URL (`#header-add-btn`); Client 3 joins via this URL.
+   - *Result*:
+     - Client 1 displays `#peer-count` = **2**.
+     - Client 2 displays `#peer-count` = **1** (❌ **Defect 1**: Client 2 did not connect to Client 3).
+     - Client 3 displays `#peer-count` = **1** (❌ **Defect 2**: Client 3 did not connect to Client 2).
+3. **1st Client (Host) Departs**: Client 1 closes their tab or clicks Leave.
+   - *Result*:
+     - Client 2 and Client 3 both see their `#peer-count` drop to **0**.
+     - Client 2 and Client 3 are completely disconnected and cannot send or receive messages.
+     - On both Client 2 and Client 3, the system notification `"Peer left chat"` is printed **twice** (❌ **Defect 3**: Duplicate departure notices).
+     - The chat session is dead for all remaining participants.
+
+### Root Symptom
+The network topology never established the direct $B \leftrightarrow C$ link. It operated purely as a **centralized star topology** ($B \leftrightarrow A \leftrightarrow C$). When Hub $A$ departed, the entire network collapsed into isolated islands.
+
+---
+
+## 3. Why Unit/Simulation Tests Passed While Real Browsers Failed
+
+In previous sprints (Tickets 029, 030, 031), implementers wrote simulation tests in Rust (`tests/mesh_simulation_test.rs`) and headless JavaScript tests (`zero_client/tests/browser/test_mesh_scenario.js`).
+
+**Why did these tests pass 100%?**
+- **Mock WebRTC Does Not Simulate Real Networking**:
+  In `mock_environment.js`, `RTCPeerConnection` and `RTCDataChannel` are mocked in memory. There is no STUN/TURN gathering, no UDP packet transmission, no NAT filtering, no real ICE state transitions, and candidate gathering finishes in 0 milliseconds.
+- **In-Memory Assumptions**:
+  In mocks, calling `dc.send(text)` immediately invokes `dc.onmessage(ev)` on the target synchronously. In real browsers, WebRTC DataChannels require real ICE negotiation over the network, asynchronous candidate gathering, and strict signaling state transitions (`stable`, `have-local-offer`, etc.).
+
+---
+
+## 4. In-Depth Root Cause Analysis of the Current Connection Design
+
+### 4.1 How Pairwise Bootstrapping Works (Client 1 $\leftrightarrow$ Client 2, Client 1 $\leftrightarrow$ Client 3)
+1. Client 1 creates an offer `create_peer_offer("peer-01")`.
+2. Client 1 packs the SDP offer into URL fragment `#payload=<base64>` along with room secret HMAC token.
+3. Client 1 opens a WebSocket to `WORKER_WS_ORIGIN/host/:do_id`.
+4. Client 2 opens the URL, parses the offer, generates an answer via `create_peer_answer`, and `POST`s the answer to Cloudflare Worker dead-drop `/drop/:do_id/:uuid`.
+5. Cloudflare Worker forwards answer to Client 1's WebSocket, burns the drop (410), and Client 1 applies the answer.
+6. The DataChannel opens. The signaling WebSocket is closed. **This part works reliably.**
+
+### 4.2 How Secondary Mesh Snapping Is Attempted ($B \leftrightarrow C$)
+When Client 3 joins Client 1:
+1. Client 1 detects the new open channel to Client 3.
+2. In `engine.onPeerStateChangeCb("open")`, Client 1 loops over all existing peers and attempts "Universal Peer Introduction":
+   - Sends `PeerJoined { peer_id: realExistingId }` to Client 3 over `Channel_13`.
+   - Sends `PeerJoined { peer_id: realNewId }` to Client 2 over `Channel_12`.
+3. Client 2 and Client 3 receive `PeerJoined`.
+4. Tie-breaker rule: Node with `myPeerId < remotePeerId` initiates in-band relay handshake:
+   - Calls `initiate_relay_handshake(relayPeerId, targetPeerId)`.
+   - Creates a local SDP offer: `create_peer_offer(targetPeerId)`.
+   - Sends `RelaySdpOffer { from_peer_id, to_peer_id, sealed_offer }` to Client 1 over the existing DataChannel.
+5. Client 1 is supposed to receive `RelaySdpOffer`, see that `to_peer_id !== myPeerId`, and forward it to the other peer over its DataChannel.
+6. The target peer receives `RelaySdpOffer`, creates `RelaySdpAnswer`, and sends it back through Client 1.
+7. Both nodes apply the SDP and WebRTC connects directly.
+
+### 4.3 Why Secondary Mesh Snapping Fails in Practice
+
+#### Flaw 1: Peer ID Mismatch & Timing Race during Invite Creation
+- When Client 1 generates the invite for Client 3 (`handleHeaderAddPeerClick`), it assigns a temporary random ID:
+  ```javascript
+  const invitePeerId = "peer-" + Math.random().toString(36).slice(2, 8);
+  const offerSdp = await engine.create_peer_offer(invitePeerId);
+  ```
+- Client 1 stores the connection under `invitePeerId` (e.g. `peer-xyz`).
+- When Client 3 joins, Client 3 sends its actual `localPeerId` (e.g. `peer-333333`) in `joiner_peer_id`.
+- Client 1 receives the answer and attempts `engine.rename_peer(invitePeerId, drop.joiner_peer_id)`.
+- **The Bug**:
+  - If `ch.onopen` fires before or concurrently with `rename_peer`, `onPeerStateChangeCb` runs with the old or partially updated ID.
+  - Client 1 introduces Client 2 to `invitePeerId` instead of `peer-333333`, or Client 2 addresses `RelaySdpOffer` to `peer-333333`, which Client 1 cannot route because `engine.peers` has not mapped it cleanly.
+  - `engine.send_text(..., to_peer_id)` fails with `DataChannel for peer ... is not open` and the offer is silently dropped.
+
+#### Flaw 2: Non-Trickle ICE Gathering Latency & Timeout
+- `_waitForIceGatheringComplete` halts execution for up to 3000ms:
+  ```javascript
+  pc.addEventListener("icegatheringstatechange", check);
+  timer = setTimeout(cleanup, 3000);
+  ```
+- In real browser environments, generating an offer or answer with STUN candidates often takes 500ms to 2500ms.
+- While Node B is awaiting `_waitForIceGatheringComplete`, in-flight state is delicate. If any message is dropped or arrives out of sequence, the entire single-shot relay offer fails.
+
+#### Flaw 3: Absence of a Formal Signaling State Machine
+- The current implementation treats WebRTC negotiation as an ad-hoc set of fire-and-forget JSON frames (`PeerJoined`, `RelaySdpOffer`, `RelaySdpAnswer`).
+- There are no acknowledgments (`ACK`), no ping/pong, and no protocol state machine (such as `IDLE`, `OFFERING`, `WAITING_ANSWER`, `CONNECTED`, `FAILED`).
+- If an offer or answer frame is lost or delayed, the peers have no mechanism to re-synchronize state.
+
+#### Flaw 4: Duplicate "Peer Left Chat" Notices
+- In `onMessageCb`:
+  ```javascript
+  if (leavingPeerId && activeEng && activeEng.peers && activeEng.peers.has(leavingPeerId)) {
+      activeEng.close_peer(leavingPeerId); // Calls onPeerStateChangeCb("closed") -> handlePeerDeparture(leavingPeerId)
+  }
+  handlePeerDeparture(leavingPeerId); // Called a second time here!
+  ```
+- `activeEng.close_peer()` triggers `onPeerStateChangeCb(peerId, "closed")`, which invokes `handlePeerDeparture(peerId)` (1st notice).
+- Then, `onMessageCb` explicitly invokes `handlePeerDeparture(leavingPeerId)` again (2nd notice).
+
+---
+
+## 5. Architectural Critique & Proposed Solutions
+
+We must stop treating this as an isolated bug fix and instead design a robust, verifiable connection architecture.
+
+### Architectural Options
+
+```
+OPTION 1: Robust In-Band Relay Protocol (Pure Serverless / Edge Severed)
+----------------------------------------------------------------------
+Client 2 <====== (Direct WebRTC DataChannel) ======> Client 3
+   ^                                                    ^
+   |                                                    |
+   +--- Relay SDP Offer/Answer/Candidates via Client 1 -+
+        (Formal Handshake Protocol over existing DataChannels)
+
+OPTION 2: Ephemeral Room Mesh Coordinator (Durable Object Aided)
+----------------------------------------------------------------------
+Client 1, Client 2, Client 3 use Cloudflare Durable Object room socket
+STRICTLY for multi-party signaling during join/leave events, then hibernate.
+```
+
+### Evaluation of Options
+
+#### Option 1: Robust In-Band Relay Protocol (Recommended for Pure P2P Invariant)
+To preserve the core invariant that the cloud edge is completely severed and costs $0/second:
+- Keep the in-band relay through existing peers, but replace the fragile ad-hoc JSON messages with a **formal WebRTC signaling protocol**:
+  1. **Canonical Peer Identity**:
+     - Peer IDs must be established deterministically. Never use temporary random `invitePeerId` placeholders that require renaming. The host offer can use a wildcard or placeholder session ID, but the peer ID MUST be resolved before any peer introduction is broadcast.
+  2. **Formal Handshake State Machine**:
+     - Implement a per-peer state machine:
+       `DISCOVERED` $\rightarrow$ `OFFERING` $\rightarrow$ `ANSWERING` $\rightarrow$ `ESTABLISHED` $\rightarrow$ `FAILED`.
+     - Implement request/response with sequence numbers and explicit `ACK`s.
+  3. **Trickle ICE or Reliable Candidate Packaging**:
+     - Ensure candidate gathering either reliably completes or candidates are trickled across the relay channel (`RelayIceCandidate`).
+  4. **Connection Heartbeat / Verification**:
+     - Do not declare two peers connected simply because `setRemoteDescription` was called. A direct DataChannel is ONLY open when `ch.onopen` fires and an initial P2P `PING`/`PONG` handshake completes.
+
+#### Option 2: Multi-Party Signaling Room (Pragmatic Alternative)
+- If in-band relay across NATs proves too fragile without a TURN server, the Cloudflare Durable Object room can remain as an on-demand signaling hub:
+  - When Client 3 joins, the Durable Object broadcasts Client 3's offer to Client 2 directly, rather than relying on Client 1's browser to relay it.
+  - *Trade-off*: Does this violate Invariant 2 ("Severed Cloud Edge")?
+    - If the WebSocket closes once the mesh is formed, the edge is still severed during active chat. However, it requires keeping signaling infrastructure active whenever new peers join.
+
+---
+
+## 6. Actionable Checklist for the Implementing Agent
+
+When undertaking the implementation:
+
+1. **Test in Real Browsers (Mandatory)**:
+   - Do NOT rely solely on mock unit tests. Open 3 browser tabs (`localhost:8080` or deployed URL):
+     - Window A: Create room.
+     - Window B: Join via link 1.
+     - Window A: Generate link 2 (`+` button).
+     - Window C: Join via link 2.
+   - Inspect the DevTools console in all 3 windows:
+     - Check `console.log` for `RelaySdpOffer`, `RelaySdpAnswer`, and `PeerJoined`.
+     - Check `RTCPeerConnection.connectionState` and `iceConnectionState` on Window B and Window C.
+2. **Fix Peer Identity & Renaming**:
+   - Audit `handleHeaderAddPeerClick` and `ZeroWebRtcEngine.prototype.rename_peer`.
+   - Ensure Client 1 never sends `PeerJoined` until the new peer's real ID is fully mapped in `this.peers`.
+3. **Trace In-Band Relay Messages**:
+   - Verify that when Client 2 sends `RelaySdpOffer` to Client 3 via Client 1, Client 1 actually receives it, routes it, and dispatches it out to Client 3's DataChannel without throwing `DataChannel not open`.
+4. **Fix Duplicate Departure Calls**:
+   - Clean up `onMessageCb` and `onPeerStateChangeCb("closed")` so `handlePeerDeparture` is invoked exactly once per leaving peer.
+5. **Verify Full-Mesh Resilience**:
+   - Close Window A (Client 1).
+   - Window B and Window C must retain `#peer-count = 1`.
+   - Send message from Window B $\rightarrow$ must appear in Window C.
+   - Send message from Window C $\rightarrow$ must appear in Window B.
+
+```
+
+## FILE: docs/HANDOVER_TICKET_045.md
+```markdown
+Architectural Handover Brief: Unified Mobile & Desktop Connectivity Resilience (ticket-045)
+1. Executive Summary & Objective
+While recent updates (ticket-032 through ticket-044) addressed initial multi-peer ID alignment and mobile viewport/keyboard layout, live testing across mobile browsers (and multi-tab mobile sessions) exposed three critical connectivity and state-machine defects:
+
+Premature Departure & Post-Disconnect Ghost Messaging on Background Tab Suspension: When a mobile (or throttled desktop) tab sits in the background past ~30–60 seconds, the OS suspends SCTP heartbeats, causing the active peer to fire handlePeerDeparture(peerId) ("Peer left chat" + message purge + adding peerId to departedPeers). When the user switches back to the suspended tab, the transport wakes up or mesh reconciliation reconnects the peers—allowing new messages to be delivered underneath "Peer left chat" while departedPeers permanently breaks the peer counter.
+Role-Swap System Notice Bug ("Joined chat" vs "Peer joined chat"): Because the client relies on a single mutable global isHost boolean that gets mutated during limbo transitions or background reconnects, switching between tabs during the invite flow causes the inviter (Client 1) to falsely display "Joined chat" and the joiner (Client 2) to display "Peer joined chat".
+Mobile Cellular (4G/5G) & Hairpinning Connection Failures: Non-trickle ICE gathering currently uses a blind timer without checking whether any public (srflx or relay) candidates have been gathered, and lacks TURN relay support for Carrier-Grade Symmetric NAT (CGNAT) and same-device cellular hairpinning.
+Core Architectural Principle: Unified Adaptive Resilience
+Do NOT fork the codebase into separate "mobile" and "desktop" client paths. Every resilience mechanism specified in ticket-045 applies uniformly to all client instances, strengthening both mobile browsers (iOS Safari, Android Chrome) and desktop browsers (background tab throttling, laptop sleep/wake, and restrictive firewalls).
+
+
+2. Target File Scope
+zero_client/index.html (Per-peer role tracking, transient disconnect grace window, departedPeers recovery cleanup, smart ICE candidate gathering, and optional TURN configuration)
+zero_network/src/handlers.rs & zero_network/src/lib.rs (Optional/If configuring ephemeral Cloudflare TURN credentials endpoint, otherwise scoped strictly to zero_client/index.html)
+
+
+3. Root-Cause Diagnosis & Required Engineering Fixes
+Fix 1: Per-Peer Role Tracking (Eliminates "Joined chat" / "Peer joined chat" Reversal)
+Root Cause: index.html uses a single global boolean isHost to decide whether onStateChangeCb("open", peerId) emits "Joined chat" or "Peer joined chat". During mobile app/tab switching, background socket closures, limbo state resets, or mesh reconciliation handshakes, isHost gets overwritten or evaluated out of context.
+Required Implementation (zero_client/index.html):
+Replace reliance on the global isHost flag for join notices with an explicit per-peer role map:
+
+const peerRoles = new Map(); // peerId -> "inviter" | "joiner" | "mesh"
+
+Record Roles Deterministically:
+In createRoomAsHost() and handleHeaderAddPeerClick(): set peerRoles.set(assignedPeerId, "inviter") before creating the offer.
+In joinRoomFromHash(): set peerRoles.set(hostPeerId, "joiner") before creating the answer.
+In PeerJoined / RelaySdpOffer mesh introductions: if !peerRoles.has(remotePeerId), set peerRoles.set(remotePeerId, "mesh").
+Emit Deterministic System Notice on First Open:
+When peerId transitions to "open" for the first time (!announcedJoinPeers.has(peerId)):
+Record announcedJoinPeers.add(peerId).
+If peerRoles.get(peerId) === "joiner" and this is the initial room entry for the local client, display "Joined chat".
+For all "inviter" and "mesh" peers (or any subsequent peer openings), display "Peer joined chat".
+Guard Initial Signaling Against Premature Mesh Reconciliation:
+Do not trigger reconcile_mesh or glare replacement offers for a peerId that is actively awaiting its initial hostWs or pendingInviteWs dead-drop answer.
+
+
+Fix 2: Grace Window for Transient Background Freezes vs. Explicit Leave (PeerLeftAndBurn)
+Root Cause: Currently, any unannounced WebRTC channel drop (dc.onclose or iceConnectionState === "disconnected" / "failed") immediately invokes handlePeerDeparture(peerId). On mobile browsers, backgrounding a tab for 30+ seconds suspends network heartbeats without firing beforeunload. When the user returns to the tab, the connection recovers or re-handshakes, but handlePeerDeparture has already printed "Peer left chat", purged messages, and added peerId to departedPeers (which permanently excludes peerId from get_connected_count()).
+Required Implementation (zero_client/index.html):
+Immediate Departure ONLY on Explicit PeerLeftAndBurn:
+When an explicit PeerLeftAndBurn frame arrives over the DataChannel, cancel any pending grace timer for leavingPeerId, call handlePeerDeparture(leavingPeerId) immediately (purging their messages and emitting "Peer left chat" once), and call engine._teardownPeerQuietly(leavingPeerId).
+Transient Disconnect Grace Timer (DISCONNECT_GRACE_MS = 12000) for Unannounced Drops:
+Maintain const pendingDisconnectTimers = new Map(); // peerId -> timeoutId.
+When onPeerStateChangeCb(peerId, "closed") or "disconnected" fires without having received PeerLeftAndBurn (and !departedPeers.has(peerId)):
+Do not call handlePeerDeparture(peerId) immediately.
+Start a 12,000ms (12-second) grace timer in pendingDisconnectTimers (and if the tab is currently hidden via document.visibilityState === "hidden", pause/extend the timer until visibilityState === "visible" + 8 seconds).
+While in the grace window, trigger a non-destructive mesh reconciliation / reconnection attempt when visibilitychange transitions to "visible".
+If the peer reconnects (state === "open") before the grace timer expires:
+Clear and delete the timer from pendingDisconnectTimers.
+Ensure departedPeers.delete(peerId) is called.
+Do not emit "Peer left chat" or "Peer joined chat" again (since announcedJoinPeers.has(peerId) is already true), and keep all existing chat messages intact!
+If the grace timer expires without recovery:
+Delete the timer and execute handlePeerDeparture(peerId).
+Self-Healing departedPeers Invariant:
+If a peer ever transitions to "open" (even after a late reconnect), always execute departedPeers.delete(peerId) and update the header peer counter so the badge count never desynchronizes from the actual open DataChannels.
+
+
+Fix 3: Smart Non-Trickle ICE Gathering & Cellular / CGNAT Support
+Root Cause:
+_waitForIceGatheringComplete(pc) currently waits up to a flat timeout (3000ms–4500ms) or exits without verifying if a routable public candidate (typ srflx or typ relay) was actually gathered.
+Over 4G/5G cellular networks (or two tabs on the same phone over cellular data), Carrier-Grade Symmetric NAT (CGNAT) and cellular hairpinning blocks prevent pure STUN (srflx) from establishing direct UDP paths without either IPv6 or a TURN relay candidate (typ relay).
+Required Implementation (zero_client/index.html):
+Smart Candidate Inspection in _waitForIceGatheringComplete(pc):
+Track gathered candidates in onicecandidate:
+Detect when at least one srflx or relay candidate is present (ev.candidate.candidate.includes("typ srflx") || ev.candidate.candidate.includes("typ relay")).
+Once at least one public/relay candidate is gathered, start a short 400ms settle timer to capture any secondary interface candidates, then resolve immediately (cutting desktop and Wi-Fi offer generation down from 3–4.5s to <600ms!).
+If no srflx/relay candidate has arrived yet, wait up to 5000ms before resolving.
+Expanded Multi-Port STUN & Configurable TURN Support (this.rtcConfig):
+Include redundant STUN servers across standard ports (3478 and 19302) and support injecting TURN server configurations (window.ZERO_TURN_SERVERS or default public/Cloudflare TURN relay config) into this.rtcConfig.iceServers so devices behind Symmetric 4G/5G CGNAT or same-phone cellular hairpinning can fall back to encrypted typ relay DataChannel transport automatically.
+
+
+4. Verification & Acceptance Criteria
+Gate 1: Workspace Unit & Integration Suite
+cargo test --workspace — All Rust unit and integration tests across zero_protocol, zero_client, and zero_network must pass.
+./scripts/deploy_dry_run.sh — Must build and stage zero_client/dist cleanly.
+Gate 2: Automated Browser Resilience Scenarios (Playwright / Headless)
+Add automated verification covering the three exact failure modes:
+
+Scenario A (Per-Peer Role Notice Invariant): Simulate Client 1 creating an invite, backgrounding/switching visibility during the dead-drop, and Client 2 joining. Assert Client 1 displays "Peer joined chat" and Client 2 displays "Joined chat" (never reversed).
+Scenario B (Transient Tab Freeze & Recovery Without False Departure): Establish an open session between Client 1 and Client 2, exchange a message, simulate a transient transport drop (disconnected -> open within the 12s grace window), and assert:
+"Peer left chat" is never rendered.
+Existing messages are not purged.
+Subsequent messages render normally and the peer counter remains 1.
+Scenario C (True Unannounced Disconnect After Grace Expiry): Simulate a peer disconnecting and remaining unreachable past the grace window; assert "Peer left chat" is rendered once, the peer's messages are purged, and the peer counter decrements.
+Scenario D (Explicit PeerLeftAndBurn Immediate Purge): Verify clicking Leave still triggers immediate message purge and "Peer left chat" with zero grace-period delay.
+
+```
+
+## FILE: docs/HANDOVER_TICKET_046_OPTION_B_RUST_CRYPTO_AND_WASM_BRIDGE.md
+```markdown
+Architectural Handover Brief: Option B Burner Keybundle (Ed25519 + X25519 + ChaCha20-Poly1305), Blind Dead-Drop & WASM Crypto Bridge (ticket-046)
+1. Executive Summary & Objective
+Currently, zero_protocol implements raw x25519-dalek Diffie-Hellman key agreement and chacha20poly1305 symmetric sealing, while zero_client/index.html stubs out SealedFrame payloads with unencrypted UTF-8 bytes and dummy Array(32).fill(0) public keys. Furthermore, DropPayload sends the joiner's WebRTC sdp_answer in cleartext JSON through the Cloudflare Worker (zero_network), and multi-peer mesh introductions (PeerJoined) lack cryptographic signatures to authenticate peer identities across relay hops.
+
+ticket-046 implements the Option B Modernized Burner Keybundle entirely in Rust (zero_protocol and zero_client) and exposes it via #[wasm_bindgen] so that ticket-047 can cleanly swap out all JavaScript stubs in zero_client/index.html.
+Core Cryptographic Enhancements in ticket-046
+Ephemeral Burner Identity (Ed25519 Signing + X25519 Encryption): Each client session generates an in-memory BurnerKeybundle combining an x25519-dalek Diffie-Hellman keypair (for pairwise ChaCha20-Poly1305 AEAD encryption) and an ed25519-dalek signing keypair (for authenticating mesh introductions and envelopes), backed by ZeroizeOnDrop.
+Blind Dead-Drop Signaling (sealed_sdp_answer): Using the Host's host_public_key and the pre-distributed burner guest_private_key (or the Joiner's ephemeral X25519 keypair + host_public_key), the Joiner encrypts sdp_answer inside a SealedFrame before POSTing DropPayload to /drop/:do_id/:invite_uuid. The Cloudflare Worker (zero_network) becomes 100% blind to the SDP answer and ICE IP candidates.
+Signed Mesh Introductions & Authenticated Frames (Ed25519): PeerJoined introductions and SealedFrame payloads carry verifiable Ed25519 signatures, preventing intermediate relay peers in a multi-user mesh from spoofing peer identities or tampering with introduced public keys.
+Full #[wasm_bindgen] Crypto Bridge (WasmCryptoSession): Exposes a complete, ergonomic WASM API in zero_client ready for zero_client/index.html to consume in ticket-047.
+
+
+2. Target File Scope
+Cargo.toml & crates/zero_protocol/Cargo.toml (Add ed25519-dalek = { version = "2", default-features = false, features = ["rand_core", "zeroize"] })
+crates/zero_protocol/src/crypto.rs (Add Ed25519Keypair, BurnerKeybundle, sign_message, verify_signature, seal_blind_drop_sdp, open_blind_drop_sdp, and fast CSPRNG 16-byte UUID generation without Curve25519 point multiplication)
+crates/zero_protocol/src/envelope.rs (Add backward-compatible #[serde(default)] fields for ed25519_public_key, signature, and sealed_sdp_answer on InvitePayload, DropPayload, PeerJoined, and SealedFrame)
+crates/zero_protocol/tests/protocol_tests.rs (Unit tests for BurnerKeybundle, Ed25519 signatures, blind dead-drop SDP encryption, and backward-compatible serde serialization)
+zero_client/src/crypto.rs & zero_client/src/lib.rs (Implement and export #[wasm_bindgen] pub struct WasmCryptoSession)
+
+
+3. Detailed Technical Specification
+Part A: Ephemeral BurnerKeybundle (crates/zero_protocol/src/crypto.rs)
+Add ed25519-dalek Dependency: In crates/zero_protocol/Cargo.toml, add ed25519-dalek with zeroize support.
+Implement Ed25519Keypair and BurnerKeybundle:
+Ed25519Keypair wraps a 32-byte signing seed and 32-byte verifying public key ([u8; 32]), deriving Zeroize and ZeroizeOnDrop on the secret seed.
+Provide sign(&self, message: &[u8]) -> [u8; 64] and verify_ed25519_signature(public_key: &[u8; 32], message: &[u8], signature: &[u8; 64]) -> Result<(), ProtocolError>.
+BurnerKeybundle combines x25519: X25519Keypair and ed25519: Ed25519Keypair, providing:
+BurnerKeybundle::generate() -> Result<Self, ProtocolError>
+x25519_public_key(&self) -> [u8; 32]
+ed25519_public_key(&self) -> [u8; 32]
+zeroize(&mut self) (explicitly zeroizing both secret keys in WASM linear memory).
+Blind Dead-Drop SDP Encryption (seal_drop_sdp / open_drop_sdp):
+Because the Joiner knows host_public_key: [u8; 32] (from #payload=) and sends joiner_public_key: [u8; 32] in DropPayload, the Joiner and Host can immediately derive the pairwise X25519 shared secret derive_shared_secret(&joiner_private_key, &host_public_key) during the dead-drop handshake itself!
+Implement:
+seal_with_shared_secret(shared_secret: &SharedSecretKey, plaintext: &[u8]) -> Result<SealedFrame, ProtocolError>
+open_with_shared_secret(shared_secret: &SharedSecretKey, frame: &SealedFrame) -> Result<Vec<u8>, ProtocolError>
+When the Joiner constructs DropPayload, it seals the sdp_answer.sdp string into sealed_sdp_answer: Option<SealedFrame> using the derived SharedSecretKey, and sets sdp_answer.sdp to "" (or "SEALED").
+When the Host receives DropPayload over the WebSocket, if sealed_sdp_answer is Some(ref frame), the Host derives the SharedSecretKey using drop.joiner_public_key and decrypts frame to recover the real SDP answer string. The Cloudflare Worker (zero_network) never sees the plaintext SDP answer!
+Optimize UUID Generation (generate_random_uuid_v4):
+Replace the Curve25519 scalar multiplication inside zero_client::crypto::generate_message_uuid and zero_client::invite::generate_uuid_v4 with a direct 16-byte CSPRNG helper generate_random_bytes_16() -> Result<[u8; 16], ProtocolError> in zero_protocol::crypto.
+
+
+Part B: Wire Envelope Extensions (crates/zero_protocol/src/envelope.rs)
+Preserve 100% backward compatibility with existing tests by using #[serde(default)] on all new fields:
+
+InvitePayload:
+
+#[serde(default)]
+
+pub host_signing_key: Option<[u8; 32]>,
+
+DropPayload:
+
+#[serde(default)]
+
+pub joiner_signing_key: Option<[u8; 32]>,
+
+#[serde(default)]
+
+pub sealed_sdp_answer: Option<SealedFrame>,
+
+#[serde(default)]
+
+pub signature: Option<Vec<u8>>, // 64-byte Ed25519 signature over (invite_uuid || joiner_public_key || sealed_sdp_answer.ciphertext)
+
+SealedFrame:
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+
+pub struct SealedFrame {
+
+    pub nonce: [u8; 12],
+
+    pub ciphertext: Vec<u8>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+
+    pub signature: Option<Vec<u8>>, // Optional 64-byte Ed25519 sender signature over (nonce || ciphertext)
+
+}
+
+PeerJoined (inside MeshSignal / zero_client::mesh):
+Ensure PeerJoined carries public_key: [u8; 32] (X25519), #[serde(default)] signing_key: Option<[u8; 32]> (Ed25519), and #[serde(default)] signature: Option<Vec<u8>> so introduced peers can verify the introduction and derive pairwise X25519 keys for RelaySdpOffer / RelaySdpAnswer and BroadcastChat.
+
+
+Part C: #[wasm_bindgen] Crypto Bridge (zero_client/src/crypto.rs & lib.rs)
+Export a #[wasm_bindgen] pub struct WasmCryptoSession in zero_client so the browser runtime can invoke all cryptographic operations directly in WASM memory:
+
+#[wasm_bindgen]
+
+pub struct WasmCryptoSession {
+
+    bundle: BurnerKeybundle,
+
+    peer_sessions: HashMap<String, PeerCryptoEntry>,
+
+}
+
+Required #[wasm_bindgen] methods on WasmCryptoSession:
+
+#[wasm_bindgen(constructor)] pub fn new() -> Result<WasmCryptoSession, JsValue>
+Generates a fresh BurnerKeybundle (X25519 + Ed25519) in WASM RAM.
+pub fn x25519_public_key_bytes(&self) -> Vec<u8> (32 bytes)
+pub fn ed25519_public_key_bytes(&self) -> Vec<u8> (32 bytes)
+pub fn register_peer(&mut self, peer_id: &str, peer_x25519_pub: &[u8], peer_ed25519_pub: Option<Vec<u8>>) -> Result<(), JsValue>
+Performs X25519 Diffie-Hellman with self.bundle.x25519 and peer_x25519_pub, storing the resulting ChatSessionCrypto (ChaCha20-Poly1305 cipher) and optional peer_ed25519_pub verifying key under peer_id.
+pub fn has_peer_session(&self, peer_id: &str) -> bool
+pub fn remove_peer(&mut self, peer_id: &str)
+Drops and zeroizes the session key for peer_id.
+pub fn seal_for_peer(&self, peer_id: &str, plaintext: &[u8]) -> Result< String, JsValue >
+Encrypts plaintext with the peer's ChatSessionCrypto (ChaCha20-Poly1305), signs (nonce || ciphertext) with self.bundle.ed25519, and returns the serialized JSON SealedFrame { nonce, ciphertext, signature }.
+pub fn open_from_peer(&self, peer_id: &str, sealed_frame_json: &str) -> Result<Vec<u8>, JsValue>
+Deserializes SealedFrame, verifies the Ed25519 signature if peer_ed25519_pub is registered for peer_id, and decrypts + verifies the Poly1305 MAC tag using ChaCha20-Poly1305, returning the plaintext bytes.
+pub fn seal_drop_sdp(&mut self, host_peer_id: &str, host_x25519_pub: &[u8], host_ed25519_pub: Option<Vec<u8>>, sdp_plaintext: &str) -> Result<String, JsValue>
+Registers the host peer session, seals sdp_plaintext into a SealedFrame JSON string for DropPayload.sealed_sdp_answer.
+pub fn open_drop_sdp(&mut self, joiner_peer_id: &str, joiner_x25519_pub: &[u8], joiner_ed25519_pub: Option<Vec<u8>>, sealed_frame_json: &str) -> Result<String, JsValue>
+Registers the joiner peer session on the host, decrypts sealed_sdp_answer, and returns the plaintext SDP string.
+pub fn sign_bytes(&self, data: &[u8]) -> Vec<u8> & pub fn verify_peer_signature(&self, peer_id: &str, data: &[u8], sig: &[u8]) -> Result<bool, JsValue>
+pub fn compute_hmac_hex(secret: &[u8], invite_uuid: &str) -> Result<String, JsValue>
+pub fn burn_all(&mut self)
+Clears all peer_sessions and calls self.bundle.zeroize().
+
+
+4. Verification & Acceptance Criteria
+Gate 1: Cryptographic & Protocol Unit Tests (zero_protocol)
+test_burner_keybundle_generation_and_zeroize: Verifies X25519 + Ed25519 key generation, signing/verification, and zeroization of secret material.
+test_blind_dead_drop_sdp_encryption_and_tamper_rejection: Verifies that DropPayload with sealed_sdp_answer hides the plaintext SDP from intermediate inspection, decrypts cleanly on the host, and fails closed (ProtocolError::DecryptionFailed) if any ciphertext or nonce byte is modified.
+test_signed_sealed_frame_authenticity: Verifies that SealedFrame signed by Peer A's Ed25519 key verifies cleanly and rejects forged signatures from Peer C.
+test_backward_compatible_envelopes: Existing InvitePayload and DropPayload payloads without sealed_sdp_answer or signature continue to pass all existing protocol and network tests.
+Gate 2: Client & Workspace Integration Suite
+cargo test --workspace — All workspace tests across zero_protocol, zero_client, and zero_network must pass with 0 failures.
+./scripts/deploy_dry_run.sh — Must compile zero_client to wasm32-unknown-unknown, run wasm-bindgen --target web --out-dir dist/pkg, and verify that WasmCryptoSession is exported in zero_client/dist/pkg/zero_client.js.
+
+```
+
+## FILE: docs/HANDOVER_TICKET_047_BROWSER_WASM_CRYPTO_INTEGRATION.md
+```markdown
+Architectural Handover Brief: Browser Runtime Integration of WasmCryptoSession & Blind Dead-Drop (ticket-047)
+1. Executive Summary & Objective
+With ticket-046 complete, zero_protocol and zero_client now provide a fully tested Rust/WASM cryptographic engine (WasmCryptoSession) implementing the Option B Modernized Burner Keybundle (ed25519-dalek signing + x25519-dalek Diffie-Hellman key agreement + chacha20poly1305 AEAD encryption + blind dead-drop SDP sealing + ZeroizeOnDrop memory wiping).
+
+However, zero_client/index.html still uses legacy JavaScript stubs (crypto.getRandomValues placeholder keys, new Array(32).fill(0) in PeerJoined introductions, cleartext sdp_answer in DropPayload, and unencrypted TextEncoder / TextDecoder byte arrays inside SealedFrame).
+
+ticket-047 bridges WasmCryptoSession from ./pkg/zero_client.js directly into zero_client/index.html, eliminating 100% of the JavaScript cryptographic stubs while strictly preserving all UI, mobile visualViewport, clipboard, and 12-second disconnect grace-timer mechanics established through ticket-045.
+
+
+2. Target File Scope
+zero_client/index.html (Import and initialize ./pkg/zero_client.js & WasmCryptoSession, replace all stubbed keys/frames with real WASM crypto calls, seal/open blind dead-drop SDP answers, propagate and verify peer public keys across PeerJoined mesh introductions, and invoke burn_all() on session teardown)
+scripts/test_mesh_scenario.js or Playwright E2E test suite (Ensure headless browser tests initialize the WASM module and verify genuine encrypted SealedFrame payloads and blind dead-drop handshakes)
+
+Critical Invariant: Do not alter the DOM layout, CSS classes, mobile visualViewport listeners, clipboard fallback logic, peerRoles tracking, or pendingDisconnectTimers grace period in zero_client/index.html. Only replace the cryptographic key generation, dead-drop SDP sealing, mesh key introduction, and frame sealing/opening logic.
+
+
+3. Detailed Technical Specification
+Part A: WASM Module Initialization & Session Lifecycle (zero_client/index.html)
+Import WASM Bindings: At the top of the <script type="module"> block in zero_client/index.html, import the generated WASM initializer and WasmCryptoSession:
+
+import initWasm, { WasmCryptoSession } from "./pkg/zero_client.js";
+
+Initialize Before Room Actions: Create a singleton async readiness helper ensureCryptoReady():
+
+let wasmInitialized = false;
+
+let cryptoSession = null;
+
+async function ensureCryptoReady() {
+
+  if (!wasmInitialized) {
+
+    await initWasm();
+
+    wasmInitialized = true;
+
+  }
+
+  if (!cryptoSession) {
+
+    cryptoSession = new WasmCryptoSession();
+
+  }
+
+  return cryptoSession;
+
+}
+
+Call await ensureCryptoReady() at application startup and at the start of createRoomAsHost(), handleHeaderAddPeerClick(), and joinRoomFromHash().
+
+Track Remote Peer Public Keys for Mesh Introductions: Maintain an in-memory map of verified peer public keys so that when a node introduces two existing peers (PeerJoined), it includes their real X25519 and Ed25519 public keys instead of new Array(32).fill(0):
+
+const peerPublicKeys = new Map(); // peerId -> { x25519: number[], ed25519: number[] }
+
+Zeroize WASM Memory on Burn / Reset (resetToHome & handlePeerDeparture):
+In handlePeerDeparture(peerId): call cryptoSession?.remove_peer(peerId) and peerPublicKeys.delete(peerId).
+In resetToHome(): call cryptoSession?.burn_all(), set cryptoSession = new WasmCryptoSession() (so a fresh burner identity is ready for the next session), and call peerPublicKeys.clear().
+
+
+Part B: Real Burner Keys & Blind Dead-Drop Handshake
+Host Invite Creation (createRoomAsHost & handleHeaderAddPeerClick):
+
+Call const crypto = await ensureCryptoReady();
+Replace the random dummy hostPubKey with the real WASM burner keys:
+
+const hostX25519Pub = Array.from(crypto.x25519_public_key_bytes());
+
+const hostEd25519Pub = Array.from(crypto.ed25519_public_key_bytes());
+
+Compute the invite HMAC token via WasmCryptoSession.compute_hmac_hex(hostSecretBytes, inviteUuid).
+Include both host_public_key: hostX25519Pub and host_signing_key: hostEd25519Pub inside invitePayload (packed into #payload=).
+
+Joiner Blind Dead-Drop (joinRoomFromHash):
+
+Call const crypto = await ensureCryptoReady();
+Extract hostX25519Bytes = new Uint8Array(invite.host_public_key) and hostEd25519Bytes = invite.host_signing_key ? new Uint8Array(invite.host_signing_key) : undefined.
+Record the host's public keys in peerPublicKeys.set(hostPeerId, { x25519: invite.host_public_key, ed25519: invite.host_signing_key || null }).
+Seal the joiner's WebRTC SDP answer using WasmCryptoSession.seal_drop_sdp:
+
+const sealedSdpJson = crypto.seal_drop_sdp(
+
+  hostPeerId,
+
+  hostX25519Bytes,
+
+  hostEd25519Bytes,
+
+  answerSdp
+
+);
+
+const sealedSdpFrame = JSON.parse(sealedSdpJson);
+
+Construct dropPayload with a blinded cleartext field and the encrypted sealed_sdp_answer:
+
+const joinerX25519Pub = Array.from(crypto.x25519_public_key_bytes());
+
+const joinerEd25519Pub = Array.from(crypto.ed25519_public_key_bytes());
+
+const dropPayload = {
+
+  invite_uuid: invite.invite_uuid,
+
+  token: invite.token,
+
+  sdp_answer: { sdp: "SEALED" },
+
+  sealed_sdp_answer: sealedSdpFrame,
+
+  joiner_public_key: joinerX25519Pub,
+
+  joiner_signing_key: joinerEd25519Pub,
+
+  joiner_peer_id: localPeerId
+
+};
+
+Host Dead-Drop Decryption (hostWs.onmessage & pendingInviteWs.onmessage):
+
+When the Host receives the drop JSON over its WebSocket:
+Extract joinerX25519Bytes = new Uint8Array(drop.joiner_public_key) and joinerEd25519Bytes = drop.joiner_signing_key ? new Uint8Array(drop.joiner_signing_key) : undefined.
+Save peerPublicKeys.set(targetPeerId, { x25519: drop.joiner_public_key, ed25519: drop.joiner_signing_key || null }).
+If drop.sealed_sdp_answer is present, decrypt and authenticate the SDP answer via WASM:
+
+const answerSdp = crypto.open_drop_sdp(
+
+  targetPeerId,
+
+  joinerX25519Bytes,
+
+  joinerEd25519Bytes,
+
+  JSON.stringify(drop.sealed_sdp_answer)
+
+);
+
+await engine.accept_peer_answer(targetPeerId, answerSdp);
+
+(Fallback: if drop.sealed_sdp_answer is absent for legacy test payloads, register the peer via crypto.register_peer(targetPeerId, joinerX25519Bytes, joinerEd25519Bytes) and use drop.sdp_answer.sdp.)
+
+
+Part C: Signed Multi-Peer Mesh Introductions (PeerJoined)
+Include Real Public Keys in PeerJoined Frames:
+
+When an introducer sends PeerJoined to peerId announcing otherId:
+Look up const otherKeys = peerPublicKeys.get(otherId).
+Populate public_key: otherKeys.x25519 and signing_key: otherKeys.ed25519 inside the PeerJoined signal.
+Also allow a newly connected peer to send a self-introduction (PeerJoined with its own localPeerId, x25519_public_key_bytes(), ed25519_public_key_bytes(), and Ed25519 signature over (localPeerId || x25519_pub)) so every direct peer always has authoritative public keys.
+
+Register Pairwise Crypto Session Upon Receiving PeerJoined:
+
+When receiving PeerJoined { peer_id, public_key, signing_key, signature }:
+Verify public_key is a valid 32-byte non-zero array.
+Store peerPublicKeys.set(peer_id, { x25519: public_key, ed25519: signing_key || null }).
+If !cryptoSession.has_peer_session(peer_id), call:
+
+cryptoSession.register_peer(
+
+  peer_id,
+
+  new Uint8Array(public_key),
+
+  signing_key ? new Uint8Array(signing_key) : undefined
+
+);
+
+Crucial Ordering: Ensure cryptoSession.register_peer(...) executes before initiate_relay_handshake(peer_id) so that the pairwise X25519 key is ready to seal RelaySdpOffer!
+
+
+Part D: Per-Peer AEAD Sealing & Opening (RelaySdpOffer, RelaySdpAnswer, BroadcastChat)
+Sealing RelaySdpOffer and RelaySdpAnswer:
+
+In initiate_relay_handshake(remotePeerId):
+Seal the offer SDP specifically for remotePeerId:
+
+const offerBytes = new TextEncoder().encode(offerSdp);
+
+const sealedOffer = JSON.parse(cryptoSession.seal_for_peer(remotePeerId, offerBytes));
+
+When receiving RelaySdpOffer addressed to localPeerId (to_peer_id === myPeerId):
+Open the sealed offer using from_peer_id's session:
+
+const offerPlainBytes = cryptoSession.open_from_peer(fromPeerId, JSON.stringify(offerPayload.sealed_offer));
+
+const offerSdp = new TextDecoder().decode(offerPlainBytes);
+
+Seal the resulting answer SDP back for fromPeerId:
+
+const answerBytes = new TextEncoder().encode(answerSdp);
+
+const sealedAnswer = JSON.parse(cryptoSession.seal_for_peer(fromPeerId, answerBytes));
+
+When receiving RelaySdpAnswer addressed to localPeerId (to_peer_id === myPeerId):
+Open the sealed answer using from_peer_id's session:
+
+const answerPlainBytes = cryptoSession.open_from_peer(fromPeerId, JSON.stringify(ansPayload.sealed_answer));
+
+const answerSdp = new TextDecoder().decode(answerPlainBytes);
+
+Note on Intermediate Relay Hops: When a node is acting as an intermediate relay (to_peer_id !== myPeerId), it cannot and must not decrypt sealed_offer or sealed_answer (as they are encrypted end-to-end between from_peer_id and to_peer_id). It simply decrements ttl and forwards the opaque SealedFrame untouched!
+
+Per-Peer Sealed Chat Broadcast (doSendMessage & BroadcastChat):
+
+Because each peer pair $(A, B)$ and $(A, C)$ has its own distinct pairwise X25519 shared secret in WasmCryptoSession, when sending a chat message to connected peers:
+Generate a single msgUuid and timestampMs for the message.
+Iterate over each open peerId in engine.get_connected_peer_ids():
+Seal plaintextBytes specifically for peerId:
+
+const sealedFrame = JSON.parse(cryptoSession.seal_for_peer(peerId, plaintextBytes));
+
+Send the BroadcastChat envelope containing that peer's sealedFrame directly over peerId's DataChannel (engine.send_to_peer(peerId, JSON.stringify(envelope))).
+When receiving BroadcastChat:
+Identify the sender peer ID (sender_id or the DataChannel's fromPeerId).
+Call const plainBytes = cryptoSession.open_from_peer(senderPeerId, JSON.stringify(chatPayload.sealed_payload)) to verify the Ed25519 signature and Poly1305 MAC tag and decrypt the message text.
+If open_from_peer throws (tampered ciphertext, invalid MAC, or forged signature), drop the frame and log a security warning without rendering anything to the DOM.
+
+
+4. Verification & Acceptance Criteria
+Gate 1: Workspace Compilation & Rust Test Suite
+cargo test --workspace — All unit and integration tests across zero_protocol, zero_client, and zero_network must pass.
+./scripts/deploy_dry_run.sh — Must build the WASM package into zero_client/dist/pkg/ and stage zero_client/dist/index.html and zero_client/dist/style.css.
+Gate 2: End-to-End Cryptographic Verification in Browser Tests
+No Cleartext Wire Leaks: Inspect captured DataChannel and WebSocket frames during a 3-peer session:
+Assert DropPayload.sdp_answer.sdp === "SEALED" and DropPayload.sealed_sdp_answer.ciphertext does not contain "v=0" or IP addresses in plaintext.
+Assert BroadcastChat.sealed_payload.ciphertext does not match raw UTF-8 bytes of the message text and includes a 12-byte nonce, 16-byte Poly1305 tag overhead, and 64-byte signature.
+3-Peer Mesh & Host Departure Regression: Run the full 3-peer mesh scenario (Peer 1 invites Peer 2, Peer 1 invites Peer 3, $B \leftrightarrow C$ snaps via encrypted RelaySdpOffer/RelaySdpAnswer, all 3 peers exchange encrypted chat messages, Peer 1 leaves, and Peer 2 & Peer 3 continue chatting encrypted).
+Tamper Rejection Test: Verify that mutating a byte of ciphertext or signature in an incoming BroadcastChat frame causes open_from_peer to reject the frame and prevents DOM rendering.
+
+```
+
+## FILE: docs/HANDOVER_TICKET_048_RUST_CLIENT_CONSOLIDATION.md
+```markdown
+Architectural Handover Brief: Consolidate & Prune Legacy Rust Client Scaffolding (ticket-048)
+1. Executive Summary & Objective
+With ticket-046 and ticket-047 complete, ZeroChat's production architecture has reached a clean, natural separation of concerns:
+
+Rust/WASM High-Assurance Core (zero_protocol & zero_client): Executes 100% of the cryptography (BurnerKeybundle with x25519-dalek + ed25519-dalek, ChaCha20-Poly1305 AEAD per-peer session sealing, blind dead-drop SDP encryption, HMAC token generation, and ZeroizeOnDrop memory wiping via WasmCryptoSession) alongside canonical wire protocol serialization.
+Browser DOM, Viewport & WebRTC Orchestrator (zero_client/index.html & zero_client/style.css): Handles the glassmorphic UI, mobile window.visualViewport keyboard geometry, synchronous touch clipboard gestures, pre-assigned peer IDs (assigned_peer_id), per-peer role tracking (peerRoles), and the 12-second mobile background freeze grace window (pendingDisconnectTimers).
+
+However, zero_client/src/ still carries ~2,500 lines of obsolete pre-ticket-032 scaffolding (ui.rs, bootstrap.rs, and legacy unintegrated DOM/WebRTC glue in webrtc.rs and mesh.rs). Specifically:
+
+zero_client/src/ui.rs contains a hardcoded, outdated HTML string template (ChatUi::mount) and dead DOM bindings that were superseded by zero_client/index.html.
+zero_client/src/bootstrap.rs contains legacy DOM initialization routines that are never invoked by the production application.
+zero_client/src/webrtc.rs contains unconfigured web-sys RTC stubs lacking STUN/TURN servers and smart ICE candidate gathering.
+
+ticket-048 consolidates zero_client into a lean, purpose-built WASM Cryptography, Protocol & Pure-State library—pruning dead DOM/WebRTC glue, upgrading the pure-Rust state machine (mesh.rs) to reflect the battle-tested ticket-045 resilience invariants (peerRoles and disconnect grace periods), and shrinking the compiled .wasm binary footprint.
+
+
+2. Target File Scope
+zero_client/src/lib.rs (Remove exports of dead modules ui and bootstrap; expose a clean, documented public surface centered on WasmCryptoSession, crypto, invite, and mesh)
+zero_client/src/ui.rs & zero_client/src/bootstrap.rs (Remove dead legacy DOM scaffolding)
+zero_client/src/webrtc.rs (Prune unused web-sys RtcPeerConnection DOM glue while retaining pure-Rust PeerLifecycleState / SdpValidator types used by mesh.rs, or fold those pure state types cleanly into mesh.rs)
+zero_client/src/mesh.rs & zero_client/tests/mesh_simulation_test.rs (Align MeshTopology with the ticket-045/047 invariants: per-peer role tracking PeerRole::{Inviter, Joiner, Mesh}, signed PeerJoined introductions, and two-stage transient disconnect grace handling begin_disconnect_grace / recover_peer / expire_disconnect_grace)
+zero_client/Cargo.toml (Prune unused web-sys DOM element feature flags such as HtmlButtonElement, HtmlInputElement, HtmlDivElement, Document, Window, Element if no longer needed, reducing compile time and WASM binary size)
+openspec/specs/overview.md (Update the architecture overview to accurately document the production split between WasmCryptoSession in Rust/WASM and the browser runtime in index.html)
+
+
+3. Detailed Technical Specification
+Part A: Prune Obsolete DOM & WebRTC Scaffolding (ui.rs, bootstrap.rs, webrtc.rs)
+Remove zero_client/src/ui.rs and zero_client/src/bootstrap.rs:
+Delete zero_client/src/ui.rs and zero_client/src/bootstrap.rs (and any dedicated unit test files that exclusively test ChatUi::mount or bootstrap).
+Remove pub mod ui; and pub mod bootstrap; from zero_client/src/lib.rs.
+Replace Heavy web-sys WebRTC Glue with Pure State Types:
+Inspect zero_client/src/webrtc.rs. Keep pure-Rust validation and state primitives (PeerLifecycleState, SdpType, SDP validation helpers) that are used by mesh.rs and native tests, and remove the unused #[cfg(target_arch = "wasm32")] web-sys RtcPeerConnection / RtcDataChannel closures (since ZeroWebRtcEngine in index.html owns the browser RTCPeerConnection lifecycle with smart srflx ICE gathering and mobile visibilitychange reconnection).
+Slim Down zero_client/Cargo.toml:
+Remove unused web-sys DOM feature flags (Document, Element, HtmlElement, HtmlInputElement, HtmlButtonElement, Window, RtcPeerConnection, RtcDataChannel, etc.) so zero_client compiles faster and produces a smaller zero_client_bg.wasm binary.
+
+
+Part B: Align zero_client/src/mesh.rs with ticket-045 & ticket-047 Invariants
+Update MeshTopology in zero_client/src/mesh.rs so that the Rust mesh state machine matches the exact production rules proved out in ticket-045 and ticket-047:
+
+Per-Peer Role Tracking (PeerRole):
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+
+pub enum PeerRole {
+
+    Inviter,
+
+    Joiner,
+
+    Mesh,
+
+}
+
+Track peer_roles: HashMap<String, PeerRole> inside MeshTopology.
+Provide set_peer_role(&mut self, peer_id: &str, role: PeerRole) and peer_role(&self, peer_id: &str) -> Option<PeerRole>.
+Transient Disconnect Grace State (DisconnectGraceState):
+Instead of PeerLifecycleState::Closed immediately purging a peer on an unannounced drop, support:
+mark_peer_disconnected_grace(&mut self, peer_id: &str, timestamp_ms: u64) — marks the peer as in grace period without emitting on_burn_peer_messages or on_peer_left.
+recover_peer(&mut self, peer_id: &str) — cancels any pending grace state and removes peer_id from departed_peers if they re-open within the grace window.
+expire_peer_grace(&mut self, peer_id: &str) — finalizes departure and triggers selective burn + departure notice once the grace window elapses without recovery.
+Explicit PeerLeftAndBurn continues to bypass the grace window and burn immediately.
+
+
+Part C: Refresh openspec/specs/overview.md
+Update openspec/specs/overview.md so future agents and contributors have an accurate map of the repository:
+
+Document the Option B Modernized Burner Keybundle (Ed25519 signing + X25519 DH + ChaCha20-Poly1305 AEAD + ZeroizeOnDrop).
+Document the Blind Dead-Drop Handshake (sealed_sdp_answer encrypted to host_public_key before traversing zero_network).
+Document the clean boundary between WasmCryptoSession (zero_client/src/crypto.rs) and zero_client/index.html.
+
+
+4. Verification & Acceptance Criteria
+Gate 1: Rust Workspace & Clippy Gate
+cargo test --workspace — All unit and integration tests across zero_protocol, zero_client, and zero_network must pass with 0 failures.
+cargo clippy --workspace --all-targets -- -D warnings — Must pass with zero warnings (no dead code, unused imports, or orphaned modules).
+Gate 2: WASM Build & Bundle Size Verification
+./scripts/deploy_dry_run.sh — Must compile zero_client to wasm32-unknown-unknown, generate ./dist/pkg/zero_client_bg.wasm and ./dist/pkg/zero_client.js, and stage index.html and style.css cleanly.
+Verify WasmCryptoSession exports remain 100% intact for zero_client/index.html.
+Gate 3: End-to-End Browser Regression Suite
+Run node scripts/test_mesh_scenario.js (all 22 headless browser tests including Test 22 Scenarios A–E) and verify 100% pass rate with zero regressions.
+
+```
+
+## FILE: docs/HANDOVER_TICKET_049_CLOUDFLARE_TURN_CGNAT_RELAY.md
+```markdown
+Architectural Handover Brief: Ephemeral Cloudflare Realtime TURN Relay for 4G/5G CGNAT Traversal (ticket-049)
+1. Executive Summary & Objective
+While ticket-045 through ticket-048 resolved smart STUN (srflx) candidate gathering, per-peer cryptographic sealing (WasmCryptoSession), and transient background disconnect grace windows, direct peer-to-peer UDP hole punching via STUN is physically blocked in two common mobile networking scenarios:
+
+Carrier-Grade Symmetric NAT (CGNAT) on 4G/5G Cellular Networks: Mobile carriers (e.g., EE, Vodafone, O2, Three) assign a distinct external UDP port per destination IP/port tuple. Because the port mapped during the STUN request to stun.cloudflare.com:3478 cannot accept incoming UDP packets from a remote peer's IP, srflx candidates fail to connect when both devices are on cellular data (or behind strict enterprise firewalls).
+Same-Device Multi-Tab Cellular Hairpinning: When testing or operating two browser tabs on the same mobile device over cellular data, mobile OS sandboxes suppress local loopback (host) candidates for privacy and carrier NATs drop hairpinned UDP packets sent from a public cellular IP back to itself.
+
+ticket-049 implements Zero-Knowledge Ephemeral TURN Relay Provisioning using Cloudflare Calls / Realtime TURN via zero_network and wires dynamic ICE server injection into zero_client/index.html.
+Privacy & Security Invariant
+Using a TURN relay (typ relay) does not weaken ZeroChat's cryptographic privacy:
+
+WebRTC encrypts the underlying SCTP DataChannel transport via DTLS, and WasmCryptoSession (ticket-046/047) encrypts every payload end-to-end using pairwise X25519 + ChaCha20-Poly1305 AEAD signed with Ed25519.
+The TURN server sees only opaque, doubly-encrypted UDP/TCP frames and short-lived ephemeral credentials with zero room, user, or message metadata.
+
+
+2. Target File Scope
+zero_network/src/handlers.rs & zero_network/src/lib.rs (Add GET /ice or POST /ice endpoint to mint short-lived ephemeral Cloudflare TURN credentials—or return fallback STUN configuration smoothly when TURN secrets are not configured in the Worker environment)
+zero_network/wrangler.toml (Document optional environment bindings CF_TURN_KEY_ID and CF_TURN_API_TOKEN / TURN_SERVERS_JSON for production deployment)
+zero_client/index.html (Fetch ephemeral ICE/TURN servers from ${WORKER_HTTP_ORIGIN}/ice prior to creating RTCPeerConnection instances, merge with window.ZERO_TURN_SERVERS and default STUN servers, and tune _waitForIceGatheringComplete to wait for typ relay candidates when TURN is active)
+scripts/test_mesh_scenario.js (Add automated verification for /ice endpoint fallback, dynamic iceServers injection into ZeroWebRtcEngine, and typ relay candidate bundling)
+
+
+3. Detailed Technical Specification
+Part A: Ephemeral TURN Credential Endpoint in zero_network (GET /ice)
+Pure-Rust Route Handler (handle_ice_config in zero_network/src/handlers.rs):
+Expose a lightweight endpoint GET /ice (with CORS headers matching /register and /drop) so browser clients can fetch short-lived iceServers configuration before initiating an offer or answer.
+Support two zero-maintenance configuration modes via Cloudflare Worker environment variables (env):
+Mode 1: Cloudflare Realtime TURN API (CF_TURN_KEY_ID + CF_TURN_API_TOKEN): When both secrets are present in the Worker environment, make an outbound POST request from the Worker to: https://rtc.live.cloudflare.com/v1/turn/keys/${CF_TURN_KEY_ID}/credentials/generate with header Authorization: Bearer ${CF_TURN_API_TOKEN} and body {"ttl": 3600} (1-hour ephemeral credentials). Return the resulting { "iceServers": [...] } JSON directly to the client with 200 OK.
+Mode 2: Static/Custom JSON Override (TURN_SERVERS_JSON): If TURN_SERVERS_JSON is set in env, parse and return { "iceServers": <parsed> } (allowing easy injection of self-hosted coturn or Metered/OpenRelay credentials in staging).
+Mode 3: Graceful STUN-Only Fallback (Default when unconfigured / local tests): If neither secret is configured (or if the upstream Cloudflare TURN API call fails), never fail the handshake! Return 200 OK with the default STUN server list:
+
+{
+
+  "iceServers": [
+
+    { "urls": "stun:stun.cloudflare.com:3478" },
+
+    { "urls": "stun:stun.l.google.com:19302" }
+
+  ]
+
+}
+
+CORS Support:
+Ensure OPTIONS /ice and GET /ice include Access-Control-Allow-Origin: * (matching existing endpoints in zero_network/src/lib.rs).
+
+
+Part B: Dynamic ICE Server Provisioning & Caching (zero_client/index.html)
+Fetch & Cache Ephemeral ICE Config (ensureIceServersReady):
+
+In zero_client/index.html, add an async helper that fetches ${WORKER_HTTP_ORIGIN}/ice with a short 2500ms timeout and caches the returned iceServers in memory for 15 minutes (ICE_CACHE_TTL_MS = 15 * 60 * 1000) so rapid multi-peer mesh handshakes do not repeat HTTP requests:
+
+let cachedIceServers = null;
+
+let cachedIceTimestamp = 0;
+
+const ICE_CACHE_TTL_MS = 15 * 60 * 1000;
+
+async function ensureIceServersReady() {
+
+  const now = Date.now();
+
+  if (cachedIceServers && (now - cachedIceTimestamp) < ICE_CACHE_TTL_MS) {
+
+    return cachedIceServers;
+
+  }
+
+  const defaultStun = [
+
+    { urls: "stun:stun.cloudflare.com:3478" },
+
+    { urls: "stun:stun.l.google.com:19302" },
+
+    { urls: "stun:stun1.l.google.com:19302" }
+
+  ];
+
+  const customTurn = Array.isArray(window.ZERO_TURN_SERVERS) ? window.ZERO_TURN_SERVERS : [];
+
+  try {
+
+    const ctrl = new AbortController();
+
+    const timer = setTimeout(() => ctrl.abort(), 2500);
+
+    const res = await fetch(`${WORKER_HTTP_ORIGIN}/ice`, { signal: ctrl.signal });
+
+    clearTimeout(timer);
+
+    if (res.ok) {
+
+      const data = await res.json();
+
+      if (data && Array.isArray(data.iceServers) && data.iceServers.length > 0) {
+
+        cachedIceServers = [...defaultStun, ...data.iceServers, ...customTurn];
+
+        cachedIceTimestamp = now;
+
+        engine.setIceServers(cachedIceServers);
+
+        return cachedIceServers;
+
+      }
+
+    }
+
+  } catch (_) {
+
+    // Graceful fallback to STUN + window.ZERO_TURN_SERVERS when offline or in local mock tests
+
+  }
+
+  cachedIceServers = [...defaultStun, ...customTurn];
+
+  cachedIceTimestamp = now;
+
+  engine.setIceServers(cachedIceServers);
+
+  return cachedIceServers;
+
+}
+
+Call await ensureIceServersReady() alongside await ensureCryptoReady() inside createRoomAsHost(), handleHeaderAddPeerClick(), and joinRoomFromHash().
+
+Optimize _waitForIceGatheringComplete(pc) When TURN Servers Are Configured:
+
+Inspect this.rtcConfig.iceServers to check whether any server URL starts with turn: or turns::
+
+const hasTurnConfigured = (this.rtcConfig.iceServers || []).some((s) => {
+
+  const urls = Array.isArray(s.urls) ? s.urls : [s.urls || ""];
+
+  return urls.some((u) => typeof u === "string" && (u.startsWith("turn:") || u.startsWith("turns:")));
+
+});
+
+Why this matters for 4G/5G CGNAT:
+When hasTurnConfigured === false (STUN only): as soon as the first typ srflx candidate arrives, the 400ms settle timer fires and resolves quickly (<600ms).
+When hasTurnConfigured === true (TURN enabled): a typ srflx candidate often arrives in 80ms, whereas the TURN allocation (typ relay) takes ~250ms–700ms (requires a 401 challenge + authenticated Allocate response). If we resolved 400ms after srflx before typ relay arrived, the non-trickle SDP would omit the relay candidate!
+Required Logic:
+When hasTurnConfigured === true: trigger the fast 350ms settle timer once at least one typ relay candidate is gathered (or after 1200ms if typ srflx is present and TURN is unreachable, with the existing 5000ms hard cap).
+This guarantees that whenever TURN is configured, both typ srflx (direct P2P UDP when possible) and typ relay (CGNAT/cellular fallback over UDP/TCP/TLS 443) are bundled into the non-trickle SDP!
+
+
+4. Verification & Acceptance Criteria
+Gate 1: Rust Workspace & Worker Endpoint Tests
+cargo test --workspace — Add unit tests in zero_network verifying GET /ice returns valid iceServers JSON in both default fallback mode and configured mode, and passes all workspace tests.
+cargo clippy --workspace --all-targets -- -D warnings — Zero warnings.
+Gate 2: Headless Browser Verification (scripts/test_mesh_scenario.js)
+Scenario 1 (/ice Provisioning & Caching): Verify ensureIceServersReady() fetches /ice, populates engine.rtcConfig.iceServers, and caches the result across peer handshakes.
+Scenario 2 (hasTurnConfigured Relay Settle Logic): Verify that when a turn: server is present in rtcConfig.iceServers, _waitForIceGatheringComplete waits for typ relay (or the 1200ms srflx fallback) and completes the full 3-peer encrypted mesh scenario cleanly.
+Gate 3: Production Deployment Guide (wrangler secret put)
+Document the 2-command Cloudflare TURN activation steps in openspec/specs/overview.md so the operator can enable live 4G/5G TURN relaying on Cloudflare at any time:
+
+wrangler secret put CF_TURN_KEY_ID
+
+wrangler secret put CF_TURN_API_TOKEN
+
+```
+
+## FILE: docs/HANDOVER_TICKET_050_V1_RELEASE_POLISH_AND_README.md
+```markdown
+Architectural Handover Brief: v1.0 Release Polish — WASM Binary Optimization (wasm-opt -Oz) & Root README.md Showcase (ticket-050)
+1. Executive Summary & Objective
+With ticket-045 through ticket-049 shipped, ZeroChat's core architecture, zero-knowledge cryptography, multi-peer mesh state machine, and mobile CGNAT traversal are complete and verified in production (v1.23.1).
+
+ticket-050 closes out the v1.0 milestone with two final release-engineering deliverables:
+
+WASM Size & Release Profile Optimization (Cargo.toml & scripts/deploy_dry_run.sh): Configure [profile.release] for aggressive LTO/size stripping and integrate an automatic wasm-opt -Oz pass (when wasm-opt is available on PATH, with graceful fallback when absent) into the build pipeline to shrink zero_client_bg.wasm to its minimal wire footprint.
+Production Architectural Showcase (README.md): Author a comprehensive, staff-level root README.md that documents the v1.0 architecture, the Option B Modernized Burner Keybundle (X25519 + Ed25519 + ChaCha20-Poly1305 + ZeroizeOnDrop), the Blind Dead-Drop handshake, the Self-Healing Multi-Peer Mesh, and the 3-tier Cloudflare Realtime TURN CGNAT fallback.
+
+
+2. Target File Scope
+Cargo.toml (Add/refine workspace [profile.release] settings: opt-level = "z", lto = true, codegen-units = 1, panic = "abort", strip = true)
+scripts/deploy_dry_run.sh (Add post-wasm-bindgen wasm-opt -Oz pass on zero_client/dist/pkg/zero_client_bg.wasm if command -v wasm-opt succeeds, printing before/after byte sizes)
+README.md (Create or update the root README.md to showcase the v1.0 production system)
+openspec/specs/overview.md (Bump release status to v1.0.0 / ticket-050 complete)
+
+
+3. Detailed Technical Specification
+Part A: Release Profile & wasm-opt -Oz Build Pipeline
+Workspace Cargo.toml [profile.release] Configuration: Ensure the workspace root Cargo.toml includes a dedicated [profile.release] block optimized for minimal WASM binary size and dead-symbol elimination:
+
+[profile.release]
+
+opt-level = "z"
+
+lto = true
+
+codegen-units = 1
+
+panic = "abort"
+
+strip = true
+
+(Note: Verify cargo test --workspace and cargo build --target wasm32-unknown-unknown --release both compile cleanly with these flags.)
+
+Post-Bindgen wasm-opt Pass in scripts/deploy_dry_run.sh: Immediately after wasm-bindgen generates zero_client/dist/pkg/zero_client_bg.wasm, add an optimization step that checks for wasm-opt (from Binaryen):
+
+WASM_FILE="zero_client/dist/pkg/zero_client_bg.wasm"
+
+if [ -f "$WASM_FILE" ]; then
+
+  BEFORE_BYTES=$(wc -c < "$WASM_FILE" | tr -d ' ')
+
+  echo "[deploy_dry_run] WASM size before wasm-opt: ${BEFORE_BYTES} bytes"
+
+  if command -v wasm-opt >/dev/null 2>&1; then
+
+    wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int "$WASM_FILE" -o "$WASM_FILE"
+
+    AFTER_BYTES=$(wc -c < "$WASM_FILE" | tr -d ' ')
+
+    echo "[deploy_dry_run] WASM size after wasm-opt -Oz: ${AFTER_BYTES} bytes"
+
+  else
+
+    echo "[deploy_dry_run] wasm-opt not found on PATH; skipping Binaryen post-pass (Cargo LTO/strip active)"
+
+  fi
+
+fi
+
+
+Part B: Root README.md Architectural Showcase
+Create/replace the root README.md with a polished, technical showcase covering the following sections:
+
+Header & Executive Summary:
+ZeroChat (v1.0) — Ephemeral, Zero-Knowledge Peer-to-Peer Mesh Chat in Rust & WebAssembly.
+No accounts, no databases, no message persistence, and a 100% blind signaling edge.
+System Architecture (3-Crate Workspace Overview):
+ASCII / Mermaid architecture diagram illustrating the boundary between:
+crates/zero_protocol (Pure Rust): Wire envelopes (InvitePayload, DropPayload, SealedFrame, MeshRelaySignal) and cryptographic primitives.
+zero_network (Cloudflare Worker + Hibernating Durable Objects in Rust/WASM): Stateless HMAC-authenticated single-use dead-drop router (/register, /drop, /ws) and 3-tier ephemeral TURN credential provisioning (/ice).
+zero_client (Rust WASM WasmCryptoSession + Vanilla JS WebRTC/DOM Host): High-speed WASM linear-memory cryptography paired with browser-native WebRTC DataChannels and mobile visualViewport resilience.
+Cryptographic Design (Option B Modernized Burner Keybundle):
+In-Memory Ephemeral Identity: Every session generates a fresh BurnerKeybundle (x25519-dalek Diffie-Hellman keypair + ed25519-dalek signing keypair) in WASM linear memory protected by ZeroizeOnDrop.
+Out-of-Band #payload= Invite Fragment: The Host's public keys and HMAC token travel exclusively inside the URL fragment (#payload=...), which is never transmitted in HTTP requests to Cloudflare Pages or the Worker.
+100% Blind Dead-Drop (sealed_sdp_answer): Before the Joiner sends their WebRTC SDP answer to POST /drop/:do_id/:invite_uuid, WasmCryptoSession::seal_drop_sdp encrypts the SDP answer and ICE IP candidates using X25519 + ChaCha20-Poly1305 AEAD and signs the payload with Ed25519. The Cloudflare Worker sees only sdp_answer: { sdp: "SEALED" } and an opaque ciphertext blob.
+Per-Peer AEAD & Signed Multi-Peer Mesh: Every BroadcastChat, RelaySdpOffer, and RelaySdpAnswer frame is uniquely sealed per peer with a 96-bit CSPRNG nonce, 128-bit Poly1305 MAC tag, and 64-byte Ed25519 signature.
+Deterministic Burn & Memory Zeroization: Clicking Leave (PeerLeftAndBurn) or closing the tab immediately purges remote DOM messages, drops peer keys, and invokes burn_all() to scrub secret material from WASM RAM.
+Network & Mobile Resilience Engineering:
+Smart Non-Trickle ICE Gathering: Adaptive candidate inspection resolves in <600ms on broadband/Wi-Fi once typ srflx is gathered, or waits for typ relay (350ms settle window) when TURN is configured.
+Mobile Background Tab Freeze Grace Window (12s): Distinguishes explicit PeerLeftAndBurn departures (instant purge) from iOS Safari / Android Chrome background tab suspension (visibilitychange recovery without false departure notices or message loss).
+4G/5G Symmetric CGNAT Traversal (/ice): Three-tier ICE provisioning supporting dynamic 1-hour Cloudflare Realtime TURN credentials (CF_TURN_KEY_ID + CF_TURN_API_TOKEN), custom JSON overrides (TURN_SERVERS_JSON), or automatic zero-config STUN fallback.
+Local Development, Testing & Deployment Guide:
+Exact commands for running the 117+ Rust workspace unit/integration tests (cargo test --workspace), the 23 headless browser E2E scenarios (node scripts/test_mesh_scenario.js), building the optimized WASM bundle (./scripts/deploy_dry_run.sh), and deploying to Cloudflare Workers & Pages.
+
+
+4. Verification & Acceptance Criteria
+cargo test --workspace — All Rust unit and integration tests pass with 0 failures.
+cargo clippy --workspace --all-targets -- -D warnings — Zero warnings.
+./scripts/deploy_dry_run.sh — Builds the release WASM binary with [profile.release] (opt-level = "z", lto = true, strip = true) and optional wasm-opt -Oz, outputting the final .wasm byte size.
+node scripts/test_mesh_scenario.js — All 23 headless browser scenarios pass against the size-optimized release WASM build.
+
+```
+
+## FILE: docs/HANDOVER_TICKET_051_FIX_DO_CORS_AND_JOIN_REENTRANCY.md
+```markdown
+Architectural Handover Brief: Fix Durable Object Dead-Drop Immutable Header Crash (net::ERR_FAILED / Missing CORS) & Joiner Failure Re-Entrancy (ticket-051)
+1. Root Cause Analysis (From Live Production Console Trace)
+Live browser console logs from the Pages client and Worker endpoint revealed the exact failure chain when a Joiner opens an invite link:
+
+Access to fetch at 'https://<worker-host>/drop/<do_id>/<invite_uuid>'
+
+from origin 'https://<pages-host>' has been blocked by CORS policy:
+
+No 'Access-Control-Allow-Origin' header is present on the requested resource.
+
+Failed to load resource: net::ERR_FAILED
+
+Joiner failed: Error: Connection closed before opening
+
+Joiner failed: TypeError: Failed to fetch
+Root Cause 1: Cloudflare Workers Can't modify immutable headers Exception on Durable Object Subrequests (zero_network/src/lib.rs)
+THIS IS THE SMOKING GUN: Look at what happened across the two browser windows simultaneously:
+
+On the Left Window (Host), the UI progressed from "Invite link copied to clipboard" -> "Waiting for peer..." -> "Establishing secure connection..".
+Why did the Host window print "Establishing secure connection.."? Because the Durable Object (DeadDropRoom) received the Joiner's POST /drop/:do_id/:invite_uuid, verified the HMAC token, burned the UUID, and successfully piped the DropPayload down the Host's WebSocket!
+Then, the Durable Object returned its worker::Response (200 OK) back to the outer Worker in zero_network/src/lib.rs:
+
+let resp = stub.fetch_with_request(req).await?;
+
+handlers::with_cors(resp)
+
+In Cloudflare's Workers runtime (worker-rs), a Response returned across an RPC/subrequest boundary from stub.fetch_with_request(req).await has immutable headers in V8 (Can't modify immutable headers)!
+When zero_network/src/lib.rs called handlers::with_cors(resp) on the response returned by stub.fetch_with_request(req).await, resp.with_headers(headers) threw a JS TypeError: Can't modify immutable headers exception inside the Worker!
+Because the Worker threw an unhandled exception after the Durable Object had already pushed the DropPayload to the Host's WebSocket:
+Cloudflare killed the Joiner's HTTP request with a bare 500 / net::ERR_FAILED response lacking Access-Control-Allow-Origin: *.
+The Joiner's fetch() threw TypeError: Failed to fetch, which triggered handleJoinFailure() and closed the Joiner's RTCPeerConnection while the Host was trying to complete the WebRTC handshake!
+Root Cause 2: Re-Entrant handleJoinFailure() in zero_client/index.html
+When fetch(...) threw TypeError: Failed to fetch, joinRoomFromHash called handleJoinFailure(err). Inside handleJoinFailure(err):
+
+engine.close() was called before isJoining = false.
+engine.close() synchronously invoked onStateChangeCb("closed"), which checked if (isJoining) (still true!) and called handleJoinFailure(new Error("Connection closed before opening")) a second time—printing "Failed to establish connection" twice!
+
+
+2. Target File Scope
+zero_network/src/lib.rs & zero_network/src/handlers.rs & zero_network/src/durable_object.rs
+zero_client/index.html
+scripts/test_mesh_scenario.js
+
+
+3. Detailed Technical Specification
+Part A: Reconstruct Mutable worker::Response After stub.fetch_with_request in zero_network
+Never Call .with_headers(...) Directly on a Subrequest Response Returned from stub.fetch_with_request (zero_network/src/lib.rs & handlers.rs):
+In zero_network/src/lib.rs (and any helper in handlers.rs), when stub.fetch_with_request(req).await returns a mut resp:
+Case 1 (resp.status_code() == 101 WebSocket Upgrade): Return Ok(resp) immediately without calling with_cors(resp)! Calling with_cors on a 101 Switching Protocols WebSocket response either throws Can't modify immutable headers or strips the attached webSocket handle.
+Case 2 (resp.status_code() != 101 HTTP Response from Durable Object, such as /drop or /register): Extract the status code and body text from resp, construct a brand-new mutable worker::Response in the outer Worker isolate, and apply with_cors to that fresh response:
+
+let mut resp = match stub.fetch_with_request(req).await {
+
+    Ok(r) => r,
+
+    Err(e) => {
+
+        let err_resp = Response::error(format!("Durable Object error: {e}"), 500)?;
+
+        return handlers::with_cors(err_resp);
+
+    }
+
+};
+
+if resp.status_code() == 101 {
+
+    return Ok(resp);
+
+}
+
+let status = resp.status_code();
+
+let body_text = resp.text().await.unwrap_or_default();
+
+let fresh_resp = if (200..300).contains(&status) {
+
+    let mut r = Response::ok(body_text)?;
+
+    if status != 200 {
+
+        r = r.with_status(status);
+
+    }
+
+    r
+
+} else {
+
+    Response::error(body_text, status)?
+
+};
+
+handlers::with_cors(fresh_resp)
+
+Update with_cors and cors_preflight_response in zero_network/src/handlers.rs:
+In with_cors(resp: worker::Response), if resp.status_code() == 101, return Ok(resp) immediately as a defensive guard.
+Ensure with_cors sets:
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Methods: GET, POST, OPTIONS
+Access-Control-Allow-Headers: Content-Type, Authorization, X-Host-Secret
+Access-Control-Max-Age: 86400
+And if status is 200 or 201 and Content-Type is not set, set Content-Type: application/json.
+Part B: Fix handleJoinFailure Re-Entrancy & Host crypto Shadowing (zero_client/index.html)
+Prevent Re-Entrant Double Execution in handleJoinFailure(err):
+In zero_client/index.html, check and clear isJoining at the very top of handleJoinFailure(err) before calling engine.close():
+
+function handleJoinFailure(err) {
+
+  if (!isJoining) return;
+
+  isJoining = false;
+
+  console.error("Joiner failed:", err);
+
+  if (joinTimeoutHandle) {
+
+    clearTimeout(joinTimeoutHandle);
+
+    joinTimeoutHandle = null;
+
+  }
+
+  if (engine) {
+
+    engine.close();
+
+  }
+
+  clearTransientStatus();
+
+  appendSystemMessage("Failed to establish connection");
+
+  showToast("Invite link expired or invalid");
+
+  if (window.history && window.history.replaceState) {
+
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+
+  }
+
+  setActionButtonMode("create-new");
+
+}
+
+Fix const crypto Shadowing in createRoomAsHost() (zero_client/index.html):
+Rename const crypto = await ensureCryptoReady(); inside createRoomAsHost() to const wasmCrypto = await ensureCryptoReady(); so it does not shadow the global window.crypto object.
+
+
+4. Verification & Acceptance Criteria
+cargo test --workspace — All Rust workspace tests pass.
+cargo clippy --workspace --all-targets -- -D warnings — Zero warnings.
+./scripts/deploy_dry_run.sh — Builds release WASM bundle cleanly.
+node scripts/test_mesh_scenario.js — Add a test verifying handleJoinFailure does not double-fire when engine.close() emits "closed", and verify all headless E2E scenarios pass.
+
+```
+
+## FILE: docs/deployment.md
+```markdown
+# Zero-Chat Deployment & Secrets Guide
+
+This document outlines the deployment architecture, required credentials/secrets, Cloudflare dashboard configurations, CI/CD pipelines, and local dry-run validation instructions for Zero-Chat (**REQ-007.5**).
+
+---
+
+## 1. Overview & Architecture
+
+Zero-Chat utilizes a modern, serverless, two-tier architecture hosted on Cloudflare's global edge network:
+
+1. **Edge Signaling & Dead-Drop (`zero_network`)**:
+   - **Cloudflare Worker** paired with a hibernating **Durable Object** (`DeadDropRoom`).
+   - Handles ephemeral WebRTC signaling, peer discovery, and offline mailbox dead-drops backed by SQLite durable state.
+   - Low latency, global coordination point with zero idle compute costs.
+
+2. **Static P2P Web Client (`zero_client`)**:
+   - Hosted via **Cloudflare Pages**.
+   - Serves the static client application: HTML shell, styling, JavaScript shims, and compiled WebAssembly (`wasm32-unknown-unknown`) package.
+   - Operates fully peer-to-peer (P2P) in client browsers once signaled via `zero_network`.
+
+---
+
+## 2. GitHub Repository Secrets
+
+Automated deployment workflows running in GitHub Actions require Cloudflare authentication credentials configured as repository secrets.
+
+### Required Secrets
+
+| Secret Name | Description | Scope / Context |
+|---|---|---|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API Bearer Token with Worker & Pages management permissions | GitHub Actions (`deploy.yml`) |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Account Identifier (Hexadecimal string) | GitHub Actions (`deploy.yml`) |
+
+### Generating the Cloudflare API Token
+
+1. Log in to the [Cloudflare Dashboard](https://dash.cloudflare.com/).
+2. In the top-right corner, select your profile icon and click **My Profile**.
+3. In the left navigation menu, click **API Tokens**.
+4. Click **Create Token**, then navigate to **Create Custom Token** and click **Get started**.
+5. Set a descriptive name (e.g., `zero-chat-ci-deploy`).
+6. Under **Permissions**, add the following minimum permissions:
+   - **Account** -> **Workers Scripts** -> **Edit**
+   - **Account** -> **Workers KV Storage** -> **Edit**
+   - **Account** -> **Cloudflare Pages** -> **Edit**
+   - **Account** -> **Account Settings** -> **Read**
+7. Under **Account Resources**, choose **Include** -> **All accounts** (or restrict to your target account).
+8. Click **Continue to summary**, review, and click **Create Token**.
+9. **Copy the token immediately** (it will not be displayed again).
+
+### Locating the Cloudflare Account ID
+
+1. Navigate to the Cloudflare dashboard homepage or **Workers & Pages** -> **Overview**.
+2. Look at the right-hand sidebar under **Account Details**.
+3. Copy the **Account ID** value.
+
+### Configuring Secrets in GitHub
+
+1. Open your repository on GitHub.
+2. Navigate to **Settings** -> **Secrets and variables** -> **Actions**.
+3. Under **Repository secrets**, click **New repository secret**:
+   - Name: `CLOUDFLARE_API_TOKEN`
+   - Secret: Paste the API token generated above.
+   - Click **Add secret**.
+4. Click **New repository secret** again:
+   - Name: `CLOUDFLARE_ACCOUNT_ID`
+   - Secret: Paste your Cloudflare Account ID.
+   - Click **Add secret**.
+
+---
+
+## 3. Cloudflare Resource Configuration
+
+### Worker & Durable Object (`zero_network`)
+
+The backend signaling worker is defined in `crates/zero_network/wrangler.toml` and requires the following Cloudflare configuration:
+
+- **Worker Name**: `network` (routes to `https://network.zero-network.workers.dev`)
+- **Main Entrypoint**: `build/worker/shim.mjs`
+- **Compatibility Date**: `2025-01-01`
+- **Compatibility Flags**: `["nodejs_compat"]`
+- **Durable Object Binding**:
+  - Binding Name: `DEAD_DROP_ROOM`
+  - Class Name: `DeadDropRoom`
+- **Durable Object Migrations**:
+  - Tag: `v1`
+  - Classes: `["DeadDropRoom"]` (SQLite storage enabled for persistent dead-drop state)
+
+### Cloudflare Pages (`zero_client`)
+
+The static web application is deployed to Cloudflare Pages:
+
+- **Project Name**: `zero-chat`
+- **Production Branch**: `main`
+- **Output Directory**: `dist`
+- **Build Command** (for direct Cloudflare dashboard builds, if used):
+  ```bash
+  ./scripts/build_wasm.sh
+  ```
+  *(Note: Standard deployment uses GitHub Actions via Wrangler CLI to push pre-compiled bundles directly to Cloudflare Pages).*
+
+---
+
+## 4. CI/CD Automation Pipelines
+
+Automated checks and deployment procedures are orchestrated via GitHub Actions workflows:
+
+### Continuous Integration (`.github/workflows/ci.yml`)
+Runs automatically on all pull requests and pushes to `main`:
+- **Code Formatting**: Checks Rust code formatting across all crates via `cargo fmt --all -- --check`.
+- **Clippy Linting**: Enforces strict code quality without warnings using `cargo clippy --workspace --all-targets -- -D warnings`.
+- **Test Suite**: Runs the full suite of unit and integration tests across the workspace via `cargo test --workspace`.
+- **WASM Verification**: Validates compilation targeting `wasm32-unknown-unknown` for `zero_client`.
+
+### Continuous Deployment (`.github/workflows/deploy.yml`)
+Triggers automatically on pushes to `main` and version tags (`v*`):
+- Sets up Rust toolchain with target `wasm32-unknown-unknown`.
+- Installs `wasm-bindgen-cli` and Node.js dependencies (`wrangler`).
+- Builds the WASM client bundle into `dist/`.
+- Deploys the static client to **Cloudflare Pages** project `zero-chat`.
+- Deploys the signaling Worker and Durable Object to **Cloudflare Workers** (`zero_network`).
+
+---
+
+## 5. Local Pre-flight Dry-Run
+
+Before pushing changes to GitHub or deploying to production, validate the build and packaging pipeline locally using the dry-run script.
+
+### Prerequisites
+
+Ensure the following tools are installed on your workstation:
+
+```bash
+# 1. Rust and wasm32 compilation target
+rustup target add wasm32-unknown-unknown
+
+# 2. wasm-bindgen CLI matching your wasm-bindgen crate version
+cargo install wasm-bindgen-cli
+
+# 3. Cloudflare Wrangler CLI (via npm)
+npm install -g wrangler
+```
+
+### Running the Local Dry-Run Script
+
+Run the pre-flight verification script from the root of the repository:
+
+```bash
+./scripts/deploy_dry_run.sh
+```
+
+### Verifying Build Artifacts
+
+Upon successful execution, the script will:
+1. Verify required prerequisites and tool versions.
+2. Compile `crates/zero_client` to `wasm32-unknown-unknown`.
+3. Run `wasm-bindgen` and package static assets into `dist/`.
+4. Validate that `dist/index.html`, `dist/zero_client.js`, and `dist/zero_client_bg.wasm` exist and are non-empty.
+5. Perform a dry-run check of `crates/zero_network/wrangler.toml` configuration using `wrangler deploy --dry-run`.
+
+```
+
 ## FILE: factory.yaml
 ```yaml
 # factory.yaml - Host Project Configuration for Agentic Software Factory
@@ -436,6 +2928,7458 @@ commands:
 documentation:
   guidelines: "README.md"
   architecture: "openspec/specs/overview.md"
+
+```
+
+## FILE: openspec/changes/archive/ticket-001/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-001"
+title: "Workspace Architecture, Protocol Envelope & Crypto Primitives"
+state: "PLANNING"
+roadmap: "serverless-p2p-chat"
+depends_on: []
+created_at: "2026-10-16T21:28:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-001/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/serverless-p2p-chat.md`
+
+## 1. Problem Statement & Objective
+To enable coordinated, type-safe development across the client (`zero_client`) and Cloudflare Worker (`zero_network`), we must establish the root Cargo workspace and a shared protocol crate (`crates/zero_protocol`). This shared crate defines all serialization envelopes, DTOs, error schemas, and core cryptographic primitives (HMAC-SHA256, X25519 key exchange, ChaCha20-Poly1305 symmetric sealing) with target-independent compatibility (`wasm32-unknown-unknown` and native).
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - Top-level `Cargo.toml` establishing a multi-crate workspace (`zero_client`, `zero_network`, `crates/zero_protocol`).
+  - `crates/zero_protocol`: Shared message data transfer objects (`SdpOffer`, `SdpAnswer`, `InviteToken`, `DropPayload`, `ChatMessage`, `MeshRelayMessage`).
+  - Cryptographic primitive modules: `hmac_sha256` token computation/verification, `x25519` keypair generation, and `chacha20poly1305` AEAD encryption/decryption helpers.
+  - Serialization helpers with `serde` and `serde_json`.
+  - Comprehensive unit test suite running natively via `cargo test`.
+- **Out-of-Scope**:
+  - WebRTC browser APIs and DOM manipulation (deferred to `ticket-002`).
+  - Cloudflare Worker runtime handlers (deferred to `ticket-003`).
+
+## 3. Requirements & Acceptance Criteria
+- [ ] **REQ-001.1**: Root Cargo workspace is cleanly configured and `cargo check --workspace` succeeds.
+  - *Verification*: `cargo check --workspace` compiles cleanly without missing crate errors.
+- [ ] **REQ-001.2**: Data transfer objects (DTOs) for signaling envelopes are defined with Serde `Serialize` and `Deserialize`.
+  - *Verification*: Unit tests verify bidirectional JSON serialization of `InvitePayload`, `DropPayload`, and `ChatMessage`.
+- [ ] **REQ-001.3**: Cryptographic token generation computes `HMAC_SHA256(host_secret, invite_uuid)` identically across native and WASM targets.
+  - *Verification*: Unit tests assert HMAC generation and constant-time verification against known test vectors.
+- [ ] **REQ-001.4**: Symmetric payload sealing with `ChaCha20Poly1305` produces verifiable ciphertexts with ephemeral nonces.
+  - *Verification*: Roundtrip encrypt-then-decrypt test confirms plaintext integrity and tampering detection.
+
+## 4. Architectural Design & Impacted Modules
+- **New Modules / Files**:
+  - `Cargo.toml` (workspace manifest)
+  - `crates/zero_protocol/Cargo.toml`
+  - `crates/zero_protocol/src/lib.rs`
+  - `crates/zero_protocol/src/crypto.rs`
+  - `crates/zero_protocol/src/envelope.rs`
+  - `crates/zero_protocol/tests/protocol_tests.rs`
+- **Modified Modules**:
+  - `.gitignore` (ensure target directories and test artifacts are excluded)
+  - `factory.yaml`
+
+## 5. Decomposition Plan (Architect Briefs)
+
+| Batch | Brief ID | Role | Target Thinking Level | Description | Files Scope | Dependencies |
+| :---: | :--- | :--- | :---: | :--- | :--- | :--- |
+| **1** | `brief-01-workspace-schemas` | Implementer | `LOW` | Workspace manifest and shared DTO envelope schemas | `Cargo.toml`, `crates/zero_protocol/Cargo.toml`, `crates/zero_protocol/src/envelope.rs`, `crates/zero_protocol/src/lib.rs` | None (Parallel) |
+| **1** | `brief-02-crypto-primitives` | Implementer | `LOW` | Cryptographic primitives (HMAC-SHA256, X25519, ChaCha20-Poly1305) | `crates/zero_protocol/src/crypto.rs` | None (Parallel) |
+| **2** | `brief-val-tests` | Validator | `LOW` | Protocol serialization and crypto test suite | `crates/zero_protocol/tests/*` | Batch 1 |
+| **2** | `brief-val-lint` | Validator | `LOW` | Workspace clippy and format audit | Full repository | Batch 1 |
+| **3** | `brief-rev` | Reviewer | `HIGH` | Architectural audit and cryptographic soundness review | Candidate diff | Batch 2 |
+
+```
+
+## FILE: openspec/changes/archive/ticket-002/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-002"
+title: "WebRTC PeerConnection & DataChannel WASM Engine"
+state: "PLANNING"
+roadmap: "serverless-p2p-chat"
+depends_on: ["ticket-001"]
+created_at: "2026-10-16T21:28:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-002/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/serverless-p2p-chat.md`
+
+## 1. Problem Statement & Objective
+In order to achieve serverless browser-to-browser communication, we must implement a pure Rust WebAssembly engine (`zero_client`) that controls browser WebRTC primitives via `web-sys`. This engine manages the lifecycle of `RtcPeerConnection` and `RtcDataChannel`, handles SDP offer/answer generation and ICE candidate gathering, and provides an event-driven callback interface for sending and receiving binary and text messages. A local test harness allows validating bidirectional data transfer manually via copy-paste SDP.
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/Cargo.toml` configured for `wasm32-unknown-unknown` with `wasm-bindgen`, `web-sys` (features: `RtcPeerConnection`, `RtcDataChannel`, `RtcSessionDescriptionInit`, `RtcIceCandidateInit`, `RtcConfiguration`, etc.), and `zero_protocol`.
+  - Rust WebRTC connection manager (`webrtc.rs`) managing peer lifecycle (Connecting, Open, Closing, Closed).
+  - SDP Offer generation with bundled ICE candidates (Trickle ICE disabled or buffered until candidate gathering finishes).
+  - Remote SDP Answer ingestion and DataChannel event dispatching.
+  - Test harness (`zero_client/test_harness.html` and lightweight JS runner) allowing manual exchange of SDP strings between two browser tabs on `localhost` to confirm bidirectional DataChannel flow.
+- **Out-of-Scope**:
+  - Cloudflare Worker dead-drop signaling (handled by `ticket-003`).
+  - Automated URL `#fragment` parsing (deferred to `ticket-004`).
+  - Multi-peer gossip mesh routing (deferred to `ticket-006`).
+
+## 3. Requirements & Acceptance Criteria
+- [ ] **REQ-002.1**: `zero_client` compiles cleanly to `wasm32-unknown-unknown` via `cargo build -p zero_client --target wasm32-unknown-unknown` (or native test stub).
+  - *Verification*: Target build succeeds without compiler errors.
+- [ ] **REQ-002.2**: `create_offer()` initiates an `RtcPeerConnection`, creates an ordered, reliable `RTCDataChannel` labeled `"zero-chat"`, and gathers local ICE candidates into a self-contained SDP string.
+  - *Verification*: Generated SDP payload contains both offer description and candidate lines.
+- [ ] **REQ-002.3**: `accept_offer_and_create_answer()` accepts an incoming SDP Offer string, creates an answer with candidates, and resolves an answer SDP string.
+  - *Verification*: Remote description is successfully applied without throwing DOMException.
+- [ ] **REQ-002.4**: Bidirectional data exchange over `RTCDataChannel` triggers message callbacks for UTF-8 and binary packets.
+  - *Verification*: Manual localhost verification harness confirms sending `"hello from Alice"` receives `"hello from Bob"` over direct P2P.
+
+## 4. Architectural Design & Impacted Modules
+- **New Modules / Files**:
+  - `zero_client/Cargo.toml`
+  - `zero_client/src/lib.rs`
+  - `zero_client/src/webrtc.rs`
+  - `zero_client/test_harness.html`
+  - `zero_client/tests/webrtc_tests.rs`
+- **Modified Modules**:
+  - `Cargo.toml` (workspace members)
+
+## 5. Decomposition Plan (Architect Briefs)
+
+| Batch | Brief ID | Role | Target Thinking Level | Description | Files Scope | Dependencies |
+| :---: | :--- | :--- | :---: | :--- | :--- | :--- |
+| **1** | `brief-01-webrtc-lifecycle` | Implementer | `HIGH` | Rust WASM WebRTC lifecycle, PeerConnection, and DataChannel management | `zero_client/Cargo.toml`, `zero_client/src/webrtc.rs`, `zero_client/src/lib.rs` | None |
+| **1** | `brief-02-test-harness` | Implementer | `LOW` | Minimalist localhost SDP test harness HTML & JS glue | `zero_client/test_harness.html` | None |
+| **2** | `brief-val-webrtc` | Validator | `MEDIUM` | Unit tests & compilation verification for WASM target | `zero_client/tests/*` | Batch 1 |
+| **2** | `brief-val-lint` | Validator | `LOW` | Clippy and formatting checks across `zero_client` | `zero_client/*` | Batch 1 |
+| **3** | `brief-rev` | Reviewer | `HIGH` | Architectural audit, memory leak avoidance, and WebRTC state machine review | Candidate diff | Batch 2 |
+
+```
+
+## FILE: openspec/changes/archive/ticket-003/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-003"
+title: "Cloudflare Worker Hibernating Durable Object Dead-Drop"
+state: "PLANNING"
+roadmap: "serverless-p2p-chat"
+depends_on: ["ticket-001"]
+created_at: "2026-10-16T21:28:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-003/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/serverless-p2p-chat.md`
+
+## 1. Problem Statement & Objective
+To enable an ephemeral, zero-cost initial connection handshake without running persistent signaling infrastructure, we must implement a Rust Cloudflare Worker utilizing a Durable Object with WebSocket Hibernation (`zero_network`). The host connects over WebSocket and the DO sleeps with zero duration billing. Joining peers drop their encrypted SDP Answer via an HTTP `POST` route. The DO awakens for ~3 milliseconds, validates the HMAC-SHA256 token against the host's secret saved via `serialize_attachment()`, burns the single-use invite UUID, pipes the answer down the host's WebSocket, and immediately returns to hibernation.
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_network/Cargo.toml` configured with `worker` (`workers-rs`) and `zero_protocol`.
+  - `zero_network/wrangler.toml` configuring the Worker and Durable Object bindings.
+  - Durable Object class with WebSocket Hibernation API:
+    - Host endpoint (`/host/:do_id`): Upgrades to WebSocket, extracts 32-byte `host_secret` from header/auth query, attaches it to the socket via `serialize_attachment()`, and hibernates.
+    - Dead-drop endpoint (`POST /drop/:do_id/:invite_uuid`): Extracts bearer verification token, checks HMAC match against the host's secret, verifies the UUID is not in `burned_uuids`, appends the UUID to the burned set, forwards the encrypted SDP Answer down the host's WebSocket, and returns 200 OK.
+  - Ephemeral in-memory burn tracking (purged automatically when DO memory unloads; zero persistent DB storage).
+  - Unit and integration tests for route handlers and HMAC validation logic.
+- **Out-of-Scope**:
+  - Persistent database or KV storage (in-memory DO state only).
+  - Client-side DOM / WebRTC logic (handled in `ticket-002` and `ticket-004`).
+
+## 3. Requirements & Acceptance Criteria
+- [ ] **REQ-003.1**: `zero_network` compiles with `workers-rs` target.
+  - *Verification*: `cargo check -p zero_network` compiles without error.
+- [ ] **REQ-003.2**: WebSocket upgrade on `/host/:do_id` attaches the `host_secret` and enables DO hibernation.
+  - *Verification*: Handler accepts valid 32-byte hex or base64 secret and returns 101 Switching Protocols.
+- [ ] **REQ-003.3**: Invalid or tampered tokens on `POST /drop/:do_id/:invite_uuid` are rejected with HTTP 403 Forbidden.
+  - *Verification*: Tests verify that mismatched HMAC signatures fail validation.
+- [ ] **REQ-003.4**: Replayed invite UUIDs are rejected with HTTP 410 Gone / 409 Conflict.
+  - *Verification*: Repeated drop submission with an already-burned UUID fails on second attempt.
+- [ ] **REQ-003.5**: Valid drop payload is piped directly to the host's hibernating WebSocket.
+  - *Verification*: Mock test confirms WebSocket receives the serialized answer payload.
+
+## 4. Architectural Design & Impacted Modules
+- **New Modules / Files**:
+  - `zero_network/Cargo.toml`
+  - `zero_network/wrangler.toml`
+  - `zero_network/src/lib.rs`
+  - `zero_network/src/durable_object.rs`
+  - `zero_network/src/handlers.rs`
+  - `zero_network/tests/network_tests.rs`
+- **Modified Modules**:
+  - `Cargo.toml` (workspace members)
+
+## 5. Decomposition Plan (Architect Briefs)
+
+| Batch | Brief ID | Role | Target Thinking Level | Description | Files Scope | Dependencies |
+| :---: | :--- | :--- | :---: | :--- | :--- | :--- |
+| **1** | `brief-01-worker-do-hibernation` | Implementer | `HIGH` | Durable Object WebSocket hibernation and attachment serialization | `zero_network/Cargo.toml`, `zero_network/wrangler.toml`, `zero_network/src/durable_object.rs`, `zero_network/src/lib.rs` | None |
+| **1** | `brief-02-dead-drop-route` | Implementer | `MEDIUM` | Dead-drop HTTP POST endpoint, HMAC validation, and invite burning | `zero_network/src/handlers.rs` | None |
+| **2** | `brief-val-network` | Validator | `MEDIUM` | Automated testing for HMAC checks and drop forwarding | `zero_network/tests/*` | Batch 1 |
+| **2** | `brief-val-lint` | Validator | `LOW` | Clippy and formatting audit across `zero_network` | `zero_network/*` | Batch 1 |
+| **3** | `brief-rev` | Reviewer | `HIGH` | Security audit (HMAC timing resistance, DoS resilience, zero-storage invariant) | Candidate diff | Batch 2 |
+
+```
+
+## FILE: openspec/changes/archive/ticket-004/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-004"
+title: "Stateless HMAC Invite Generator & URL Fragment Auto-Drop Joiner"
+state: "PLANNING"
+roadmap: "serverless-p2p-chat"
+depends_on: ["ticket-002", "ticket-003"]
+created_at: "2026-10-16T21:28:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-004/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/serverless-p2p-chat.md`
+
+## 1. Problem Statement & Objective
+Wire the end-to-end Pattern B Stateless HMAC handshake into the client application. The host's client generates a single-use guest keypair, an `Invite_UUID`, and computes the verification token `Token = HMAC_SHA256(host_secret, Invite_UUID)`. It bundles the SDP Offer, `Invite_UUID`, `Token`, and guest public key into a URL `#fragment` link. When a joiner clicks the link, the joiner's browser automatically reads the `#fragment` (which never reaches any server), generates its SDP Answer, signs it, and dispatches a background HTTP `POST` to the dead-drop endpoint `/drop/{DO_ID}/{Invite_UUID}`. The host receives the answer via WebSocket, and the WebRTC DataChannel immediately establishes directly between peers without user intervention.
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/src/invite.rs`: Offline invite generation, Base64URL fragment packing and unpacking.
+  - `zero_client/src/bootstrap.rs`: Joiner auto-detection of URL `#fragment`, background fetch to `/drop/:do_id/:invite_uuid` using `web-sys::Window::fetch_with_request`, and automated WebRTC answering.
+  - Host WebSocket connection manager to `wss://edge.app/host/{DO_ID}` for receiving joiner answers and completing the WebRTC peer connection.
+  - Ephemeral state transition: once the WebRTC DataChannel transitions to `Open`, the signaling WebSocket is immediately closed, severing all edge connections.
+  - Browser-level tests and mock integration tests for the fragment parsing and dispatch pipeline.
+- **Out-of-Scope**:
+  - Final chat UI layout (handled in `ticket-005`).
+  - Gossip mesh forwarding between multiple peers (deferred to `ticket-006`).
+
+## 3. Requirements & Acceptance Criteria
+- [ ] **REQ-004.1**: Host creates offline invite bundle and produces a valid shareable URL `#fragment`.
+  - *Verification*: Generated URL contains `#payload=` with valid Base64URL-encoded JSON holding `invite_uuid`, `token`, `sdp_offer`, and guest public key.
+- [ ] **REQ-004.2**: Client parses `#fragment` on page load without sending hash parameters in HTTP request headers.
+  - *Verification*: Unit tests verify `window.location().hash()` extraction and decoding.
+- [ ] **REQ-004.3**: Joiner client automatically creates an SDP Answer and dispatches the background HTTP `POST` to the dead-drop endpoint.
+  - *Verification*: Drop request is fired with correct bearer token and JSON payload.
+- [ ] **REQ-004.4**: Host receives the dropped answer over the hibernating WebSocket and completes the WebRTC handshake.
+  - *Verification*: DataChannel state transitions to `Open`.
+- [ ] **REQ-004.5**: Signaling WebSocket on host is closed immediately upon DataChannel `Open` confirmation.
+  - *Verification*: Zero active edge sockets remain after P2P channel establishment.
+
+## 4. Architectural Design & Impacted Modules
+- **New Modules / Files**:
+  - `zero_client/src/invite.rs`
+  - `zero_client/src/bootstrap.rs`
+  - `zero_client/tests/invite_tests.rs`
+- **Modified Modules**:
+  - `zero_client/src/lib.rs`
+  - `zero_client/src/webrtc.rs`
+
+## 5. Decomposition Plan (Architect Briefs)
+
+| Batch | Brief ID | Role | Target Thinking Level | Description | Files Scope | Dependencies |
+| :---: | :--- | :--- | :---: | :--- | :--- | :--- |
+| **1** | `brief-01-invite-generator` | Implementer | `MEDIUM` | Offline invite generation, URL hash formatting, and token calculation | `zero_client/src/invite.rs`, `zero_client/src/lib.rs` | None |
+| **1** | `brief-02-joiner-autodrop` | Implementer | `MEDIUM` | Hash detection, background HTTP drop fetch, and answer dispatch | `zero_client/src/bootstrap.rs`, `zero_client/src/webrtc.rs` | None |
+| **2** | `brief-val-bootstrap` | Validator | `LOW` | End-to-end token verification and fragment parsing tests | `zero_client/tests/*` | Batch 1 |
+| **2** | `brief-val-lint` | Validator | `LOW` | Linting and code formatting audit | `zero_client/*` | Batch 1 |
+| **3** | `brief-rev` | Reviewer | `HIGH` | Architectural audit for edge severance and zero-footprint lifecycle | Candidate diff | Batch 2 |
+
+```
+
+## FILE: openspec/changes/archive/ticket-005/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-005"
+title: "Ephemeral Chat UI, Cryptographic Payload Sealing & E2E Validation"
+state: "PLANNING"
+roadmap: "serverless-p2p-chat"
+depends_on: ["ticket-004"]
+created_at: "2026-10-16T21:28:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-005/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/serverless-p2p-chat.md`
+
+## 1. Problem Statement & Objective
+Once direct WebRTC DataChannels are established, we must provide users with an intuitive, aesthetically rich, and strictly zero-footprint real-time chat interface. All message payloads flowing across the DataChannel must be cryptographically sealed using ChaCha20-Poly1305 with keys derived from the initial X25519 key exchange. The application enforces zero client-side persistence: closing the tab permanently erases all session keys, message history, and DOM elements, leaving zero forensic trace. Comprehensive end-to-end integration tests validate the entire flow.
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/src/ui.rs`: Responsive web chat interface manipulating the DOM via `web-sys` (status header showing P2P snap, encrypted chat feed, auto-expanding message input, copyable invite link button).
+  - Styling in `zero_client/style.css`: Clean, modern dark mode / minimalist aesthetic (glassmorphic cards, subtle micro-animations, clear cryptographic status indicators).
+  - `zero_client/src/crypto.rs`: Per-message symmetric payload sealing and authentication (X25519 shared secret derivation + ChaCha20-Poly1305 AEAD).
+  - Memory cleanliness audit: Zero usage of `localStorage`, `sessionStorage`, `indexedDB`, or service worker caches.
+  - End-to-end integration tests (`tests/e2e_handshake.rs`): Automated simulation validating invite generation, mock dead-drop, P2P channel snap, and authenticated message roundtrip.
+- **Out-of-Scope**:
+  - Multi-peer gossip routing (deferred to `ticket-006`).
+  - Native mobile app wrappers (web browser target only).
+
+## 3. Requirements & Acceptance Criteria
+- [ ] **REQ-005.1**: Ephemeral chat interface renders connection status, invite creation modal/button, and real-time message stream.
+  - *Verification*: UI renders cleanly without JavaScript console errors in modern browsers.
+- [ ] **REQ-005.2**: Outgoing chat messages are encrypted with ChaCha20-Poly1305 before transmission over `RTCDataChannel`.
+  - *Verification*: Raw packet inspection confirms payload is high-entropy ciphertext with accompanying 12-byte nonce and 16-byte tag.
+- [ ] **REQ-005.3**: Incoming packets are authenticated and decrypted; tampered or unauthenticated packets are dropped with a visual alert.
+  - *Verification*: Manipulated ciphertexts trigger authentication failure without crashing the client.
+- [ ] **REQ-005.4**: Zero persistence invariant is verified.
+  - *Verification*: Automated audit confirms `localStorage`, `sessionStorage`, and `indexedDB` remain empty throughout entire chat lifecycle.
+- [ ] **REQ-005.5**: Automated end-to-end integration test passes in CI/test runner.
+  - *Verification*: `cargo test --test e2e_handshake` completes successfully.
+
+## 4. Architectural Design & Impacted Modules
+- **New Modules / Files**:
+  - `zero_client/src/ui.rs`
+  - `zero_client/src/crypto.rs`
+  - `zero_client/index.html`
+  - `zero_client/style.css`
+  - `tests/e2e_handshake.rs`
+- **Modified Modules**:
+  - `zero_client/src/lib.rs`
+  - `zero_client/Cargo.toml`
+
+## 5. Decomposition Plan (Architect Briefs)
+
+| Batch | Brief ID | Role | Target Thinking Level | Description | Files Scope | Dependencies |
+| :---: | :--- | :--- | :---: | :--- | :--- | :--- |
+| **1** | `brief-01-payload-sealing` | Implementer | `MEDIUM` | In-band X25519 key derivation and ChaCha20-Poly1305 packet sealing | `zero_client/src/crypto.rs`, `zero_client/src/lib.rs` | None |
+| **1** | `brief-02-ephemeral-ui` | Implementer | `MEDIUM` | Ephemeral DOM chat interface, glassmorphic styles, and event binding | `zero_client/src/ui.rs`, `zero_client/index.html`, `zero_client/style.css` | None |
+| **2** | `brief-val-e2e` | Validator | `MEDIUM` | End-to-end integration test harness and zero-persistence verification | `tests/e2e_handshake.rs` | Batch 1 |
+| **2** | `brief-val-lint` | Validator | `LOW` | Clippy, format, and static DOM security audit | Full repository | Batch 1 |
+| **3** | `brief-rev` | Reviewer | `HIGH` | Cryptographic audit, zero-footprint verification, and UX polish review | Candidate diff | Batch 2 |
+
+```
+
+## FILE: openspec/changes/archive/ticket-006/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-006"
+title: "In-Band Gossip Signaling Relay & Multi-Peer Mesh Topology"
+state: "PLANNING"
+roadmap: "serverless-p2p-chat"
+depends_on: ["ticket-005"]
+created_at: "2026-10-16T21:28:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-006/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/serverless-p2p-chat.md`
+
+## 1. Problem Statement & Objective
+While the initial peer joins via a single dead-drop `POST` to the host (Alice), multi-peer scaling must not incur additional cloud edge requests. To enable arbitrary multi-participant chat rooms, Alice's browser acts as a local in-band signaling bridge, routing encrypted WebRTC SDP offers and answers between existing data channels (`Channel_AB`, `Channel_AC`). This allows Charlie and Bob to establish a direct P2P mesh connection (`Channel_BC`) with zero cloud signaling. The client dynamically maintains an N-peer mesh, broadcasting chat messages across direct links and handling peer disconnects gracefully.
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/src/mesh.rs`: Multi-peer topology manager tracking connected peers (`PeerId` $\rightarrow$ `RTCDataChannel`).
+  - In-band signaling relay protocol: Encapsulating secondary SDP offers/answers and ICE candidates in encrypted DataChannel frames routed via intermediate peers.
+  - Mesh snapping algorithm: When Charlie connects to Alice, Alice informs Bob of Charlie's peer public key; Bob and Charlie exchange offers/answers via Alice to establish a direct `Channel_BC` data channel.
+  - Broadcast flooding & deduplication: Message envelope includes a unique `Message_UUID` and TTL counter to prevent broadcast loops across the mesh.
+  - Peer presence lifecycle: Handling peer disconnects and re-configuring active routing tables.
+  - Multi-node simulation test verifying 3+ peer mesh formation without edge hits.
+- **Out-of-Scope**:
+  - TURN relay fallback (pure direct UDP DataChannel connectivity assumed).
+  - Heavy distributed consensus algorithms (ephemeral gossip broadcast is sufficient).
+
+## 3. Requirements & Acceptance Criteria
+- [ ] **REQ-006.1**: Host bridges signaling messages between existing peers without inspecting or decrypting their end-to-end payloads.
+  - *Verification*: Relay envelope forwards encrypted sub-payloads opaque to the bridge.
+- [ ] **REQ-006.2**: Third participant (Charlie) establishes direct `Channel_BC` data channel with Bob via Alice's in-band bridge without any cloud edge requests.
+  - *Verification*: Network log inspection confirms zero outbound HTTP/WebSocket requests during Charlie-Bob snap.
+- [ ] **REQ-006.3**: Mesh broadcast delivers chat messages to all connected participants.
+  - *Verification*: Simulation confirms a message sent by Bob appears on Alice's and Charlie's feeds.
+- [ ] **REQ-006.4**: Duplicate message broadcast loops are detected and suppressed via message ID caches.
+  - *Verification*: Flooding test asserts each message is displayed exactly once per peer.
+- [ ] **REQ-006.5**: Disconnection of a peer is detected, tearing down associated channels and updating the UI peer list.
+  - *Verification*: Channel close event cleans up peer entry from routing table and UI.
+
+## 4. Architectural Design & Impacted Modules
+- **New Modules / Files**:
+  - `zero_client/src/mesh.rs`
+  - `tests/mesh_simulation_test.rs`
+- **Modified Modules**:
+  - `zero_client/src/webrtc.rs`
+  - `zero_client/src/ui.rs`
+  - `zero_client/src/lib.rs`
+  - `crates/zero_protocol/src/envelope.rs`
+
+## 5. Decomposition Plan (Architect Briefs)
+
+| Batch | Brief ID | Role | Target Thinking Level | Description | Files Scope | Dependencies |
+| :---: | :--- | :--- | :---: | :--- | :--- | :--- |
+| **1** | `brief-01-mesh-topology` | Implementer | `HIGH` | N-peer connection pool, in-band SDP relay routing, and direct channel snap | `zero_client/src/mesh.rs`, `zero_client/src/webrtc.rs` | None |
+| **1** | `brief-02-mesh-broadcast-ui` | Implementer | `MEDIUM` | Deduplicating broadcast flooding, TTL enforcement, and multi-peer UI indicators | `zero_client/src/ui.rs`, `crates/zero_protocol/src/envelope.rs` | None |
+| **2** | `brief-val-mesh-sim` | Validator | `HIGH` | 3+ peer in-band mesh simulation and loop prevention test | `tests/mesh_simulation_test.rs` | Batch 1 |
+| **2** | `brief-val-lint` | Validator | `LOW` | Clippy and formatting audit across mesh implementation | Full repository | Batch 1 |
+| **3** | `brief-rev` | Reviewer | `HIGH` | Distributed routing audit, deadlock prevention, and connection lifecycle review | Candidate diff | Batch 2 |
+
+```
+
+## FILE: openspec/changes/archive/ticket-007/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-007"
+title: "CI/CD Automation: GitHub Actions & Cloudflare Deployment Pipeline"
+state: "PLANNING"
+roadmap: "serverless-p2p-chat"
+depends_on: ["ticket-003", "ticket-005"]
+created_at: "2026-10-16T21:35:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-007/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/serverless-p2p-chat.md`
+
+## 1. Problem Statement & Objective
+To ensure cross-target compilation integrity and automated production delivery, we must establish a CI/CD automation pipeline using GitHub Actions. CI verifies code formatting, strict clippy linter passes, multi-crate workspace test execution, and target-specific builds (`wasm32-unknown-unknown` for `zero_client`). CD automates zero-downtime deployment: publishing the `zero_network` Cloudflare Worker & Durable Object via Wrangler, and deploying the compiled `zero_client` static WASM bundle to Cloudflare Pages.
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `.github/workflows/ci.yml`:
+    - Rust toolchain setup with `wasm32-unknown-unknown` target.
+    - Code quality checks: `cargo fmt --check` and `cargo clippy --workspace -- -D warnings`.
+    - Native test suite execution: `cargo test --workspace`.
+    - Client WASM build validation: `cargo build -p zero_client --target wasm32-unknown-unknown`.
+  - `.github/workflows/deploy.yml`:
+    - Automated deployment triggered on push to `main` branch or version tags.
+    - Cloudflare Worker deployment: executes `wrangler deploy` in `zero_network/` utilizing `cloudflare/wrangler-action`.
+    - Cloudflare Pages deployment: compiles `zero_client` via `wasm-bindgen` and deploys static bundle (`index.html`, `style.css`, generated `.wasm` and `.js`) using `wrangler pages deploy`.
+  - Secrets documentation: `docs/deployment.md` outlining setup of `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
+  - Local validation script: `scripts/deploy_dry_run.sh` allowing developers to verify builds locally before pushing.
+- **Out-of-Scope**:
+  - End-to-end browser automation in headless browsers inside CI (covered by unit and mock integration tests).
+  - Third-party cloud providers beyond GitHub and Cloudflare.
+
+## 3. Requirements & Acceptance Criteria
+- [ ] **REQ-007.1**: GitHub Actions CI workflow triggers on pull requests and pushes to `main`.
+  - *Verification*: Workflow YAML is syntactically valid and linted with actionlint or schema checker.
+- [ ] **REQ-007.2**: CI enforces zero compiler warnings, zero clippy warnings, and zero test failures across all crates.
+  - *Verification*: Pipeline passes for clean commits and fails if any test or lint rule fails.
+- [ ] **REQ-007.3**: Deployment workflow builds and publishes `zero_network` to Cloudflare using configured secrets.
+  - *Verification*: `deploy.yml` correctly targets the Durable Object bindings declared in `zero_network/wrangler.toml`.
+- [ ] **REQ-007.4**: Deployment workflow builds and publishes the `zero_client` WASM bundle to Cloudflare Pages.
+  - *Verification*: Build artifact directory contains `index.html`, `style.css`, and compiled `.wasm`/`.js` artifacts ready for static hosting.
+- [ ] **REQ-007.5**: Deployment instructions in `docs/deployment.md` document all required GitHub repository secrets and Cloudflare dashboard configurations.
+  - *Verification*: Documentation contains clear step-by-step setup instructions.
+
+## 4. Architectural Design & Impacted Modules
+- **New Modules / Files**:
+  - `.github/workflows/ci.yml`
+  - `.github/workflows/deploy.yml`
+  - `docs/deployment.md`
+  - `scripts/deploy_dry_run.sh`
+- **Modified Modules**:
+  - `zero_network/wrangler.toml` (ensure production environment configurations match GitHub Actions action inputs)
+
+## 5. Decomposition Plan (Architect Briefs)
+
+| Batch | Brief ID | Role | Target Thinking Level | Description | Files Scope | Dependencies |
+| :---: | :--- | :--- | :---: | :--- | :--- | :--- |
+| **1** | `brief-01-ci-workflow` | Implementer | `LOW` | GitHub Actions CI workflow for fmt, clippy, test, and WASM compilation | `.github/workflows/ci.yml` | None (Parallel) |
+| **1** | `brief-02-deploy-workflow` | Implementer | `LOW` | GitHub Actions deploy workflow for Worker and Pages + dry-run script | `.github/workflows/deploy.yml`, `scripts/deploy_dry_run.sh` | None (Parallel) |
+| **1** | `brief-03-deploy-docs` | Implementer | `LOW` | Deployment setup and secrets documentation | `docs/deployment.md` | None (Parallel) |
+| **2** | `brief-val-workflow-lint` | Validator | `LOW` | Validate workflow syntax, shell scripts, and workspace compatibility | Worktree repo | Batch 1 |
+| **3** | `brief-rev` | Reviewer | `HIGH` | Security audit (secret handling, least-privilege tokens, build reproducibility) | Candidate diff | Batch 2 |
+
+```
+
+## FILE: openspec/changes/archive/ticket-008/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-008"
+title: "UI Simplification: Header Streamlining, P2P Established Badge & Banner Cleanup"
+state: "IMPLEMENTED"
+roadmap: "serverless-p2p-chat"
+depends_on: ["ticket-007"]
+created_at: "2026-10-17T13:42:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-008/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/serverless-p2p-chat.md`
+
+## 1. Problem Statement & Objective
+Following the production deployment of ZeroChat, initial user testing indicates that the web interface contains developer-focused diagnostics and superfluous visual clutter that detracts from a clean, modern user experience. Specifically, the Diagnostics link, the technical "P2P Direct (Edge Severed)" badge, the redundant "Join with Link" input controls, the static `[ZERO PERSISTENCE]` banner card, and boilerplate headers ("Direct P2P Room") should be removed or refined. The peer connection indicator should be streamlined to "P2P Established".
+
+The objective of this task is to strip away all unnecessary visual noise, refine the header and room creation controls, and ensure that joining via URL fragments (`#payload=...`) continues to work seamlessly with zero cognitive friction.
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/index.html`:
+    - Remove the "Diagnostics" button/link.
+    - Remove the "P2P Direct (Edge Severed)" / "Disconnected" status pill from the header.
+    - Update peer status pill wording to "P2P Established" (`🟢 P2P Established`).
+    - Remove the static `[ZERO PERSISTENCE]` alert banner from `#messages-container`.
+    - Remove the "Join with Link" toggle button and paste input box completely.
+    - Remove the "Direct P2P Room" title and "Create an ephemeral room or join with an invite link" subtitle.
+  - `.github/workflows/deploy.yml` & `scripts/deploy_dry_run.sh`:
+    - Clean up `test_harness.html` from deployment packaging artifacts.
+  - Test Suite:
+    - Ensure all 91 unit and integration tests continue to pass without warnings or regressions.
+- **Out-of-Scope**:
+  - WebRTC signaling backend (`zero_network`).
+  - Wire protocol envelopes (`zero_protocol`).
+  - Cryptographic algorithms (`crypto.rs`).
+
+## 3. Requirements & Acceptance Criteria
+- [x] **REQ-008.1**: The "Diagnostics" button is completely removed from the user interface.
+  - *Verification*: Inspect DOM in browser to ensure no diagnostics link or button exists.
+- [x] **REQ-008.2**: The "P2P Direct (Edge Severed)" status indicator pill is removed from the header.
+  - *Verification*: Header contains only brand logo/title, peer counter, active peer badge, and "Burn Session" button.
+- [x] **REQ-008.3**: When peers connect over WebRTC DataChannel, the badge displays "🟢 P2P Established".
+  - *Verification*: Connected state renders `<span class="peer-pill">🟢 P2P Established</span>`.
+- [x] **REQ-008.4**: The static `[ZERO PERSISTENCE]` alert card is completely removed from the messages feed.
+  - *Verification*: Message feed starts empty, ready for real-time chat messages.
+- [x] **REQ-008.5**: The "Join with Link" toggle button and input group are completely removed.
+  - *Verification*: Room controls contain only "✨ Create Private Room" (and the generated copyable link once created). Automatic URL fragment joining remains fully functional when loading or navigating to `#payload=...`.
+- [x] **REQ-008.6**: The "Direct P2P Room" header title and descriptive subtitle are completely removed.
+  - *Verification*: The invite/room section is compact and minimal.
+- [x] **REQ-008.7**: All workspace tests pass and compilation remains warning-free.
+  - *Verification*: `cargo test --workspace` passes (91/91 tests).
+
+## 4. Architectural Design & Impacted Modules
+- **Modified Modules**:
+  - `zero_client/index.html`: Streamlined layout and simplified event handling.
+  - `.github/workflows/deploy.yml`: Remove `test_harness.html` static bundle step.
+  - `scripts/deploy_dry_run.sh`: Remove `test_harness.html` bundle step.
+
+## 5. Decomposition Plan (Architect Briefs)
+
+| Batch | Brief ID | Role | Target Thinking Level | Description | Files Scope | Dependencies |
+| :---: | :--- | :--- | :---: | :--- | :--- | :--- |
+| **1** | `brief-01-ui-streamline` | Implementer | `LOW` | Remove diagnostics, status pill, zero persistence card, join-with-link input, and boilerplate text. Update badge to 'P2P Established'. | `zero_client/index.html`, `.github/workflows/deploy.yml`, `scripts/deploy_dry_run.sh` | None |
+| **2** | `brief-val-tests` | Validator | `LOW` | Validate full workspace test suite and clippy linters | Workspace | Batch 1 |
+| **3** | `brief-rev` | Reviewer | `LOW` | Verify UI cleanliness, zero regressions, and user specification compliance | Candidate diff | Batch 2 |
+
+```
+
+## FILE: openspec/changes/archive/ticket-009/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-009"
+title: "UI Polish: Copy Icon Button, Empty Section Elimination, Cursor & Hover Refinements"
+state: "IMPLEMENTED"
+roadmap: "serverless-p2p-chat"
+depends_on: ["ticket-008"]
+created_at: "2026-10-17T15:18:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-009/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/serverless-p2p-chat.md`
+
+## 1. Problem Statement & Objective
+Following the UI cleanup in ticket-008, further user testing revealed several minor visual artifacts and interaction rough edges:
+1. An explicit text banner ("✓ Copied invite link to clipboard!...") displays beneath the invite input when copying.
+2. The copy link control is a text button ("Copy Link") rather than a sleek icon button.
+3. The system chat message announces "Room created! Copy the invite link above and open it in a second window/tab to connect directly.", which should be concise: "Secure room created."
+4. When room controls are hidden (e.g. for a joiner or once a session is established), an empty glassmorphic capsule section remains visible underneath the top header bar.
+5. The "P2P Established" badge changes background and border color on hover.
+6. Hovering over the brand elements ("0", "ZeroChat", "EPHEMERAL P2P") displays a text selection I-beam cursor rather than the standard pointer/arrow cursor.
+
+The objective of this task is to address these 6 UI polish items, ensuring a clean, tactile, and professional aesthetic across all interaction states.
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/index.html`:
+    - Remove `#copy-feedback` text banner and adjust JS copy handler to provide icon-based feedback.
+    - Replace "Copy Link" text button with an SVG copy icon button.
+    - Update room creation system message to "Secure room created."
+    - Automatically hide `#invite-section` when not populated or during connected/joiner states.
+  - `zero_client/style.css`:
+    - Remove hover color changes from `.peer-pill`.
+    - Apply `user-select: none; cursor: default;` to `.header-brand`, `.brand-icon`, `.brand-title`, and `.brand-tagline`.
+    - Add `.btn-icon` styles and CSS empty/hidden guard for `.invite-panel`.
+  - Test Suite:
+    - Ensure all 91 unit and integration tests continue to pass without warnings.
+- **Out-of-Scope**:
+  - Cryptography, WebRTC signaling, network envelope protocol.
+
+## 3. Requirements & Acceptance Criteria
+- [x] **REQ-009.1**: The "Copied invite link..." text banner is completely removed.
+  - *Verification*: Clicking copy produces no separate text element under the input row.
+- [x] **REQ-009.2**: The copy link button uses a sleek copy icon (SVG) instead of "Copy Link" text, and provides visual confirmation (e.g. checkmark icon toggle) upon click.
+  - *Verification*: Copy button renders an icon and transitions briefly on click.
+- [x] **REQ-009.3**: The room creation system message displays "Secure room created."
+  - *Verification*: In host mode, chat bubble text is "Secure room created."
+- [x] **REQ-009.4**: The empty section capsule underneath the top-bar is completely hidden when nothing is populated.
+  - *Verification*: When joiner loads, or when host/peer connects, no empty glass card renders between the header and chat container.
+- [x] **REQ-009.5**: The "P2P Established" badge does not change background or border color on hover, and displays a default cursor.
+  - *Verification*: Hovering over the badge produces no style change.
+- [x] **REQ-009.6**: The brand header elements ("0", "ZeroChat", "EPHEMERAL P2P") do not display an I-beam cursor, rendering the standard arrow cursor instead.
+  - *Verification*: Hovering over header brand text shows `cursor: default`.
+- [x] **REQ-009.7**: Workspace tests pass and quality gates are maintained.
+  - *Verification*: `cargo test --workspace` passes (91/91 tests).
+
+## 4. Architectural Design & Impacted Modules
+- `zero_client/index.html`: Markup and script updates.
+- `zero_client/style.css`: CSS styling and hover/cursor updates.
+
+```
+
+## FILE: openspec/changes/archive/ticket-010/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-010"
+title: "System Message Styling & Lifecycle Events, Deactivated Input Bar States"
+state: "IMPLEMENTED"
+roadmap: "serverless-p2p-chat"
+depends_on: ["ticket-009"]
+created_at: "2026-10-17T15:47:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-010/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/serverless-p2p-chat.md`
+
+## 1. Problem Statement & Objective
+In the current ZeroChat UI, system notifications (such as "Secure room created.") are rendered using standard incoming message bubbles complete with header tags ("SYSTEM"), timestamps, and ChaCha20 cryptographic verification badges. System lifecycle events should instead be rendered as simple, centered, italic text without bubbles or badges. Furthermore, additional lifecycle announcements ("Peer joined.", "Joined room.", "Peer left.") are missing. Lastly, the message input bar and Send button appear identical to their active state even when a P2P session is disconnected/inactive, with hover effects still firing on the disabled Send button.
+
+The objective of this task is to:
+1. Redesign system messages as simple, italic, centered text outside of message bubbles.
+2. Add "Secure room created.", "Peer joined.", "Joined room.", and "Peer left." lifecycle messages.
+3. Visually distinguish the message input and Send button when inactive, disabling hover effects on Send when deactivated.
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/index.html`:
+    - Add `appendSystemMessage(text)` DOM helper.
+    - Emit "Secure room created." on host room creation.
+    - Emit "Joined room." for joiner upon DataChannel open (`st === "open"`).
+    - Emit "Peer joined." for host upon DataChannel open (`st === "open"`).
+    - Emit "Peer left." when DataChannel closes (`st === "closed"`).
+  - `zero_client/style.css`:
+    - Add `.system-message` styling (centered, italic, muted text, no bubble).
+    - Add `.message-input:disabled` styling (muted background, dimmed placeholder, not-allowed cursor).
+    - Add `.btn-send:disabled` and `.btn-send:disabled:hover` styling (flat slate, no shadow, no hover transform, not-allowed cursor).
+  - Workspace test suite:
+    - Ensure all tests pass without regressions.
+- **Out-of-Scope**:
+  - "Left room." requirement (dropped per user alignment).
+  - WebRTC signaling backend (`zero_network`).
+
+## 3. Requirements & Acceptance Criteria
+- [x] **REQ-010.1**: System messages render as simple, italic, centered text without message bubble containers, headers, or crypto badges.
+- [x] **REQ-010.2**: When a room is created, "Secure room created." displays in the updated system message style.
+- [x] **REQ-010.3**: When a peer connects to an existing room, existing participants see "Peer joined." in the updated system message style.
+- [x] **REQ-010.4**: When a joiner connects to a room, the joiner sees "Joined room." in the updated system message style.
+- [x] **REQ-010.5**: When a peer disconnects/leaves, the remaining participant sees "Peer left." in the updated system message style.
+- [x] **REQ-010.6**: The message input bar and Send button visually indicate their deactivated state when not in an active chat, and the Send button has no hover animation or glow when disabled.
+- [x] **REQ-010.7**: All workspace tests pass (`cargo test --workspace`).
+
+## 4. Architectural Design & Impacted Modules
+- `zero_client/index.html`: DOM helper and event bindings.
+- `zero_client/style.css`: CSS styling for system messages and disabled inputs.
+
+```
+
+## FILE: openspec/changes/archive/ticket-011/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-011"
+title: "Dynamic Layout & Room Lifecycle Controls"
+state: "IMPLEMENTED"
+roadmap: "serverless-p2p-chat"
+depends_on: ["ticket-010"]
+created_at: "2026-10-17T16:28:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-011/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/serverless-p2p-chat.md`
+
+## 1. Problem Statement & Objective
+In the current ZeroChat UI:
+1. When not in an active chat, the chat text input bar and send button remain visible (though disabled) at the bottom of the screen.
+2. The "Create Private Room" action is housed in a top panel above the messages container rather than occupying the primary action slot at the bottom.
+3. The top header displays a "0 peers" pill and "Burn Session" button even when disconnected and idle, instead of a clean "Disconnected" status badge.
+4. When in an active room, "Burn Session" remains in the top-right header rather than serving as a full-width action bar located directly beneath the top-bar.
+5. The session burn popup displays an explanatory subtitle ("All ephemeral DOM elements, keys, and session memory have been completely wiped.") and shows an I-beam cursor on hover.
+
+The objective of this task is to implement dynamic layout transitions between idle/disconnected and active chat states, relocate the room creation and destruction controls to full-width containers, and streamline the burn notice presentation.
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/index.html`:
+    - Relocate "Create Private Room" to the bottom action bar in place of the message input bar when disconnected.
+    - Style "Create Private Room" button to span the full width of the container.
+    - Conditionally hide the message input bar when disconnected; display it only when in an active chat (`st === "open"`).
+    - Update header controls: remove "0 Peers" and "Burn Session" when disconnected and display a "Disconnected" badge instead; display peer count when connected.
+    - Relocate "Burn Session" to directly underneath the top-bar, rename wording to "Burn Room", style as a full-width button, and display it only when in active chat.
+    - Remove explanatory subtitle text from the session burn popup (`feed.innerHTML`).
+    - Prevent I-beam cursor on hover over the burn popup card (`cursor: default`, `user-select: none`).
+  - `zero_client/style.css`:
+    - Layout classes for bottom action bars (`.action-bar-bottom`, `.btn-full-width`).
+    - Layout styling for under-header burn bar (`.burn-room-bar`, `.btn-burn-full`).
+    - Styling for the `.status-disconnected` header badge when idle.
+    - Cursor and selection prevention on `.security-alert-card`.
+  - Workspace test suite:
+    - Ensure all unit, integration, and UI tests pass (`cargo test --workspace`).
+- **Out-of-Scope**:
+  - WebRTC signaling protocol modifications in `zero_network`.
+  - Mutual/remote burn messaging across peers (deferred to a separate ticket).
+
+## 3. Requirements & Acceptance Criteria
+- [x] **REQ-011.1 (Dynamic Chat Input Bar)**: The chat text input bar (`#message-form`) is completely hidden from view when the user is not in an active chat, and visible only when connected.
+- [x] **REQ-011.2 (Full-Width Bottom Create Room Bar)**: When not in an active chat, the "Create Private Room" button sits in place of the chat input bar at the bottom and spans the full width of the container.
+- [x] **REQ-011.3 (Header Disconnected Badge)**: When not in an active chat, "0 Peers" and "Burn Session" are hidden from the header, and a "Disconnected" badge is displayed instead. When in active chat, the "Disconnected" badge is hidden and active peer status is shown.
+- [x] **REQ-011.4 (Full-Width Under-Header Burn Room)**: The "Burn Room" button is positioned directly underneath the top-bar, styled to full container width, labeled "Burn Room", and only visible whilst in an active chat.
+- [x] **REQ-011.5 (Streamlined Burn Notification)**: The burn notification card displays only the `🔥 [SESSION BURNED]` indicator; the subtitle text ("All ephemeral DOM elements, keys, and session memory have been completely wiped.") is removed.
+- [x] **REQ-011.6 (Burn Popup Cursor Style)**: The burn notification card displays a standard arrow pointer on hover (`cursor: default`) with text selection disabled.
+- [x] **REQ-011.7 (Forensic Invariants & Test Pass)**: All workspace tests pass (`cargo test --workspace`) and zero local storage invariants remain intact.
+
+## 4. Architectural Design & Impacted Modules
+- `zero_client/index.html`: DOM structure updates for bottom action slotting, under-header burn bar, and reactive state management in `initEngineListeners()` and `createRoomAsHost()`.
+- `zero_client/style.css`: Styling for full-width action bars, under-header burn container, disconnected badge, and `.security-alert-card` cursor override.
+
+```
+
+## FILE: openspec/changes/archive/ticket-012/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-012"
+title: "UI Tweaks: Centered Session Burn, Green Create Room, Bottom Invite Bar, and Welcome Splash"
+state: "PLANNING"
+roadmap: "serverless-p2p-chat"
+depends_on: ["ticket-011"]
+created_at: "2026-10-17T16:52:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-012/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/serverless-p2p-chat.md`
+
+## 1. Problem Statement & Objective
+In the current ZeroChat UI:
+1. When a session is burned, the banner renders as `🔥 [SESSION BURNED]` and is left-aligned within the security alert card rather than cleanly centered and unadorned.
+2. The "Create Private Room" button uses a blue/indigo gradient and includes a leading `✨` emoji (`✨ Create Private Room`), which conflicts with the desire for a clean, emerald-green action styling without emojis.
+3. Upon clicking "Create Private Room", the generated invite link with the copy button is displayed in an upper panel while a disabled "Awaiting Peer..." button remains fixed in the bottom footer action slot. The room link with copy button bar should instead replace the bar at the bottom of the view that currently displays "Awaiting Peer...".
+4. When a user lands on ZeroChat and is not in an active chat, the central chat container is completely empty and dark. A terse, glassmorphic welcome/info splash card should explain key features (serverless P2P, ChaCha20-Poly1305 E2E encryption, and zero forensic trace/ephemeral lifecycle) in a simple, intuitive manner.
+
+The objective of this task is to implement these visual and layout refinements in `zero_client/index.html` and `zero_client/style.css`, ensuring seamless state transitions between idle, room hosting, active chat, and burned states.
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/index.html`:
+    - Centered `SESSION BURNED` text in the burn notification banner (no fire emoji, no square brackets).
+    - Update "Create Private Room" text to remove `✨` emoji across initial DOM and JS reset/disconnect branches.
+    - Reposition / restructure the invite URL and copy button bar to directly replace the bottom footer action bar upon room creation, removing the disabled "Awaiting Peer..." button from the footer.
+    - Insert a terse, elegant welcome/info splash component in `#messages-container` when disconnected / idle, disappearing upon active P2P connection or session burn.
+  - `zero_client/style.css`:
+    - Style `.security-alert-card` and burn alert elements to center text horizontally.
+    - Add emerald green styling (`--accent-emerald` gradient/glow) for the "Create Private Room" action button.
+    - Footer invite bar styling ensuring identical full-width responsive proportions to the action bars.
+    - Styling for the welcome/info splash card (glassmorphic panel, subtle iconography/bullet badges, clean typography).
+  - Workspace test suite:
+    - Ensure all workspace tests pass (`cargo test --workspace`) and browser assets build cleanly.
+- **Out-of-Scope**:
+  - WebRTC signaling protocol or Rust cryptographic primitives in `crates/zero_protocol` or `zero_network`.
+  - Multi-peer gossip mesh logic in `zero_client/src/mesh.rs`.
+
+## 3. Requirements & Acceptance Criteria
+- [ ] **REQ-012.1 (Centered & Unadorned "SESSION BURNED")**: The session burned banner must display exactly `SESSION BURNED` (no square brackets, no fire emoji) and be horizontally centered within its container with clear, high-contrast, alert styling.
+- [ ] **REQ-012.2 (Emerald-Green "Create Private Room" Button)**: The "Create Private Room" button must be green-colored (using an emerald gradient and subtle glow) and must not contain the `✨` stars emoji in either HTML or dynamic JavaScript text resets.
+- [ ] **REQ-012.3 (Bottom Slot Swap for Room Invite & Copy Bar)**: Upon clicking "Create Private Room", the room invite URL and copy button bar must replace the bottom footer bar (removing the separate "Awaiting Peer..." bottom button). Waiting status is communicated clearly via the status indicator / feed while the copyable invite bar occupies the footer action slot.
+- [ ] **REQ-012.4 (Terse Welcome Splash in Inactive View)**: When the user is not in an active chat, the main view must display a terse, beautifully formatted welcome/info splash card highlighting:
+  - Direct P2P WebRTC data transmission (no intermediate servers storing chat data).
+  - Authenticated End-to-End Encryption (ChaCha20-Poly1305).
+  - Zero Trace (no logs, accounts, or persistent storage; closing or burning incinerates all session data).
+  - Concise prompt to create a private room or use a shared link.
+- [ ] **REQ-012.5 (Lifecycle Transitions & Test Integrity)**: Transitions between idle (welcome splash + green create room button), room hosting (splash/status + bottom copyable invite bar), active chat (message input + send button + burn room bar), and burned state (`SESSION BURNED` + reset button) must be smooth and robust. All workspace tests (`cargo test --workspace`) must pass.
+
+## 4. Architectural Design & Impacted Modules
+- `zero_client/index.html`:
+  - Footer slot structure: `#create-room-bar`, `#invite-bar` (or unified action slot), and `#message-form`.
+  - Welcome splash component inside `#messages-container` rendered when idle.
+  - State machine updates in `initEngineListeners()`, `createRoomAsHost()`, `joinRoomFromHash()`, and `burnBtn` click handler.
+- `zero_client/style.css`:
+  - `.btn-create-room` / `.btn-emerald`: green gradient styles (`#10b981`, `#059669`).
+  - `.burn-banner-centered`: `display: flex; justify-content: center; text-align: center;`.
+  - `.welcome-splash`: glassmorphic card, feature grid/list, subtle badges.
+  - Responsive alignment for bottom invite bar.
+
+```
+
+## FILE: openspec/changes/archive/ticket-013/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-013"
+title: "UI Polish: Secure P2P Chat Branding, Chat Terminology, Disconnect Deduplication, and Local Peer Color Assignment"
+state: "PLANNING"
+roadmap: "serverless-p2p-chat"
+depends_on: ["ticket-012"]
+created_at: "2026-10-17T17:31:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-013/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/serverless-p2p-chat.md`
+
+## 1. Problem Statement & Objective
+Following recent UI layout improvements:
+1. The brand header displays `EPHEMERAL P2P` beneath "ZeroChat", which should be updated to `SECURE P2P CHAT` for clearer value proposition.
+2. The UI inconsistently refers to "room" instead of "chat" (e.g. "Create Private Room", "Burn Room", "Secure room created.", "Peer joined.", "Peer left."). All references should be standardized to "chat" terminology.
+3. Upon WebRTC DataChannel/PeerConnection disconnect, multiple asynchronous closing events fire (`ch.onclose`, `ch.onerror`, `pc.oniceconnectionstatechange`), causing duplicate `"Peer left."` system messages to appear in the chat feed.
+4. Chat bubbles currently show explicit text tags (`PEER` and `YOU`) above messages, which clutters the message presentation. The bubbles already have distinct outgoing/incoming alignments; removing these text tags will streamline readability.
+5. In multi-peer or 1:1 scenarios, peers lack distinct visual differentiation. Each remote peer should be dynamically assigned a deterministic client-local color from a curated palette upon joining, applying an accent tint or indicator to their incoming message bubbles so participants are instantly identifiable.
+
+The objective of this task is to implement these visual, messaging, and event-handling refinements across `zero_client/index.html` and `zero_client/style.css`.
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/index.html`:
+    - Brand tagline updated from `EPHEMERAL P2P` to `SECURE P2P CHAT`.
+    - Replace all "room" user-facing copy with "chat":
+      - Button: "Create Private Chat" (and dynamic JS resets).
+      - Button: "Burn Chat".
+      - System notifications: `"Secure chat created."`, `"Peer joined chat."`, `"Joined chat."`, `"Peer left chat."`.
+      - Joiner banner & status messages: `"Found Chat Invite!..."`, `"Chat creation failed"`.
+    - Event state guard in `ZeroWebRtcEngine._setState()` and `initEngineListeners()` to deduplicate `"Peer left chat."` notifications on connection termination.
+    - Remove `message-sender` (`PEER` / `YOU`) text element from message bubbles in `appendMessageBubble()`.
+    - Implement local peer color palette assignment (e.g. HSL or curated palette: cyan, amber, purple, emerald, rose) keyed by peer ID/connection order, and attach peer color classes/CSS variables to incoming bubbles.
+  - `zero_client/style.css`:
+    - Styling for message bubbles without sender labels (clean timestamp alignment and padding).
+    - Color accent styling and CSS variables for dynamically assigned peer color identifiers.
+    - Header brand tagline styling for `SECURE P2P CHAT`.
+  - Workspace tests:
+    - Verify all workspace unit and integration tests (`cargo test --workspace`) continue to pass.
+- **Out-of-Scope**:
+  - Protocol envelope modifications or crypto cipher changes in `crates/zero_protocol`.
+  - Cloudflare Worker backend logic in `zero_network`.
+
+## 3. Requirements & Acceptance Criteria
+- [ ] **REQ-013.1 (Brand Tagline Update)**: The header brand tagline must display `SECURE P2P CHAT` in place of `EPHEMERAL P2P`.
+- [ ] **REQ-013.2 (Consistent Chat Terminology)**: All occurrences of "room" in user-facing UI and notifications must be replaced with "chat":
+  - "Create Private Chat" on the primary action button and all JS reset paths.
+  - "Burn Chat" on the destruction action bar.
+  - Lifecycle notifications: `"Secure chat created."`, `"Peer joined chat."`, `"Joined chat."`, and `"Peer left chat."`.
+- [ ] **REQ-013.3 (Deduplicated Disconnect Notifications)**: When a peer disconnects, exactly one `"Peer left chat."` system message must be rendered. State transitions in `ZeroWebRtcEngine` must be guarded (`if (this.state === s) return;`) to prevent duplicate closed events from re-triggering notifications.
+- [ ] **REQ-013.4 (Streamlined Message Bubbles without Sender Labels)**: The text labels `"PEER"` and `"YOU"` must be removed from the header of chat message bubbles. The header should retain the formatted timestamp.
+- [ ] **REQ-013.5 (Client-Local Peer Color Differentiation)**: Incoming peers must be assigned a unique client-local color from a vibrant, cohesive palette upon arrival. Incoming message bubbles must reflect this peer color via accent border, glow, or indicator badge, enabling effortless peer identification without clutter.
+- [ ] **REQ-013.6 (Test & Regression Validation)**: All unit and integration tests across the workspace (`cargo test --workspace`) must pass cleanly.
+
+## 4. Architectural Design & Impacted Modules
+- `zero_client/index.html`:
+  - Tagline markup and terminology replacements throughout DOM strings and event handlers.
+  - State deduplication guard in `_setState(s)` and disconnect handling.
+  - Message bubble template refactoring in `appendMessageBubble()`.
+  - Local peer color assignment map (`peerColors = new Map()`, `PEER_COLOR_PALETTE = [...]`).
+- `zero_client/style.css`:
+  - Streamlined `.message-header` and `.message-bubble` layout.
+  - Dynamic peer color accent classes (e.g. `.peer-color-0`, `.peer-color-1`, etc.).
+
+```
+
+## FILE: openspec/changes/archive/ticket-014/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-014"
+title: "UI Refinements: Header Badges Alignment, Leave Button, Green Send Icon, and Clean System Messages"
+state: "IN_PROGRESS"
+roadmap: "serverless-p2p-chat"
+depends_on: ["ticket-013"]
+created_at: "2026-10-17T20:55:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-014/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/serverless-p2p-chat.md`
+
+## 1. Problem Statement & Objective
+In the current ZeroChat UI:
+1. The peer count badge displays `"1 peer"` or `"0 peers"`. The word `"peer(s)"` clutters the compact header badge; only the numeric count should be displayed.
+2. The connection status badge displays a green emoji circle (`🟢 P2P Established`). It should feature a clean padlock icon instead of the green circle.
+3. The connection status badge (`.peer-pill`) uses an indigo palette (`rgba(99, 102, 241, 0.12)` with purple borders), clashing with the adjacent cyan `.peer-count-badge`. Both header badges should share consistent cyan glass styling.
+4. The message input field displays `"Type an encrypted message..."` placeholder text, which should be removed.
+5. Users currently have to click the large under-header "Burn Chat" bar to leave/burn a session. A compact "Leave" button should be added to the right of the header status badges, wired to the same session burn and memory wipe handler.
+6. The "Send" button uses text (`Send`) and a blue gradient, whereas primary actions (like "Create Private Chat") have moved to the green emerald palette. The send button should feature an icon instead of text and be styled in emerald green.
+7. System notifications in the chat feed end with trailing full stops (`"Secure chat created."`, `"Peer joined chat."`, `"Peer left chat."`), which should be removed for a cleaner, modern chat appearance.
+
+The objective of this task is to implement these targeted visual, layout, and copy refinements in `zero_client/index.html` and `zero_client/style.css`.
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/index.html`:
+    - Peer count badge: display strictly the numeric count (e.g. `1` or `0`).
+    - Connection established badge: replace `🟢` with a padlock icon (`🔒` / SVG padlock).
+    - Message input: remove `"Type an encrypted message..."` placeholder.
+    - Header controls: add a "Leave" button element (`#header-leave-btn`) to the right of `#peer-list`, visible only in active chat, invoking the burn session handler.
+    - Send button: replace text `"Send"` with an SVG send icon and update class to `.btn-send-emerald`.
+    - System messages: remove trailing periods (`"Secure chat created"`, `"Peer joined chat"`, `"Joined chat"`, `"Peer left chat"`).
+  - `zero_client/style.css`:
+    - `.peer-pill` styling aligned to match `.peer-count-badge` (cyan glassmorphism).
+    - Compact `#header-leave-btn` button styles (rose/dark-glass accent, hover glow, responsive alignment).
+    - Green send button styling (`.btn-send-emerald`, hover, focus, disabled states).
+    - Updated message input styling for empty placeholder.
+  - Workspace test suite:
+    - Ensure all workspace tests pass (`cargo test --workspace`).
+- **Out-of-Scope**:
+  - WebRTC signaling protocols in `zero_network`.
+  - Cryptographic primitives in `crates/zero_protocol`.
+
+## 3. Requirements & Acceptance Criteria
+- [ ] **REQ-014.1 (Numeric Peer Counter Badge)**: The peer count badge must display only the numeric count (e.g. `1`), omitting any trailing `"peer"` or `"peers"` text.
+- [ ] **REQ-014.2 (Padlock Icon on Established Badge)**: The green circle icon (`🟢`) on the connection established badge must be replaced with a padlock icon.
+- [ ] **REQ-014.3 (Header Badge Color Consistency)**: The connection established badge (`.peer-pill`) must share the exact same background, border, and color palette as the peer count badge (`--accent-cyan` glass styling).
+- [ ] **REQ-014.4 (Removal of Input Placeholder Text)**: The placeholder text `"Type an encrypted message..."` on `#message-input` must be completely removed.
+- [ ] **REQ-014.5 (Header Leave Button)**: A "Leave" button must be positioned to the right of the peer count and connection status badge in the header. It must only be visible during active chat and must execute the exact same session burn / wipe sequence as "Burn Chat".
+- [ ] **REQ-014.6 (Green Send Button with Icon)**: The "Send" button text must be replaced with an inline SVG send icon, and the button styled in emerald green matching `.btn-emerald`.
+- [ ] **REQ-014.7 (Clean System Messages without Full Stops)**: All system messages rendered in the chat feed must omit trailing periods (`"Secure chat created"`, `"Peer joined chat"`, `"Joined chat"`, `"Peer left chat"`).
+- [ ] **REQ-014.8 (Workspace Test Integrity)**: All 86 unit and integration tests across the workspace (`cargo test --workspace`) must pass without regressions.
+
+## 4. Architectural Design & Impacted Modules
+- `zero_client/index.html`:
+  - Header controls markup: addition of `#header-leave-btn`.
+  - Footer message form markup: send button icon integration and empty placeholder.
+  - JavaScript lifecycle handlers in `initEngineListeners()`, `createRoomAsHost()`, `joinRoomFromHash()`, and `burnBtn`.
+- `zero_client/style.css`:
+  - Harmonized `.peer-pill` and `.peer-count-badge` rules.
+  - Styling for `#header-leave-btn` and `.btn-send-emerald`.
+
+```
+
+## FILE: openspec/changes/archive/ticket-015/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-015"
+title: "UI Tweaks: Icon-Only Controls, Domain URL Header & Tab, Favicon, and Minimalist Header Badges"
+state: "IN_PROGRESS"
+roadmap: "serverless-p2p-chat"
+depends_on: ["ticket-014"]
+created_at: "2026-10-17T21:37:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-015/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/serverless-p2p-chat.md`
+
+## 1. Problem Statement & Objective
+In the current ZeroChat UI:
+1. The status connection badge displays descriptive text (`Disconnected`, `Awaiting..`). The user wants to remove text labels entirely so that only the connection circle indicator dot is displayed.
+2. The peer count badge is hidden when disconnected rather than displaying `0`. It should be visible continuously, starting at `0`.
+3. The background, border, and color of the `0` peers badge and status indicator badge should consistently match the default cyan/blue glass styling (`--accent-cyan`).
+4. The welcome splash card currently re-appears when a peer leaves, even if the feed already contains chat messages or notifications. It should strictly display only when the chat is completely empty at the initial "Home" view.
+5. The primary room creation button contains the text `"Create Private Chat"`. This should be replaced with a clean icon.
+6. The connection established badge in `#peer-list` displays `"🔒 P2P Established"`. The text `"P2P Established"` should be removed so only the padlock icon remains.
+7. The header `#header-leave-btn` displays `"Leave"` text. This should be replaced with an exit/logout icon.
+8. The under-header `#destroy-session-button` displays `"Burn Chat"` text. This should be replaced with a flame/fire icon.
+9. The top-bar brand title displays `"ZeroChat"`. This should be replaced with the domain URL (`zero-chat.pages.dev`).
+10. The browser tab `<title>` displays `"ZeroChat — Serverless Ephemeral P2P Chat"`. This should be replaced with the domain URL (`zero-chat.pages.dev`).
+11. The application does not define a dedicated favicon matching the rounded "0" brand icon from the header. An SVG favicon matching this design should be configured.
+12. Buttons and interactive badges currently display browser native hover tooltips via `title` attributes (e.g. hovering over the send button). All hover tooltip text should be removed.
+
+The objective of this task is to implement these visual, iconographic, and brand refinements across `zero_client/index.html` and `zero_client/style.css`.
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/index.html`:
+    - Brand title and `<title>` replacement with domain URL (`zero-chat.pages.dev` / dynamic fallback).
+    - SVG favicon linked in `<head>` matching the "0" brand icon.
+    - Status badge: remove `#status-badge-text`, rendering only the indicator circle dot (no hover tooltip).
+    - Peer count badge: keep visible in idle state, initialized to `0`.
+    - Welcome splash lifecycle: show only when `feed` is completely empty; do not re-show if feed contains messages or notifications.
+    - Create Private Chat button: replace text with an SVG plus/chat icon (no hover tooltip).
+    - P2P Established badge: remove text, leaving solely the padlock icon (no hover tooltip).
+    - Leave button: replace `"Leave"` text with an exit/logout SVG icon (no hover tooltip).
+    - Burn Chat button: replace `"Burn Chat"` text with a fire/flame SVG icon (no hover tooltip).
+    - Send button & Copy button: remove `title` hover tooltips.
+  - `zero_client/style.css`:
+    - Status pill and peer count badge color consistency (`--accent-cyan` glass styling).
+    - Icon-only button sizing, alignment, and hover glow for create room, leave, and burn chat buttons.
+    - Minimalist status badge circle container padding.
+  - Workspace test suite:
+    - Ensure all workspace tests pass (`cargo test --workspace`).
+- **Out-of-Scope**:
+  - WebRTC signaling protocols in `zero_network`.
+  - Cryptographic packet sealing in `zero_protocol`.
+
+## 3. Requirements & Acceptance Criteria
+- [ ] **REQ-015.1 (Icon-Only Status Badge)**: The connection status badge must display only the status indicator circle dot without any text label (`"Disconnected"` and `"Awaiting.."` removed).
+- [ ] **REQ-015.2 (Persistent Peer Count Badge)**: The peer count badge must remain visible when disconnected/idle, displaying `0` initially.
+- [ ] **REQ-015.3 (Cyan Glass Badge Color Consistency)**: The `0` peers badge and status indicator badge must share the default cyan/blue glass styling (`background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.25); color: var(--accent-cyan);`).
+- [ ] **REQ-015.4 (Home-Only Welcome Splash)**: The welcome splash message must only display when the chat container is completely empty at the initial "Home" view. If the feed contains chat messages or system notifications when a peer disconnects, the splash must not re-appear over the messages.
+- [ ] **REQ-015.5 (Icon-Only Create Private Chat Button)**: The text `"Create Private Chat"` on `#btn-create-room` must be replaced with a centered icon with appropriate tooltip and accessibility labels.
+- [ ] **REQ-015.6 (Icon-Only Established Padlock Badge)**: The connection established badge must remove `"P2P Established"` text, displaying solely the padlock icon.
+- [ ] **REQ-015.7 (Icon-Only Leave Button)**: The text `"Leave"` on `#header-leave-btn` must be replaced with an exit/door icon.
+- [ ] **REQ-015.8 (Icon-Only Burn Chat Button)**: The text `"Burn Chat"` on `#destroy-session-button` must be replaced with a fire/flame icon.
+- [ ] **REQ-015.9 (Domain URL Branding in Header & Tab)**: The top-bar brand title and `<title>` element must both display the domain URL (`zero-chat.pages.dev`).
+- [ ] **REQ-015.10 (Brand SVG Favicon)**: A favicon matching the header "0" brand icon (rounded square with gradient glass and cyan "0") must be embedded via `<link rel="icon" type="image/svg+xml">`.
+- [ ] **REQ-015.11 (Removal of Hover Tooltip Text)**: All native browser hover tooltip text (`title="..."` attributes) must be removed across buttons and badges (e.g. `#send-button`, `#copy-invite-button`, `#destroy-session-button`, `#header-leave-btn`, `#btn-create-room`, and badges) so that no tooltips appear on hover.
+- [ ] **REQ-015.12 (Test & Non-Regression Integrity)**: All 86 workspace unit and integration tests (`cargo test --workspace`) must pass cleanly.
+
+## 4. Architectural Design & Impacted Modules
+- `zero_client/index.html`:
+  - `<head>`: `<title>zero-chat.pages.dev</title>` and `<link rel="icon">` with data URI SVG.
+  - Header brand: `<h1 class="brand-title">zero-chat.pages.dev</h1>`.
+  - Header controls: `#status-badge` dot only, `#peer-count` initialized to `0` without `.hidden`.
+  - Buttons: SVG icons for `#btn-create-room`, `#header-leave-btn`, and `#destroy-session-button`.
+  - JavaScript: Splash display conditional guard checking `feed.querySelectorAll(".message-bubble, .system-message").length === 0`.
+- `zero_client/style.css`:
+  - Consistent cyan glass variables on `#status-badge` and `#peer-count`.
+  - Icon button centering and padding adjustments.
+
+```
+
+## FILE: openspec/changes/archive/ticket-016/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-016"
+title: "UI Tweaks: Merged Peers Counter, Home Splash Reset, System Message Timestamps, Minimalist Splash Card, and Unified Chat Bubble Styling"
+state: "COMPLETED"
+roadmap: "serverless-p2p-chat"
+depends_on: ["ticket-015"]
+created_at: "2026-10-17T22:55:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-016/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/serverless-p2p-chat.md`
+
+## 1. Problem Statement & Objective
+In the current ZeroChat UI:
+1. The peer count badge is placed on the right side of the header controls, duplicating the brand badge on the top left. The user wants the peer counter merged directly into the "0" icon on the left of the top bar, and the peer counter badge on the right removed.
+2. When a chat is burned or left, the UI displays a centered red `SESSION BURNED` card. The user wants this banner removed; instead, clicking Burn or Leave should return the user to the initial home view with the welcome splash message displayed.
+3. When creating a room, the "Secure chat created" system message and the invite link are displayed, but the welcome splash card remains visible above them. The splash message should not be visible unless the chat is completely empty in the idle home state.
+4. System messages (`.system-message`) are currently centered with no timestamp. The user wants system messages to be left-aligned and to have a timestamp placed to the left of the message text.
+5. The welcome splash card contains explanatory headers and prompts (`"Zero-Footprint Ephemeral Messaging"`, `"Direct browser-to-browser communication with cryptographic forward secrecy"`, and `"Click Create Private Chat below to start a chat..."`). The user wants these removed so that only the feature cards remain.
+6. The feature cards in the splash message have verbose technical labels. The user wants them updated to clean, concise copy:
+   - Card 1: Title `"Direct P2P Connection"`, description `"Zero intermediate relays or storage servers."`
+   - Card 2: Title `"Secure Communications"`, description `"All messages are end-to-end encrypted."`
+   - Card 3: Title `"Zero Trace"`, description `"Ephemeral chats that burn when closed."`
+7. The user (outgoing) chat bubbles differ stylistically from peer (incoming) chat bubbles:
+   - Outgoing bubble header is right-aligned (`justify-content: flex-end`) with no dot, whereas incoming bubbles have `[dot] [timestamp]` on the left.
+   - Outgoing bubbles lack the prominent vertical accent line down the left side that incoming bubbles have (`border-left: 3px solid ...`).
+   - Both outgoing and incoming bubbles include a bulky green verification footer (`.security-badge`: `"🔒 ChaCha20-Poly1305 Verified"`).
+   - Hovering over timestamps changes the cursor to an I-beam selection cursor (`text`) instead of the regular arrow cursor.
+
+The objective of this task is to implement all of these visual, functional, and stylistic refinements across `zero_client/index.html` and `zero_client/style.css`.
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/index.html`:
+    - Header: Merge peer count display into the left `.brand-icon` (assigning `id="peer-count"` to the brand icon) and remove the right-side `.peer-count-badge`.
+    - Burn & Leave handlers: Remove the red `SESSION BURNED` card; clear messages and reset the view to home state with the welcome splash card visible.
+    - Room Creation & Splash Lifecycle: Explicitly hide the welcome splash upon room creation (`createRoomAsHost`) and whenever any system messages or message bubbles exist.
+    - System Messages: Left-align `.system-message` elements and prepend a formatted timestamp `<span class="system-timestamp">HH:MM</span>` to the left of the system message text in `appendSystemMessage()`.
+    - Splash Card Markup & Template: Strip `.welcome-header` and `.welcome-prompt` from both static HTML and the `WELCOME_SPLASH_HTML` JavaScript constant string.
+    - Splash Card Feature Copy: Update title and description text across both static HTML and `WELCOME_SPLASH_HTML` for the three cards.
+    - User Chat Bubbles:
+      - Left-align timestamp and add a glowing emerald dot (`.self-dot` or `.peer-dot` styled with `var(--accent-emerald)`) to the top-left of user chat bubbles, matching peer bubbles (`[dot] [timestamp]`).
+      - Remove `.security-badge` (`"🔒 ChaCha20-Poly1305 Verified"`) from all message bubbles.
+  - `zero_client/style.css`:
+    - `.brand-icon`: numeric peer counter display cleanly centered.
+    - `.system-message`: set `align-self: flex-start; text-align: left; display: flex; align-items: center; gap: 8px;`.
+    - `.system-timestamp`: set monospace font, muted color, font-size `0.72rem`, `cursor: default; user-select: none;`.
+    - `.welcome-splash`: compact vertical padding and gap with headers/prompts removed.
+    - `.message-outgoing`:
+      - Add `border-left: 3px solid var(--accent-emerald);` matching peer bubbles.
+      - Update `.message-outgoing .message-header` to `justify-content: flex-start; gap: 6px;`.
+    - `.message-timestamp`: add `cursor: default; user-select: none;` to suppress I-beam cursor on hover.
+  - Workspace test suite:
+    - Ensure all workspace tests pass cleanly (`cargo test --workspace`).
+- **Out-of-Scope**:
+  - WebRTC signaling protocols in `zero_network`.
+  - Cryptographic packet sealing in `zero_protocol`.
+
+## 3. Requirements & Acceptance Criteria
+- [x] **REQ-016.1 (Merged Top-Bar Brand Peer Counter)**: The peer counter must be merged into the "0" icon on the left of the top bar (`.brand-icon`), initializing at `0` and updating dynamically to reflect active peer count (`1`, etc.). The separate peer count badge on the right side of `.header-controls` must be removed.
+- [x] **REQ-016.2 (Session Burn & Leave Home Reset)**: The red `SESSION BURNED` banner card must be removed. Clicking the Burn Chat button (`#destroy-session-button`) or Leave button (`#header-leave-btn`) must completely clear the chat feed, reset session state, and return the user to the home view with the clean welcome splash card displayed.
+- [x] **REQ-016.3 (Home-Only Splash Visibility Guard)**: The welcome splash card must be immediately hidden when a room is created (`createRoomAsHost`) and whenever any message or system notification exists in the feed. The splash card must only be visible when the chat feed is completely empty on the idle home view.
+- [x] **REQ-016.4 (Left-Aligned System Messages with Timestamps)**: System messages (`.system-message`) must be left-aligned (`align-self: flex-start; text-align: left;`) and must display a timestamp to the left of the text (e.g. `12:34 Secure chat created`).
+- [x] **REQ-016.5 (Clean Splash Header & Prompt Stripping)**: In both `index.html` static markup and `WELCOME_SPLASH_HTML` JavaScript template, the header title `"Zero-Footprint Ephemeral Messaging"`, subtitle `"Direct browser-to-browser communication with cryptographic forward secrecy."`, and the bottom prompt container (`.welcome-prompt`) must be completely removed.
+- [x] **REQ-016.6 (Updated Minimalist Feature Card Copy)**: The three feature cards in the splash message (in both static HTML and `WELCOME_SPLASH_HTML`) must be updated to:
+  - Card 1: Title `"Direct P2P Connection"`, description `"Zero intermediate relays or storage servers."`
+  - Card 2: Title `"Secure Communications"`, description `"All messages are end-to-end encrypted."`
+  - Card 3: Title `"Zero Trace"`, description `"Ephemeral chats that burn when closed."`
+- [x] **REQ-016.7 (Unified User Bubble Header & Dot)**: User (outgoing) chat bubbles must have their timestamp left-aligned (`justify-content: flex-start;`) and preceded by an emerald dot icon on the top-left, matching the layout of peer bubbles (`[green dot] [timestamp]`).
+- [x] **REQ-016.8 (Green Accent Border on User Bubble)**: User (outgoing) chat bubbles must feature a 3px emerald accent border along the left edge (`border-left: 3px solid var(--accent-emerald);`), matching the accent line style of peer bubbles.
+- [x] **REQ-016.9 (Removal of Padlock Verification Badges)**: The padlock icon and verification text (`.security-badge` / `"🔒 ChaCha20-Poly1305 Verified"`) must be removed from the bottom of all chat bubbles.
+- [x] **REQ-016.10 (Regular Arrow Cursor on Timestamps)**: Hovering over chat bubble timestamps (`.message-timestamp` and `.system-timestamp`) must show the standard arrow cursor (`cursor: default; user-select: none;`) instead of an I-beam text selection cursor.
+- [x] **REQ-016.11 (Test Suite & Non-Regression Integrity)**: All 86 workspace unit and integration tests (`cargo test --workspace`) must pass cleanly.
+
+## 4. Architectural Design & Impacted Modules
+- `zero_client/index.html`:
+  - `<header class="chat-header">`:
+    - Update `<span class="brand-icon" id="peer-count">0</span>`.
+    - Remove `<div id="peer-count" class="peer-count-badge">0</div>` from `.header-controls`.
+  - `#welcome-splash` & `WELCOME_SPLASH_HTML`:
+    - Retain only `.welcome-features` containing the three updated `.feature-card` items.
+    - Remove `.welcome-header` and `.welcome-prompt`.
+  - JavaScript functions:
+    - `appendMessageBubble(senderName, text, isSelf, peerId)`:
+      - If `isSelf`, prepend an emerald dot `<span class="peer-dot self-dot"></span>` to `header` before `time`.
+      - Remove `const badge = document.createElement("div"); ... bubble.appendChild(badge);`.
+    - `appendSystemMessage(text)`: prepend `<span class="system-timestamp">HH:MM</span>` and call `hideWelcomeSplash()`.
+    - `createRoomAsHost()`: call `hideWelcomeSplash()`.
+    - `burnBtn` click handler: remove `SESSION BURNED` template, clear `feed.innerHTML = ""`, reset `isBurned = false`, and call `showWelcomeSplash()`.
+- `zero_client/style.css`:
+  - `.system-message`: set `align-self: flex-start; text-align: left; display: flex; align-items: center; gap: 8px;`.
+  - `.system-timestamp`: set monospace font, muted color, font-size `0.72rem`, `cursor: default; user-select: none;`.
+  - `.message-outgoing`:
+    - `border-left: 3px solid var(--accent-emerald);`
+  - `.message-outgoing .message-header`:
+    - `justify-content: flex-start;`
+  - `.self-dot`:
+    - `background-color: var(--accent-emerald);`
+    - `box-shadow: 0 0 6px var(--accent-emerald);`
+  - `.message-timestamp`:
+    - `cursor: default;`
+    - `user-select: none;`
+  - `.welcome-splash`: compact vertical padding and gap with headers/prompts removed.
+
+```
+
+## FILE: openspec/changes/archive/ticket-017/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-017"
+title: "Splash Card Update: Centered Value Proposition, 3-Step Flow, and Refined Feature Copy"
+state: "COMPLETED"
+roadmap: "serverless-p2p-chat"
+depends_on: ["ticket-016"]
+created_at: "2026-10-18T16:11:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-017/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/serverless-p2p-chat.md`
+
+## 1. Problem Statement & Objective
+The welcome splash card on the idle home view currently displays three feature cards without an overarching brand proposition or user guidance flow. The user wants to update the splash message layout and copy to:
+1. Feature a top-centered primary heading: `"Zero accounts. Zero servers. Zero history."`
+2. Feature a top-centered secondary step flow directly underneath: `"Create Chat -> Share Link -> Talk P2P"`
+3. Display the updated 3-item feature list directly below the header:
+   - **Direct P2P Connection**: `"Standalone browser-to-browser data channels with no intermediate relays or storage servers."`
+   - **Secure Communications**: `"All messages are end-to-end encrypted."`
+   - **Ephemeral Sessions**: `"Chats are permanently destroyed the moment they are closed."`
+
+The objective of this task is to implement this exact formatting and copy across both the static DOM `#welcome-splash` in `zero_client/index.html`, the dynamic JavaScript template `WELCOME_SPLASH_HTML`, and associated layout styling in `zero_client/style.css`.
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/index.html`:
+    - Update static `#welcome-splash` in `<main id="messages-container">` with `.welcome-header` containing the centered title and step flow subtitle, followed by the updated 3 feature cards.
+    - Synchronize the `WELCOME_SPLASH_HTML` JavaScript constant string with the identical markup structure and copy.
+  - `zero_client/style.css`:
+    - Ensure `.welcome-header`, `.welcome-title`, and `.welcome-subtitle` styling provides clean centering, legible font sizing, and harmonious vertical rhythm within `.welcome-splash`.
+  - Workspace test suite:
+    - Ensure all workspace tests pass cleanly (`cargo test --workspace`).
+- **Out-of-Scope**:
+  - WebRTC signaling protocols in `zero_network`.
+  - Cryptographic packet sealing in `zero_protocol`.
+
+## 3. Requirements & Acceptance Criteria
+- [x] **REQ-017.1 (Centered Splash Headline & Step Flow)**: The top of the welcome splash card must display a centered header section (`.welcome-header`):
+  - Primary title: `"Zero accounts. Zero servers. Zero history."` (`.welcome-title`, centered).
+  - Subtitle step flow: `"Create Chat -> Share Link -> Talk P2P"` (`.welcome-subtitle`, centered directly underneath).
+- [x] **REQ-017.2 (Feature 1 - Direct P2P Connection)**: The first feature card must display:
+  - Title: `"Direct P2P Connection"`
+  - Description: `"Standalone browser-to-browser data channels with no intermediate relays or storage servers."`
+- [x] **REQ-017.3 (Feature 2 - Secure Communications)**: The second feature card must display:
+  - Title: `"Secure Communications"`
+  - Description: `"All messages are end-to-end encrypted."`
+- [x] **REQ-017.4 (Feature 3 - Ephemeral Sessions)**: The third feature card must display:
+  - Title: `"Ephemeral Sessions"`
+  - Description: `"Chats are permanently destroyed the moment they are closed."`
+- [x] **REQ-017.5 (Dual-Template Consistency)**: The updated layout and copy must be identical across both the static HTML markup in `zero_client/index.html` and the `WELCOME_SPLASH_HTML` template string in `<script>` so that resets (burn/leave) render the exact same splash view.
+- [x] **REQ-017.6 (Visual Styling & Spacing)**: The header and feature list within `.welcome-splash` must have balanced padding, typography, and line-height in `zero_client/style.css`.
+- [x] **REQ-017.7 (Test Suite & Non-Regression Integrity)**: All 86 workspace unit and integration tests (`cargo test --workspace`) must pass cleanly.
+
+## 4. Architectural Design & Impacted Modules
+- `zero_client/index.html`:
+  - Static `#welcome-splash`:
+    ```html
+    <div id="welcome-splash" class="welcome-splash">
+        <div class="welcome-header">
+            <h2 class="welcome-title">Zero accounts. Zero servers. Zero history.</h2>
+            <p class="welcome-subtitle">Create Chat -&gt; Share Link -&gt; Talk P2P</p>
+        </div>
+        <div class="welcome-features">
+            <!-- 3 updated cards: Direct P2P Connection, Secure Communications, Ephemeral Sessions -->
+        </div>
+    </div>
+    ```
+  - JavaScript `WELCOME_SPLASH_HTML`: mirror the above structure.
+- `zero_client/style.css`:
+  - Verify `.welcome-header` (`text-align: center; margin-bottom: 4px;`), `.welcome-title`, and `.welcome-subtitle` layout and contrast.
+
+```
+
+## FILE: openspec/changes/archive/ticket-018/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-018"
+title: "UI Tweaks: Adaptive Top-Bar Header Badges, Transient Ticking Status Messages, and Splash Box Styling"
+state: "COMPLETED"
+roadmap: "serverless-p2p-chat"
+depends_on: ["ticket-017"]
+created_at: "2026-10-18T16:24:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-018/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/serverless-p2p-chat.md`
+
+## 1. Problem Statement & Objective
+In the current ZeroChat UI:
+1. **Top-Bar Brand & Header Controls**:
+   - Left side: restore static "0" brand logo (`.brand-icon`).
+   - Right side: establish fixed alignment with an adaptive badge layout:
+     - From left to right: (1) Peer count, (2) Connection status, (3) Exit button.
+     - **Disconnected state**: Show peer count (`0`) on the left, and a double-width red-dot ellipse badge (~60px wide, matching the width of two 26px badges + gap) on the right.
+     - **Connected state**: The double-width badge splits into two distinct badges: the connection status badge (middle) and the exit button (right).
+     - This gives the impression of the idle red capsule splitting into two active controls when a chat connects, while keeping the overall bounding width and alignment of the header fixed.
+2. **Elimination of Blue Banner & Transient Status Messages**:
+   - The blue connecting status banner (`#joiner-banner.join-banner`) is visually obtrusive and should be removed completely.
+   - During connection establishment, show a transient in-feed status message: `"Establishing secure connection"` with an animated ticking ellipsis (`.`, `..`, `...`).
+   - This transient status message has **no timestamp**.
+   - The moment the connection opens (or fails), the transient status message is **replaced** by the permanent, timestamped system message (`"Joined chat"`, `"Peer joined chat"`, or `"Failed to establish connection"`).
+   - Creating a chat immediately emits `"Secure chat created"` with timestamp.
+3. **Splash Card Refinements**:
+   - Update Card 1 description to: `"Private data channels with no intermediate relays or storage servers."`
+   - Remove on-hover border glow from `.feature-card:hover` in `zero_client/style.css`.
+
+## 2. Header Badges Layout Specification
+
+### Disconnected / Idle View:
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ [0] zero-chat.pages.dev                   [ 0 ] [  ● red  ] │
+│     SECURE P2P CHAT                    peer-count  double-width
+│                                                    capsule (~60px)
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Active Chat View:
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ [0] zero-chat.pages.dev               [ 1 ] [ 🔒 ] [ 🚪 ]   │
+│     SECURE P2P CHAT                 peer-count  status  exit button
+│                                     (Badge 1)  (Badge 2) (Badge 3)
+└─────────────────────────────────────────────────────────────┘
+```
+*(Combined width of Badge 2 + gap + Badge 3 = 26px + 6px + 26px = 58px, matching the disconnected capsule width!)*
+
+## 3. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/index.html`:
+    - Top bar left: restore `<span class="brand-icon">0</span>` as static brand logo.
+    - Top bar right:
+      - Restore `<div id="peer-count" class="peer-count-badge">0</div>`.
+      - Add `<div id="idle-status-capsule" class="status-capsule-disconnected"><span class="status-indicator-dot red-dot"></span></div>` visible when disconnected.
+      - Keep `#status-badge` / `#peer-list` (connection badge) and `#header-leave-btn` (exit button) unhidden only when connected.
+      - Toggle between idle capsule and active split pair upon connection/disconnect.
+    - Remove `#joiner-banner`.
+    - Implement transient status helper (`showTransientStatus("Establishing secure connection")` / `clearTransientStatus()`) that renders without timestamp and with ticking ellipsis.
+    - When permanent system message is appended (`Joined chat`, `Peer joined chat`, `Failed to establish connection`), automatically replace/clear any active transient status message.
+    - Splash card Card 1 description update: `"Private data channels with no intermediate relays or storage servers."` (both static DOM and `WELCOME_SPLASH_HTML`).
+  - `zero_client/style.css`:
+    - Add `.status-capsule-disconnected` with red glass styling (~58-60px width, 26px height, pill border-radius, centered red dot).
+    - Remove `.join-banner` rules.
+    - Remove `.feature-card:hover` border glow rule.
+    - Add `.transient-status` and `@keyframes tickDots` styling for the animated 1-2-3 ticking dots.
+  - Workspace test suite:
+    - Ensure all workspace tests pass cleanly (`cargo test --workspace`).
+- **Out-of-Scope**:
+  - WebRTC signaling protocols or cryptography.
+
+## 4. Requirements & Acceptance Criteria
+- [x] **REQ-018.1 (Restore Top-Bar Brand Logo & Peer Counter)**:
+  - Top-left header displays static brand logo `<span class="brand-icon">0</span>`.
+  - Top-right `.header-controls` displays standalone peer counter badge `<div id="peer-count" class="peer-count-badge">0</div>` as Badge 1 on the left, initializing at `0` and updating dynamically (`1`, etc.).
+- [x] **REQ-018.2 (Adaptive Split Header Badges & Fixed Alignment)**:
+  - When disconnected / idle, `.header-controls` displays:
+    - Left: `#peer-count` (`0`).
+    - Right: `#idle-status-capsule`, a double-width red-dot capsule (~58-60px wide, 26px high) with red glass styling and a centered red indicator dot.
+  - When connected in active chat, the idle capsule is hidden and splits into:
+    - Middle: `#peer-list` / `#status-badge` (connection status badge).
+    - Right: `#header-leave-btn` (26px red exit button).
+  - Total bounding width remains visually constant between states.
+- [x] **REQ-018.3 (Remove Blue Connecting Status Banner)**:
+  - `#joiner-banner` and `.join-banner` rules must be completely removed from the DOM and stylesheet.
+- [x] **REQ-018.4 (Transient Ticking Status Message & Replacement)**:
+  - Connection negotiation must display a transient status message: `"Establishing secure connection"` with an animated ticking ellipsis (`.`, `..`, `...`) and NO timestamp.
+  - When connection completes (`"Joined chat"` / `"Peer joined chat"`) or fails (`"Failed to establish connection"`), the transient status element must be removed and replaced by the permanent timestamped system message.
+  - Chat creation directly logs `"Secure chat created"` with timestamp.
+- [x] **REQ-018.5 (Splash Message Copy Refinement)**:
+  - Card 1 description must be updated to `"Private data channels with no intermediate relays or storage servers."` across both static HTML and `WELCOME_SPLASH_HTML`.
+- [x] **REQ-018.6 (Remove Feature Card On-Hover Glow)**:
+  - Remove `.feature-card:hover` border color change in `zero_client/style.css` so the bullet boxes maintain an invariant border on hover.
+- [x] **REQ-018.7 (Clean Splash Visibility Guard)**:
+  - The welcome splash card must continue to hide immediately when any transient status or system message is rendered.
+- [x] **REQ-018.8 (Test Suite & Non-Regression Integrity)**:
+  - All 86 workspace unit and integration tests (`cargo test --workspace`) must pass cleanly.
+
+```
+
+## FILE: openspec/changes/archive/ticket-019/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-019"
+title: "UI Tweaks: Non-Pulsing Blue Dot Idle Header Badge and Splash Card Wording Refinement"
+state: "COMPLETED"
+roadmap: "serverless-p2p-chat"
+depends_on: ["ticket-018"]
+created_at: "2026-10-18T16:47:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-019/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/serverless-p2p-chat.md`
+
+## 1. Problem Statement & Objective
+In the current ZeroChat UI:
+1. **Idle Top-Bar Header Badge Color & Animation**:
+   - The disconnected idle status capsule (`#idle-status-capsule`) currently displays a pulsing red dot inside a red glass capsule.
+   - The pulsing animation and red color create an alarming or active-recording aesthetic during idle state.
+   - The user requested changing this badge to a calm, non-pulsing blue dot badge matching the cyan/blue palette of the peer counter badge and interface theme.
+2. **Splash Feature Card Copy Refinement**:
+   - Feature Card 1 description currently reads: `"Private data channels with no intermediate relays or storage servers."`
+   - The user requested streamlining the copy by removing the word `"data"`:
+     `"Private channels with no intermediate relays or storage servers."`
+
+---
+
+## 2. UI & Design Specifications
+
+### Header Controls Idle State (Disconnected):
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ [0] zero-chat.pages.dev                   [ 0 ] [  ● blue ] │
+│     SECURE P2P CHAT                    peer-count  58px idle
+│                                        (Badge 1)    capsule
+└─────────────────────────────────────────────────────────────┘
+```
+- `#idle-status-capsule` has blue glass styling:
+  - `background: rgba(56, 189, 248, 0.1);`
+  - `border: 1px solid rgba(56, 189, 248, 0.25);`
+  - Fixed dimensions: `58px` width, `26px` height, `border-radius: 9999px`.
+- Inner dot (`.blue-dot`):
+  - `background-color: var(--accent-cyan);` (`#38bdf8`)
+  - `box-shadow: 0 0 6px rgba(56, 189, 248, 0.6);`
+  - `animation: none;` (explicitly non-pulsing).
+
+### Welcome Splash Feature Card 1:
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ ⚡ Direct P2P Connection                                     │
+│    Private channels with no intermediate relays or          │
+│    storage servers.                                         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 3. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/index.html`:
+    - Update `<span class="status-indicator-dot red-dot">` inside `#idle-status-capsule` to `<span class="status-indicator-dot blue-dot">`.
+    - Update Card 1 description in static `#welcome-splash` to `"Private channels with no intermediate relays or storage servers."`.
+    - Update Card 1 description in `WELCOME_SPLASH_HTML` template string to `"Private channels with no intermediate relays or storage servers."`.
+  - `zero_client/style.css`:
+    - Update `.status-capsule-disconnected` to blue glass palette (`background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.25);`).
+    - Define `.status-capsule-disconnected .blue-dot` with blue color (`var(--accent-cyan)`), subtle glow (`box-shadow: 0 0 6px rgba(56, 189, 248, 0.6)`), and non-pulsing behavior (`animation: none;`).
+  - Validation:
+    - Run workspace test suite (`cargo test --workspace`) to confirm 91 tests pass.
+    - Run workspace linter (`cargo clippy --workspace --all-targets -- -D warnings`) with 0 warnings.
+- **Out-of-Scope**:
+  - Connected state layout, button behaviors, WebRTC signaling, or backend logic.
+
+---
+
+## 4. Requirements & Acceptance Criteria
+- [x] **REQ-019.1 (Non-Pulsing Blue Dot Idle Header Badge)**:
+  - In disconnected / idle mode, `#idle-status-capsule` displays a cyan/blue translucent glass background (`rgba(56, 189, 248, 0.1)`) and subtle blue border (`rgba(56, 189, 248, 0.25)`).
+  - The inner dot inside `#idle-status-capsule` displays a static cyan/blue dot (`#38bdf8`) with `animation: none;` and no opacity/scale pulsing.
+  - The capsule retains exact dimensions (`58px x 26px`) to ensure seamless alignment when splitting into active badges on connect.
+- [x] **REQ-019.2 (Splash Feature Card 1 Copy Refinement)**:
+  - Feature Card 1 description must read exactly `"Private channels with no intermediate relays or storage servers."` in both static DOM (`#welcome-splash`) and dynamic JavaScript template (`WELCOME_SPLASH_HTML`).
+- [x] **REQ-019.3 (Test Suite & Non-Regression Integrity)**:
+  - All workspace unit and integration tests (`cargo test --workspace`) and clippy checks must pass cleanly.
+
+```
+
+## FILE: openspec/changes/archive/ticket-020/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-020"
+title: "Protocol Envelopes & Mesh Routing for Selective Message Purging and Global Burn"
+state: "IN_PROGRESS"
+roadmap: "improved-leave-burn-lifecycle"
+depends_on: []
+created_at: "2026-10-18T17:05:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-020/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/improved-leave-burn-lifecycle.md`
+
+## 1. Problem Statement & Objective
+In the current zero_chat architecture, the protocol layer supports basic signaling relay and chat broadcasts, but lacks explicit signals for selective peer message destruction and global session annihilation. When a peer leaves or an active chat is burned, no signal is transmitted across the P2P mesh to inform remote peers, causing messages to persist on remote clients.
+
+This task extends `crates/zero_protocol` and `zero_client::mesh` with:
+1. `MeshRelaySignal::PeerLeftAndBurn { peer_id: String }` to inform peers to tear down the connection and purge all messages originating from the departed peer.
+2. `MeshRelaySignal::GlobalBurnSession { initiator_peer_id: String }` to inform all peers in the mesh to destroy their entire local chat session simultaneously.
+3. Broadcast and callback hooks in `MeshTopologyManager` for firing and intercepting these lifecycle signals.
+
+---
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `crates/zero_protocol/src/envelope.rs`:
+    - Add `PeerLeftAndBurn { peer_id: String }` variant to `MeshRelaySignal`.
+    - Add `GlobalBurnSession { initiator_peer_id: String }` variant to `MeshRelaySignal`.
+    - Implement serialization, deserialization, and TTL forwarding test vectors.
+  - `zero_client/src/mesh.rs`:
+    - Implement `broadcast_leave_and_burn(&self) -> Result<(), MeshError>` on `MeshTopologyManager`.
+    - Implement `broadcast_global_burn(&self) -> Result<(), MeshError>` on `MeshTopologyManager`.
+    - Implement `on_burn_peer_messages` and `on_global_burn` callback registries.
+    - Wire incoming frame handling to trigger appropriate callbacks and prune internal routing tables.
+- **Out-of-Scope**:
+  - DOM manipulation or browser HTML elements (handled in `ticket-021`).
+
+---
+
+## 3. Requirements & Acceptance Criteria
+- [ ] **REQ-020.1 (Protocol Signal Definitions)**:
+  - `MeshRelaySignal` must contain `PeerLeftAndBurn { peer_id: String }` and `GlobalBurnSession { initiator_peer_id: String }`.
+  - Both signals must serialize and deserialize cleanly to/from JSON and binary formats via `zero_protocol::envelope`.
+- [ ] **REQ-020.2 (Mesh Broadcast Routines)**:
+  - `MeshTopologyManager` must expose `broadcast_leave_and_burn(&self)` which broadcasts the signal to all active peers before disconnecting.
+  - `MeshTopologyManager` must expose `broadcast_global_burn(&self)` which floods the annihilation signal to all active peers before wiping local state.
+- [ ] **REQ-020.3 (Mesh Signal Ingestion & Callbacks)**:
+  - When `PeerLeftAndBurn` is received from a peer, the manager removes the peer from the topology and executes registered `on_burn_peer_messages` callbacks with `peer_id`.
+  - When `GlobalBurnSession` is received, the manager cleans all routing tables, severs connections, and executes registered `on_global_burn` callbacks.
+- [ ] **REQ-020.4 (Unit Test Coverage)**:
+  - Protocol roundtrip tests for the new signals in `zero_protocol`.
+  - Unit tests in `zero_client::mesh` verifying callback invocation and mesh state teardown upon signal reception.
+
+```
+
+## FILE: openspec/changes/archive/ticket-021/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-021"
+title: "Client UI & WebRTC Integration: Distinct Leave (Selective Purge) vs Burn (Global Annihilation)"
+state: "COMPLETED"
+roadmap: "improved-leave-burn-lifecycle"
+depends_on: ["ticket-020"]
+created_at: "2026-10-18T17:05:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-021/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/improved-leave-burn-lifecycle.md`
+
+## 1. Problem Statement & Objective
+In the current web client (`zero_client/index.html` and `zero_client/src/ui.rs`), the Leave button (`#header-leave-btn`) and Burn button (`#destroy-session-button`) execute the exact same local reset function (`resetToHome()`). Furthermore, messages rendered in the DOM do not track the authoring peer ID, making it impossible to selectively purge a departed user's messages without destroying the entire chat.
+
+This task updates the client layer to:
+1. Tag each message bubble in the DOM with `data-peer-id` to identify message authorship.
+2. Separate the event handlers for `#header-leave-btn` and `#destroy-session-button`:
+   - `#header-leave-btn`: Broadcasts `leave_and_burn` to remote peers, wipes local DOM, and returns the local user to the home view.
+   - `#destroy-session-button`: Broadcasts `global_burn` to remote peers, wipes local DOM, and returns the local user to the home view.
+3. Handle incoming lifecycle frames:
+   - On `leave_and_burn`: Removes all `.message-bubble[data-peer-id="..."]` for the departed peer, displays an informational system message (`[Peer left - messages burned]`), and updates peer counters.
+   - On `global_burn`: Wipes the feed immediately and invokes `resetToHome()` on all receiving peers.
+4. Implement `burn_peer_messages(peer_id: &str)` in `zero_client/src/ui.rs`.
+
+---
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/index.html`:
+    - Tag message bubbles with `data-peer-id` attribute.
+    - Wire `#header-leave-btn` click event to dispatch leave-and-burn signal before resetting home.
+    - Wire `#destroy-session-button` click event to dispatch global-burn signal before resetting home.
+    - In `ZeroWebRtcEngine` / `onMessageCb`: intercept structured lifecycle signals (`leave_and_burn`, `global_burn`).
+    - Purge matching peer messages from DOM on `leave_and_burn`.
+    - Trigger `resetToHome()` on `global_burn`.
+  - `zero_client/src/ui.rs`:
+    - Implement `burn_peer_messages(&self, peer_id: &str)` to selectively clear messages matching `peer_id`.
+    - Unit tests for selective peer message deletion and session burn.
+- **Out-of-Scope**:
+  - Rust protocol definitions (handled in `ticket-020`).
+
+---
+
+## 3. Requirements & Acceptance Criteria
+- [ ] **REQ-021.1 (Message Authorship Tracking)**:
+  - Every rendered message bubble must include a `data-peer-id` attribute reflecting its author (`self` for local user, or the peer's unique ID for incoming messages).
+- [ ] **REQ-021.2 (Distinct Leave Button Action - Selective Purge)**:
+  - Clicking `#header-leave-btn` must dispatch a `leave_and_burn` frame containing the leaving user's peer ID across all active WebRTC data channels before closing connections and invoking `resetToHome()`.
+- [ ] **REQ-021.3 (Distinct Burn Button Action - Global Annihilation)**:
+  - Clicking `#destroy-session-button` must dispatch a `global_burn` frame across all active WebRTC data channels before closing connections and invoking `resetToHome()`.
+- [ ] **REQ-021.4 (Selective Peer Message Purging on Remote Clients)**:
+  - When a peer client receives a `leave_and_burn` signal for `peer_id`, all DOM message bubbles matching `[data-peer-id="<peer_id>"]` must be removed from the feed.
+  - A clean system message must be logged (e.g. `Peer left - messages burned`).
+  - Active peer count and peer badges must be decremented without interrupting active chat among remaining peers.
+- [ ] **REQ-021.5 (Remote Global Burn Execution)**:
+  - When a peer client receives a `global_burn` signal, it must immediately execute `resetToHome()`, wiping all DOM messages, closing WebRTC channels, and returning to the welcome splash screen.
+- [ ] **REQ-021.6 (UI Engine Unit Tests)**:
+  - `zero_client::ui` unit tests confirming `burn_peer_messages` purges only targeted peer messages while preserving other participants' messages.
+
+```
+
+## FILE: openspec/changes/archive/ticket-022/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-022"
+title: "Multi-Peer Mesh Integration & E2E Handshake Validation for Leave and Burn Lifecycle"
+state: "IN_PROGRESS"
+roadmap: "improved-leave-burn-lifecycle"
+depends_on: ["ticket-021"]
+created_at: "2026-10-18T17:05:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-022/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/improved-leave-burn-lifecycle.md`
+
+## 1. Problem Statement & Objective
+With protocol signaling (`ticket-020`) and client UI bindings (`ticket-021`) implemented, end-to-end integration validation across multi-peer mesh simulations and loopback handshakes is necessary to prove correctness under concurrent conditions.
+
+This task adds comprehensive integration test suites verifying:
+1. Multi-peer selective message purging on peer departure in a 3+ node mesh topology.
+2. Multi-peer global room annihilation when any node triggers a session burn.
+3. Verification of zero regressions across all existing protocol, cryptographic, and network test suites.
+
+---
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `tests/mesh_simulation_test.rs`:
+    - Add test: `test_req_leave_and_burn_selective_message_purging`:
+      - Alice, Bob, and Charlie establish a 3-node mesh.
+      - Each sends multiple encrypted chat messages.
+      - Bob initiates `leave_and_burn`.
+      - Verify that Alice and Charlie receive the signal and drop all of Bob's messages from memory/routing.
+      - Verify that Alice and Charlie can continue exchanging messages seamlessly.
+    - Add test: `test_req_global_burn_session_annihilation`:
+      - Alice, Bob, and Charlie establish a 3-node mesh with active message feeds.
+      - Any participant initiates `burn_session`.
+      - Verify that all three nodes destroy their sessions, sever all channels, and zeroize state.
+  - Full regression validation:
+    - Run `cargo test --workspace` and `cargo clippy --workspace --all-targets -- -D warnings`.
+- **Out-of-Scope**:
+  - Production deployment or Cloudflare edge modifications.
+
+---
+
+## 3. Requirements & Acceptance Criteria
+- [ ] **REQ-022.1 (Multi-Peer Selective Message Purge Integration Test)**:
+  - An automated integration test in `tests/mesh_simulation_test.rs` must verify that when one peer leaves in a 3+ node mesh, their messages are purged from other nodes while remaining peers retain their chat history and communication links.
+- [ ] **REQ-022.2 (Multi-Peer Global Burn Integration Test)**:
+  - An automated integration test in `tests/mesh_simulation_test.rs` must verify that triggering a global burn terminates all DataChannels and purges all message feeds across all participants.
+- [ ] **REQ-022.3 (Full Workspace Non-Regression Integrity)**:
+  - All unit and integration tests across the entire Cargo workspace pass cleanly.
+  - Clippy reports zero warnings across all targets.
+
+```
+
+## FILE: openspec/changes/archive/ticket-023/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-023"
+title: "Automatic Message Purge on Dirty Peer Disconnect & Window Unload"
+state: "COMPLETED"
+roadmap: "improved-leave-burn-lifecycle"
+depends_on: ["ticket-022"]
+created_at: "2026-10-18T18:38:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-023/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/improved-leave-burn-lifecycle.md`
+
+## 1. Problem Statement & Objective
+In `ticket-021` and `ticket-022`, selective message purging was bound to explicit user interactions (clicking `#header-leave-btn` or dispatching `MeshRelaySignal::PeerLeftAndBurn`). However, when a user leaves abruptly—such as closing the browser window, navigating away, refreshing the tab, or experiencing an unannounced network severance (a "dirty disconnect")—peer clients currently only mark the peer as disconnected without purging their messages from local feeds.
+
+This task extends the selective burn lifecycle to dirty disconnects:
+1. **Mesh Layer Trigger**: When a peer's underlying DataChannel or connection terminates (`PeerLifecycleState::Closed`), `MeshTopology` must automatically invoke `on_burn_peer_messages(peer_id)` in addition to `on_peer_left(peer_id)`.
+2. **Client UI Fallback & Attribution Purge**: When `zero_client/index.html` detects that a peer's WebRTC channel has closed (`st === "closed"` or disconnect), it must query and remove all message bubbles corresponding to that departed peer (`[data-peer-id="..."]`) and display an informational system message `[Peer disconnected - messages burned]`.
+3. **Opportunistic Page Lifecycle Dissemination**: Hook `window.addEventListener("beforeunload", ...)` and `window.addEventListener("pagehide", ...)` in `zero_client/index.html` to best-effort broadcast a `leave_and_burn` frame across all active DataChannels before the browsing context terminates.
+4. **Integration Validation**: Add automated integration tests in `zero_client/tests/mesh_simulation_test.rs` ensuring abrupt channel closure triggers selective message purging across surviving mesh nodes.
+
+---
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/src/mesh.rs`:
+    - In `remove_peer` and the DataChannel state change listener (`PeerLifecycleState::Closed`), invoke `on_burn_peer_messages(peer_id)` so surviving peers automatically purge messages of the disconnected peer.
+  - `zero_client/index.html`:
+    - In `engine.onStateChange` (`st === "closed"`): selectively purge messages authored by the disconnected peer (`data-peer-id`), display `[Peer disconnected - messages burned]`, and update peer counters.
+    - Add `beforeunload` / `pagehide` listeners to broadcast `leave_and_burn` signal across active data channels.
+  - `zero_client/tests/mesh_simulation_test.rs`:
+    - Add integration test `test_req_dirty_disconnect_triggers_peer_message_purge`: 3-node connected mesh (`Alice`, `Bob`, `Charlie`). Bob experiences an abrupt channel disconnect without prior signaling; verify that Alice and Charlie detect the disconnect, drop all of Bob's messages from their feeds, and continue communicating.
+- **Out-of-Scope**:
+  - Cloudflare worker edge signaling modifications.
+
+---
+
+## 3. Requirements & Acceptance Criteria
+- [x] **REQ-023.1 (Mesh Disconnect Message Burn Trigger)**:
+  - When `MeshTopology` removes a peer or detects `PeerLifecycleState::Closed`, it must trigger both `on_peer_left_callbacks` and `on_burn_peer_messages_callbacks` for that `peer_id`.
+- [x] **REQ-023.2 (Client UI Abrupt Disconnect Purge)**:
+  - When WebRTC state transitions to `"closed"` in `zero_client/index.html`, any messages attributed to the disconnected peer in `#messages-feed` must be removed from the DOM.
+  - A clean system message `[Peer disconnected - messages burned]` must be logged to inform the remaining user.
+- [x] **REQ-023.3 (Opportunistic Unload Signaling)**:
+  - In `zero_client/index.html`, `beforeunload` and `pagehide` event handlers must best-effort dispatch a `leave_and_burn` frame over open DataChannels before teardown.
+- [x] **REQ-023.4 (Automated Multi-Peer Dirty Disconnect Integration Test)**:
+  - An automated integration test `test_req_dirty_disconnect_triggers_peer_message_purge` in `tests/mesh_simulation_test.rs` must verify that abruptly severing a peer's channel triggers selective message purging on surviving nodes while preserving surviving mesh communication.
+- [x] **REQ-023.5 (Workspace Regression & Linter Integrity)**:
+  - Full workspace test suite (`cargo test --workspace`) passes with zero failures.
+  - Zero clippy warnings across all workspace targets.
+
+```
+
+## FILE: openspec/changes/archive/ticket-024/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-024"
+title: "Peer Departure Deduplication and Disconnected Room Controls Preservation"
+state: "COMPLETED"
+created_at: "2026-10-18T20:25:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-024/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Objective
+When a peer exits a chat session—whether cleanly via `#header-leave-btn`, abruptly via browser refresh/navigation/close, or through network severance ("dirty disconnect")—the surviving participant experiences two jarring UX bugs:
+
+1. **Duplicated & Inconsistent System Messages**:
+   - Currently, an abrupt exit or page refresh fires multiple events in rapid succession (`beforeunload`, `pagehide`, and WebRTC DataChannel/PeerConnection closure).
+   - `onMessageCb` intercepts incoming `leave_and_burn` frames and logs `[Peer left - messages burned]` (often duplicated if both unload events transmit).
+   - Subsequently, `onStateChangeCb` detects `st === "closed"` and appends `[Peer disconnected - messages burned]`.
+   - The user sees up to 3 conflicting/duplicate system messages for a single departure event.
+   - **Objective**: Regardless of how a peer leaves (graceful leave button, page refresh, tab closure, or dirty disconnect), **exactly one** clean system message must be logged: `"Peer left chat"`.
+
+2. **Premature Collapse of Room Controls & Stranded Chat State**:
+   - When `st === "closed"` fires, the UI currently invokes a partial reset: it hides `#header-leave-btn`, hides `#burn-room-bar`, empties and hides `#peer-list` (which holds the lock icon), unhides the idle status blue dot `#idle-status-capsule`, hides `#message-form`, and shows `#create-room-bar` (the green new-chat button) at the bottom.
+   - However, the message transcript and user's own outgoing messages remain on screen.
+   - Because the leave button and burn button have disappeared, the user is stranded in a crippled room state where they cannot cleanly leave or burn the chat to wipe history and return to their "home" view.
+   - **Objective**: When a peer leaves/disconnects during an active chat, the room UI must preserve active session controls in a disconnected state:
+     - Top bar displays: `0` peers counter, padlock icon/pill, and leave button. The idle status blue dot remains hidden.
+     - Sub-header displays: `#burn-room-bar` (burn button) remains visible and accessible.
+     - Footer input: `#message-form` remains displayed with inputs disabled (`msgInput.disabled = true`, `sendBtn.disabled = true`, placeholder updated to indicate peer departure). `#create-room-bar` remains hidden.
+     - Leaving or Burning: When the surviving user clicks either `#header-leave-btn` or `#destroy-session-button`, `resetToHome()` executes cleanly, wiping all messages, restoring the welcome splash, restoring `#create-room-bar`, and returning the header to the idle state.
+
+---
+
+## 2. Scope Boundaries
+
+- **In-Scope**:
+  - `zero_client/index.html`:
+    - **Departure Deduplication Latch**: Introduce an idempotent departure handler / state latch (`hasPeerLeft` / session tracking) that ensures a departing peer triggers the departure lifecycle and logs `"Peer left chat"` at most once per session.
+    - **Single Standardized System Message**: Replace all bracketed messages (`[Peer left - messages burned]`, `[Peer disconnected - messages burned]`) with a single clean system notice: `"Peer left chat"`.
+    - **Disconnected Room UI State**:
+      - When a peer leaves or connection closes during an active chat:
+        - `peerCountEl`: set to `"0"`
+        - `peerListEl` (padlock pill): kept visible with lock icon intact
+        - `headerLeaveBtn`: kept visible
+        - `idleStatusCapsule`: remains hidden
+        - `burnRoomBar`: remains visible below header
+        - `messageForm`: remains visible with `msgInput.disabled = true` and `sendBtn.disabled = true`
+        - `createRoomBar`: remains hidden
+      - In `resetToHome()`: ensure full restoration of home idle state (feed cleared, splash shown, `createRoomBar` shown, `headerLeaveBtn` hidden, `burnRoomBar` hidden, padlock hidden, `idleStatusCapsule` visible).
+    - **Opportunistic Dissemination Deduplication**: Guard `sendOpportunisticLeave` against sending duplicate frames across `beforeunload` and `pagehide`.
+  - `zero_client/src/ui.rs`:
+    - Ensure native test double and DOM bindings reflect the disconnected room state requirements: peer counter displaying 0, padlock present, leave and burn actions available, transition back to home state upon `destroy_session`.
+  - `zero_client/tests/mesh_simulation_test.rs`:
+    - Verify that dirty disconnect and leave event triggers continue to operate seamlessly across the mesh.
+
+- **Out-of-Scope**:
+  - Modifying backend Durable Object or Cloudflare Worker signaling protocols.
+  - Adding persistent message storage or offline messaging.
+
+---
+
+## 3. Requirements & Acceptance Criteria
+
+- [x] **REQ-024.1 (Deduplicated Peer Departure System Message)**:
+  - Regardless of how a peer leaves (clicking `#header-leave-btn`, page refresh, tab closure, or network disconnect), surviving clients must produce **exactly one** system message: `"Peer left chat"`.
+  - No duplicate system messages may appear on page refresh or dirty disconnect.
+  - The bracketed messages `[Peer left - messages burned]` and `[Peer disconnected - messages burned]` must be eliminated in favor of `"Peer left chat"`.
+
+- [x] **REQ-024.2 (Selective Message Purge Preservation)**:
+  - When the peer leaves (either via signal or dirty disconnect), remote messages authored by that peer are immediately removed from `#messages-feed`, preserving the zero-persistence invariant.
+
+- [x] **REQ-024.3 (Disconnected Room Top Bar & Burn Controls)**:
+  - When a peer leaves/disconnects in an active session:
+    1. Header peer counter `#peer-count` displays `"0"`.
+    2. Header padlock icon (`#peer-list .peer-pill`) remains visible.
+    3. Header leave button `#header-leave-btn` remains visible.
+    4. Header idle status capsule `#idle-status-capsule` remains hidden.
+    5. Sub-header burn button bar `#burn-room-bar` remains visible below the header.
+    6. Footer `#message-form` remains visible with inputs disabled; `#create-room-bar` remains hidden.
+
+- [x] **REQ-024.4 (Clean Reset to Home via Leave or Burn)**:
+  - From the disconnected room state, clicking either `#header-leave-btn` or `#destroy-session-button` must trigger `resetToHome()`:
+    1. Message feed is wiped (`#messages-container` returns to welcome splash).
+    2. Header controls transition to idle state (padlock hidden, leave button hidden, `#idle-status-capsule` visible with blue dot, peer counter `"0"`).
+    3. `#burn-room-bar` is hidden.
+    4. Footer `#create-room-bar` is unhidden and `#message-form` is hidden.
+    5. URL hash is cleared.
+
+- [x] **REQ-024.5 (Automated Test Coverage & Linter Integrity)**:
+  - Automated tests verify:
+    - Peer departure deduplication and single `"Peer left chat"` output.
+    - Top bar and burn button retention on peer departure.
+    - Clean return to home view upon leave/burn.
+  - Full workspace test suite (`cargo test --workspace`) passes with 100% success.
+  - Zero compiler or clippy warnings (`cargo clippy --workspace`).
+
+---
+
+## 4. Architectural Approach & Implementation Plan
+
+### Client-Side State Transition Architecture
+```
+[Active Chat Session: 1 Peer]
+  |
+  +---> Peer leaves (leave_and_burn / beforeunload / pagehide / st === "closed")
+  |
+  v
+[Disconnected Room State: 0 Peers]
+  - Top Bar: [ 0 ] [Padlock] [Leave Button]
+  - Sub Bar: [Burn Chat Button]
+  - Feed: User outgoing messages + single system message "Peer left chat" (remote peer messages purged)
+  - Footer: Disabled chat input ("Peer left chat")
+  |
+  +---> User clicks [Leave Button] OR [Burn Chat Button]
+  |
+  v
+[Home Idle View]
+  - Top Bar: [ 0 ] [Blue Dot]
+  - Sub Bar: (Hidden)
+  - Feed: Welcome Splash
+  - Footer: [Create Private Chat Button]
+```
+
+### Planned Brief Decomposition (`implement-task`)
+1. **Brief 1 (`brief-impl-client-leave-ui.md`) [MEDIUM]**:
+   - Update `zero_client/index.html`:
+     - Implement departure latch to suppress duplicate frames / disconnects.
+     - Emit single `"Peer left chat"` system message.
+     - Preserve top bar controls (`peerCountEl = "0"`, padlock visible, leave button visible, idle capsule hidden) and `#burn-room-bar` visible on peer departure.
+     - Keep message form visible in disabled state; leave `#create-room-bar` hidden until leave/burn is clicked.
+     - Ensure `resetToHome()` cleanly returns to home view.
+2. **Brief 2 (`brief-val-tests.md`) [MEDIUM]**:
+   - Update `zero_client/src/ui.rs` and `zero_client/tests/mesh_simulation_test.rs` to validate the deduplicated `"Peer left chat"` lifecycle, top bar state preservation, and clean return to home view.
+
+```
+
+## FILE: openspec/changes/archive/ticket-025/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-025"
+title: "Multi-Peer Browser WebRTC Engine & Connection Pool"
+state: "COMPLETED"
+roadmap: "multi-user-mesh-chat"
+depends_on: []
+created_at: "2026-10-18T21:02:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-025/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/multi-user-mesh-chat.md`
+
+## 1. Problem Statement & Objective
+Currently, `zero_client/index.html` manages a single `RTCPeerConnection` instance and a single `RTCDataChannel` inside `ZeroWebRtcEngine`. As a result, the application can only communicate with 1 peer at a time.
+
+This task refactors `ZeroWebRtcEngine` into a multi-peer WebRTC connection pool:
+1. Maintain a dynamic map of connected peers: `Map<peerId, { pc: RTCPeerConnection, dc: RTCDataChannel, state: string }>`.
+2. Allow creating multiple independent offers and accepting multiple independent answers concurrently.
+3. Broadcast messages (`send_text(text)`) across all active, open DataChannels.
+4. Support dynamic peer addition, individual peer state change monitoring, and individual peer teardown without terminating the overall room session.
+
+---
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/index.html`:
+    - Refactor `ZeroWebRtcEngine` class to support multi-peer connection pooling.
+    - Provide APIs: `create_peer_offer(peerId)`, `accept_peer_answer(peerId, answerSdp)`, `create_peer_answer(peerId, offerSdp)`, `broadcast_text(text)`, `close_peer(peerId)`.
+    - Handle incoming DataChannels on `pc.ondatachannel` associated with their respective remote peers.
+- **Out-of-Scope**:
+  - In-band relay protocol handling between secondary peers (deferred to `ticket-026`).
+  - Header Add-Peer UI button and clipboard lifecycle (deferred to `ticket-027`).
+
+---
+
+## 3. Requirements & Acceptance Criteria
+- [x] **REQ-025.1 (Multi-Peer Pool Architecture)**:
+  - `ZeroWebRtcEngine` manages multiple `RTCPeerConnection` and `RTCDataChannel` instances indexed by unique `peerId`.
+- [x] **REQ-025.2 (Message Broadcasting)**:
+  - `broadcast_text(text)` sends the payload to all currently open DataChannels in the pool.
+- [x] **REQ-025.3 (Individual Peer Lifecycle Tracking)**:
+  - Individual peer disconnection transitions update only that peer's state; the engine remains active as long as at least one peer or active session exists.
+- [x] **REQ-025.4 (Workspace Integrity & Compilation)**:
+  - Clean HTML/JS syntax and 0 regressions across existing test suite (`cargo test --workspace`).
+
+```
+
+## FILE: openspec/changes/archive/ticket-026/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-026"
+title: "In-Band SDP Signaling Relay & Mesh Snapping in Browser Client"
+state: "COMPLETED"
+roadmap: "multi-user-mesh-chat"
+depends_on: ["ticket-025"]
+created_at: "2026-10-18T21:02:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-026/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/multi-user-mesh-chat.md`
+
+## 1. Problem Statement & Objective
+When multiple peers join a room hosted by Alice (e.g. Bob and Charlie), establishing direct P2P connections between Bob and Charlie without contacting Cloudflare servers requires **in-band signaling relay** (REQ-006.1, REQ-006.2).
+
+This task implements in-band SDP relay handling inside the browser client (`zero_client/index.html`):
+1. When secondary peer Charlie connects to Alice, Alice introduces Charlie to Bob by transmitting a relay offer frame over existing DataChannels.
+2. Bob and Charlie exchange SDP offer/answer through Alice's bridge.
+3. Bob and Charlie snap a direct WebRTC DataChannel directly between each other with **0 cloud server requests**.
+4. Gossip message forwarding and loop deduplication ensure messages reach all nodes once.
+
+---
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/index.html`:
+    - Implement in-band relay signaling protocols matching `zero_protocol::envelope::MeshRelaySignal`.
+    - Handle `RelaySdpOffer` and `RelaySdpAnswer` payload routing in `engine.onMessageCb`.
+    - Direct channel snapping between secondary peers.
+    - Message deduplication cache (`seen_message_ids`).
+- **Out-of-Scope**:
+  - Cloudflare worker edge changes (edge is severed after dead drop).
+  - UI Header Add-Peer button (deferred to `ticket-027`).
+
+---
+
+## 3. Requirements & Acceptance Criteria
+- [x] **REQ-026.1 (In-Band SDP Relay Bridging)**:
+  - Host transparently forwards sealed relay signaling frames between connected peers without modifying payloads.
+- [x] **REQ-026.2 (Direct Mesh Snapping)**:
+  - Secondary peers snap direct WebRTC DataChannels with 0 edge requests.
+- [x] **REQ-026.3 (Gossip Message Flooding & Loop Suppression)**:
+  - Multi-hop chat messages flood across direct links with TTL hops and message deduplication.
+- [x] **REQ-026.4 (Workspace Integrity & Regression)**:
+  - Full workspace test suite passes with 0 failures and 0 warnings.
+
+```
+
+## FILE: openspec/changes/archive/ticket-027/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-027"
+title: "Header Add-Peer Button, Single-Invite Lifecycle & Multi-User Room UI"
+state: "COMPLETED"
+roadmap: "multi-user-mesh-chat"
+depends_on: ["ticket-026"]
+created_at: "2026-10-18T21:02:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-027/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/multi-user-mesh-chat.md`
+
+## 1. Problem Statement & Objective
+In an active multi-user room, users need an intuitive, non-wasteful way to invite additional participants, and the room UI must adapt dynamically as participants join and leave:
+
+1. **Header Add-Peer Button Placement**:
+   - An Add-Peer button (`#header-add-btn` with `+` icon) must be placed in the header directly to the **left** of the `#peer-count` badge.
+   - Visible only during active chat sessions; hidden during idle/disconnected states.
+2. **Strictly Non-Wasteful Single-Invite Lifecycle**:
+   - Only **one active invite** may be pending at any given time to avoid spawning redundant cloud signaling sessions or orphan WebRTC connections.
+   - When clicked, generates one invite offer bundle, registers the dead-drop token for this room, and copies the link to the clipboard.
+   - If an invite is already pending, subsequent clicks re-copy the existing valid link without spawning duplicate connections.
+   - When the invited peer connects (DataChannel opens), the pending invite is consumed/cleared, allowing generation of the next invite.
+3. **No Tooltip Messages**:
+   - The link is copied silently to `navigator.clipboard`; no tooltip or popup bubble is rendered.
+4. **Dynamic Multi-Peer UI**:
+   - Peer counter `#peer-count` dynamically updates (`0`, `1`, `2`, `3`...).
+   - Each peer is assigned a distinct color from `PEER_COLOR_PALETTE`.
+   - When 1 of N peers departs (e.g. 3 -> 2), only that peer's messages are purged, a single `"Peer left chat"` notice is emitted, and the surviving peers remain in active chat.
+   - Only when the peer count reaches `0` does the UI transition to the disconnected room state.
+
+---
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/index.html`:
+    - Header DOM layout: insert `#header-add-btn` to the left of `#peer-count`.
+    - Single active invite state tracking (`pendingInviteUrl`, `pendingInvitePeerId`).
+    - Silent clipboard copying without tooltip.
+    - Dynamic peer counter increment and decrement.
+    - Per-peer message bubble coloring and attribution.
+    - Multi-peer partial departure handling.
+  - `zero_client/src/ui.rs`:
+    - Update `ChatUi` test double to track dynamic peer additions, removals, and multi-peer selective purges.
+- **Out-of-Scope**:
+  - Backend Durable Object modifications.
+
+---
+
+## 3. Requirements & Acceptance Criteria
+- [x] **REQ-027.1 (Header Add-Peer Button Placement)**:
+  - Button placed directly to the left of `#peer-count` badge in the header. Visible only in active chat.
+- [x] **REQ-027.2 (Single Active Invite Lifecycle & Zero Cloud Waste)**:
+  - Generates exactly one pending invite bundle at a time.
+  - Re-clicking while pending re-copies the existing valid link without spawning duplicate cloud sessions.
+  - Clears pending state upon successful peer channel establishment.
+- [x] **REQ-027.3 (Silent Copy & No Tooltip)**:
+  - Copies link directly to clipboard; strictly no tooltip element rendered.
+- [x] **REQ-027.4 (Dynamic Multi-Peer Counter & Partial Departure)**:
+  - `#peer-count` displays accurate peer count (e.g. 2, 3...).
+  - When 1 of N peers leaves, only their messages are purged; session remains active for surviving peers with decremented counter.
+- [x] **REQ-027.5 (Workspace Integrity & Tests)**:
+  - Full workspace test suite passes with 0 failures and 0 clippy warnings.
+
+```
+
+## FILE: openspec/changes/archive/ticket-028/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-028"
+title: "Multi-Peer E2E Simulation & Mesh Snapping Validation Suite"
+state: "COMPLETED"
+roadmap: "multi-user-mesh-chat"
+depends_on: ["ticket-027"]
+created_at: "2026-10-18T21:02:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-028/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/multi-user-mesh-chat.md`
+
+## 1. Problem Statement & Objective
+With multi-peer mesh connections, in-band relay signaling, and header add-peer invite controls implemented, comprehensive end-to-end integration tests must validate the full multi-user mesh lifecycle under simulated real-world conditions:
+
+1. Validate 3+ peer mesh establishment (Alice, Bob, Charlie).
+2. Validate in-band relay snapping between Bob and Charlie with 0 edge hits.
+3. Validate multi-hop message delivery, broadcast flooding, and loop suppression across triangular/cyclic meshes.
+4. Validate partial peer departure (e.g. Bob departs; Alice and Charlie retain communication and selectively purge only Bob's messages).
+5. Validate full workspace regression suite and zero compiler/clippy warnings.
+
+---
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/tests/mesh_simulation_test.rs`:
+    - Integration tests covering 3+ node mesh snapping, gossip flooding, partial peer departures, and dynamic peer counter synchronization.
+  - `zero_client/src/ui.rs`:
+    - Unit tests validating dynamic multi-peer list management, selective purging, and explicit session destroy.
+- **Out-of-Scope**:
+  - Live production Cloudflare deployment.
+
+---
+
+## 3. Requirements & Acceptance Criteria
+- [x] **REQ-028.1 (Multi-Node Connected Mesh Simulation Test)**:
+  - Integration test verifies 3+ node mesh establishment and direct channel snapping.
+- [x] **REQ-028.2 (Partial Peer Departure & Feed Survivability)**:
+  - Verifies that when 1 node departs a 3-node mesh, surviving nodes continue communicating and purge only the departed peer's messages.
+- [x] **REQ-028.3 (Full Workspace Test Suite & Linter Integrity)**:
+  - `cargo test --workspace` passes with 100% success.
+  - `cargo clippy --workspace --all-targets -- -D warnings` reports 0 warnings.
+  - `cargo check --target wasm32-unknown-unknown -p zero_client` is clean.
+
+```
+
+## FILE: openspec/changes/archive/ticket-029/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-029"
+title: "Multi-User Chat Usability and Mesh Lifecycle Fixes"
+state: "COMPLETED"
+created_at: "2026-10-19T21:12:00Z"
+completed_at: "2026-10-19T21:55:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-029/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Objective
+Testing of the multi-user mesh chat functionality revealed usability friction in the home view and critical state synchronization defects across multi-participant sessions:
+
+1. **Home View Create Chat Button & Share Link Simplification**:
+   - The current flow requires clicking "Create Private Chat" and then interacting with a separate read-only input bar (`#invite-bar`) and copy button (`#copy-invite-button`).
+   - The user experience should be streamlined: eliminate the `#invite-bar` and copy button view. Clicking "Create Chat" in the home view should immediately copy the share link to the user's clipboard and display a clear on-click feedback message indicating the link was copied.
+2. **Peer Counter Synchronization Across All Clients**:
+   - When a 3rd client joins, the peer count badge (`#peer-count`) is only incremented on the client that generated the invite link.
+   - Root causes: hardcoded `"peer-01"` ID collisions prevent secondary peer identification, glare condition logic in `signal.PeerJoined` fails when both joining peers evaluate `isJoining == true`, and only the host was triggering peer introductions.
+3. **Selective Message Purging on Peer Departure**:
+   - When a 3rd participant leaves, their messages are not cleared from other clients' feeds.
+   - Root cause: `leavingPeerId` in `onMessageCb` prioritized `incomingPeerId` over the explicit `peer_id` in the leave signal, misattributing the departing peer to the intermediate relay peer.
+4. **Preserving Messages & Session Continuity When Original Pair Member Leaves**:
+   - When participant 1 or 2 (the initial pair) leaves a 3-user chat, all messages in the feed are mistakenly wiped on surviving clients.
+   - Root cause: due to failure of direct secondary mesh snapping, surviving clients fell to 0 connections and triggered the total session wipe branch. With direct mesh channels intact, surviving clients must remain connected, purge only the departed peer's messages, and keep each other's messages intact.
+5. **Inconsistent Peer System Messages**:
+   - Remote peer join notices display inconsistent text, leaking internal debug identifiers such as `"Peer (peer-svomrn) joined chat"` instead of clean user-facing notices. All peer system notices must be standardized.
+
+---
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/index.html`:
+    - Remove `#invite-bar` (input field and copy button).
+    - Simplify `#btn-create-room` in `#create-room-bar`.
+    - Automatically copy invite link to clipboard upon room creation and display clear on-click feedback.
+    - Remove hardcoded `"peer-01"` references and propagate real, unique peer IDs in invite payloads (`host_peer_id`) and dead-drop answers (`joiner_peer_id`).
+    - Fix glare avoidance in `PeerJoined` to use strictly deterministic `myPeerId < remotePeerId`.
+    - Trigger peer introductions whenever any connected peer adds a new participant.
+    - Fix `leavingPeerId` extraction to prioritize `data.peer_id` from the leave payload.
+    - Standardize system messages: `"Secure chat created"`, `"Joined chat"`, `"Peer joined chat"`, and `"Peer left chat"`.
+  - `zero_client/style.css`:
+    - Clean up `#invite-bar` styles.
+    - Style the simplified Create Chat button and copied feedback states.
+  - `tests/` and `zero_client/src/ui.rs`:
+    - Update/add automated tests validating multi-peer counter synchronization, selective message purge upon departure of non-host and host peers, and UI presence states.
+- **Out-of-Scope**:
+  - Modifications to Cloudflare Worker edge or Durable Object core logic.
+
+---
+
+## 3. Requirements & Acceptance Criteria
+
+- [x] **REQ-029.1 (Simplified Home View Create Chat & Direct Clipboard Copy)**:
+  - The read-only `#invite-bar` and `#copy-invite-button` are removed from the home view.
+  - Clicking `#btn-create-room` initiates the room, immediately copies the generated invite URL to `navigator.clipboard`, and displays a clear on-click indication (e.g. button feedback state and system notice) that the share link was copied.
+  - While waiting for a peer to join, subsequent clicks re-copy the active invite link and re-display the copied feedback.
+- [x] **REQ-029.2 (Consistent Peer System Messages)**:
+  - System messages for peer arrival must strictly and consistently read `"Peer joined chat"` without leaking internal IDs like `(peer-svomrn)`.
+  - Departures must consistently read `"Peer left chat"`.
+  - Self-joining reads `"Joined chat"`, and room creation reads `"Secure chat created"`.
+- [x] **REQ-029.3 (Peer Counter Synchronization Across Full Mesh)**:
+  - Real, unique peer IDs are used across all signaling envelopes (`host_peer_id`, `joiner_peer_id`).
+  - Glare tie-breaker is strictly `myPeerId < remotePeerId`, enabling all secondary peers to establish direct DataChannels.
+  - When a 3rd peer joins, every client in the room updates `#peer-count` in unison to reflect the correct number of connected peers (e.g. `2` on all 3 clients).
+- [x] **REQ-029.4 (Selective Message Purge on 3rd Peer Departure)**:
+  - When a 3rd peer departs (`leave_and_burn` or channel close), `leavingPeerId` accurately resolves to the 3rd peer's ID across all clients.
+  - Only the 3rd peer's message bubbles (`.message-bubble[data-peer-id="..."]`) are purged from remaining clients' feeds.
+  - Surviving peers emit a single `"Peer left chat"` notice and decrement `#peer-count`.
+- [x] **REQ-029.5 (Feed Continuity on Host/Original Peer Departure)**:
+  - When the 1st or 2nd user leaves a multi-user chat with surviving participants, surviving participants maintain direct DataChannels.
+  - Only the departing peer's messages are purged; other surviving peers' messages and own messages are strictly preserved.
+  - The chat remains active until the last peer leaves.
+- [x] **REQ-029.6 (Workspace Integrity & Test Verification)**:
+  - All workspace tests pass (`cargo test --workspace`), zero clippy warnings (`cargo clippy --workspace --all-targets -- -D warnings`), and `wasm32-unknown-unknown` compiles cleanly.
+
+---
+
+## 4. Verification Plan
+
+| Test ID | Description | Expected Result |
+|---|---|---|
+| `V-029-1` | Click `#btn-create-room` in home view | Invite link copied to clipboard, on-click feedback displayed, `#invite-bar` absent |
+| `V-029-2` | 3-node simulation: Alice, Bob, Charlie join | All 3 nodes report `peer_count == 2`, system messages read `"Peer joined chat"` |
+| `V-029-3` | Charlie sends message then departs | Only Charlie's messages purged from Alice and Bob; Alice and Bob keep own/each other's messages; peer count drops to 1 |
+| `V-029-4` | Alice (host) departs from 3-node room | Only Alice's messages purged from Bob and Charlie; Bob and Charlie keep messages and continue chatting |
+| `V-029-5` | Workspace test suite | `cargo test --workspace` passes 100% |
+
+```
+
+## FILE: openspec/changes/archive/ticket-030/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-030"
+title: "Fix Peer Counter Behavior and Browser Mesh Snapping Lifecycle"
+state: "COMPLETED"
+created_at: "2026-10-20T20:25:00Z"
+completed_at: "2026-10-20T20:53:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-030/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Objective
+Testing of 3-participant chat sessions revealed an asymmetry in peer counter behavior and a breakdown of full mesh connectivity:
+
+1. **Observed Peer Counter Symptoms**:
+   - When a 3rd user joins a chat, only the client that generated the invite sees their peer counter increment (`1 -> 2`); the non-inviting existing client and the new joining client remain at `1`.
+   - When the 3rd user leaves, only the client that generated the invite sees their peer counter decrement (`2 -> 1`); the non-inviting client remains at `1`.
+   - When the 2nd user (who invited the 3rd user) leaves, both the 1st and 3rd client peer counters decrement (`1 -> 0`), dropping to disconnected state.
+   - When the 1st user leaves, only the 2nd client peer counter decrements (`2 -> 1`); the 3rd client's counter is unaffected.
+
+2. **Root Cause Analysis**:
+   - In ZeroChat, the peer count badge (`#peer-count`) displays `engine.openPeerCount` (the number of open, direct WebRTC DataChannels on the local client).
+   - In a fully connected 3-participant mesh ($K_3$), every node connects directly to every other node (3 nodes, 3 bidirectional channels), meaning every client should report `openPeerCount == 2`.
+   - The observed behavior proves that the network topology degraded into an incomplete star graph (`Client 1 <--> Client 2 <--> Client 3`), where Client 2 (the inviter) was connected to both clients, but Client 1 and Client 3 failed to establish a direct P2P DataChannel connection.
+   - This failure occurs during the secondary in-band relay signaling flow (`PeerJoined` -> `RelaySdpOffer` -> `RelaySdpAnswer`):
+     - Vanilla ICE gathering in `_waitForIceGatheringComplete` or candidate serialization issues over the relay bridge cause secondary channel connection attempts between non-inviting peers to stall or fail.
+     - Glare tie-breaker and peer ID keying in `engine.peers` may fail to establish or attach the data channel on the secondary edge.
+     - Lack of reconnection/retry logic prevents surviving non-inviting peers from recovering full mesh connectivity.
+
+3. **Objective**:
+   - Fix the secondary in-band WebRTC handshake and mesh snapping mechanism in `zero_client/index.html` so that whenever a 3rd participant joins (regardless of whether the host or joiner invited them), the direct data channel between the two non-inviting peers reliably connects.
+   - Ensure the `#peer-count` badge synchronizes in unison across all connected clients (`2` on all 3 clients when all 3 are present).
+   - Ensure peer departure updates the peer counter accurately on all surviving clients (`2 -> 1` on both surviving clients when any 1 peer leaves).
+
+---
+
+## 2. Scope Boundaries
+
+- **In-Scope**:
+  - `zero_client/index.html`:
+    - Fix secondary in-band WebRTC mesh snapping (`PeerJoined`, `initiateRelayHandshake`, `RelaySdpOffer`, `RelaySdpAnswer`) to ensure complete candidate gathering, proper SDP exchange, and reliable data channel open.
+    - Ensure peer connection states and ID mappings in `engine.peers` are properly tracked and renamed across intermediate relay hops.
+    - Synchronize `#peer-count` across all clients to accurately reflect full mesh connectivity.
+    - Validate departure handling (`handlePeerDeparture`) so that when any peer leaves, surviving peers update `#peer-count` in unison.
+  - `tests/` and `zero_client/src/`:
+    - Add/update automated integration tests covering 3-node secondary mesh snapping, peer counter synchronization across all nodes, and asymmetric departure scenarios.
+- **Out-of-Scope**:
+  - Cloudflare Worker edge or Durable Object infrastructure modifications.
+  - UI visual layout or styling redesign.
+
+---
+
+## 3. Requirements & Acceptance Criteria
+
+- [x] **REQ-030.1 (Reliable Browser Secondary Mesh Snapping)**:
+  - When a 3rd participant joins via an invite link generated by either participant in a 2-user chat, the two non-inviting peers must automatically and reliably establish a direct WebRTC DataChannel via the in-band relay bridge.
+  - Both secondary peers must complete ICE gathering and exchange complete SDP offers/answers without stalling or dropping candidate data.
+  - The resulting topology must be a full triangle mesh ($K_3$) where each of the 3 clients has direct, open DataChannels to the other 2 clients.
+
+- [x] **REQ-030.2 (Unified Multi-Peer Counter Synchronization)**:
+  - When the 3rd participant joins, all three clients in the session must update `#peer-count` to `2`.
+  - No client may remain at `1` once the 3rd participant is connected.
+
+- [x] **REQ-030.3 (Symmetric Departure Counter Updates Across Surviving Peers)**:
+  - When any one of the 3 participants leaves the chat (whether the host, the inviter, or the joiner):
+    - Both surviving participants must remain connected to each other via their direct DataChannel.
+    - Both surviving participants must decrement their `#peer-count` from `2` to `1`.
+    - Both surviving participants must emit a single `"Peer left chat"` notice and selectively purge only the departed peer's messages from their feeds.
+
+- [x] **REQ-030.4 (Host Departure Survivability)**:
+  - If the original room host (User 1) leaves a 3-user session, User 2 and User 3 must continue chatting without session collapse or feed wipe.
+  - Both surviving clients must show `#peer-count` = `1`.
+
+- [x] **REQ-030.5 (Workspace Integrity & Test Suite Passing)**:
+  - All workspace tests pass (`cargo test --workspace`), zero clippy warnings (`cargo clippy --workspace --all-targets -- -D warnings`), and the client compiles cleanly.
+
+---
+
+## 4. Verification Plan
+
+| Test ID | Description | Expected Result |
+|---|---|---|
+| `V-030-1` | 3-node mesh join (User 2 invites User 3) | Direct DataChannel established between User 1 and User 3; `#peer-count` displays `2` on User 1, User 2, and User 3 |
+| `V-030-2` | 3-node mesh join (User 1 invites User 3) | Direct DataChannel established between User 2 and User 3; `#peer-count` displays `2` on User 1, User 2, and User 3 |
+| `V-030-3` | 3rd user departs from 3-user chat | Both surviving clients (User 1 and User 2) remain connected, `#peer-count` decrements to `1` on both |
+| `V-030-4` | 2nd user (hub inviter) departs from 3-user chat | Surviving clients (User 1 and User 3) maintain direct connection, `#peer-count` decrements to `1` on both |
+| `V-030-5` | 1st user (host) departs from 3-user chat | Surviving clients (User 2 and User 3) maintain direct connection, `#peer-count` decrements to `1` on both |
+| `V-030-6` | Full workspace test suite | `cargo test --workspace` passes 100% |
+
+```
+
+## FILE: openspec/changes/archive/ticket-031/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-031"
+title: "Multi-User Chat Resilient Full-Mesh Joining/Leaving"
+state: "COMPLETED"
+completed_at: "2026-10-24T10:15:00Z"
+created_at: "2026-10-23T21:20:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-031/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Objective
+
+**Observed (user report)**:
+1. Client A creates a chat and invite; Client B joins. A generates a second invite; Client C joins.
+2. A leaves. C sends a message. **B never displays it.**
+3. Conclusion drawn: B and C are only connected *indirectly through A* (star topology), not directly.
+
+**Expected**: a multi-user chat keeps working as long as **at least 2 clients remain connected**, regardless of who invited whom or who leaves first. Every client must hold a direct DataChannel to every other client (full mesh) so no participant is a single point of failure.
+
+### Hypothesised Root Causes (to be confirmed by Reproduce step, REQ-031.1)
+All in the browser mesh logic in `zero_client/index.html`; ticket-029/030 attempted fixes but the star topology persists:
+
+| # | Hypothesis | Location |
+|---|---|---|
+| H1 | Secondary direct snap (`PeerJoined` -> `RelaySdpOffer` -> `RelaySdpAnswer`) silently fails or races (introduction sent before the new channel is usable, relay handshake aborted when the relay peer leaves mid-handshake, 3s ICE gathering timeout producing candidate-less SDP). | `engine.onPeerStateChangeCb`, `initiate_relay_handshake`, `_waitForIceGatheringComplete` |
+| H2 | `create_peer_offer` / `create_peer_answer` call `close_peer()` on an existing entry, firing `onPeerStateChangeCb("closed")` -> spurious `handlePeerDeparture` (adds to `departedPeers`, purges bubbles, emits "Peer left chat") and may tear down a live link. `departedPeers` is never cleared on reconnect. | `create_peer_offer`, `create_peer_answer`, `handlePeerDeparture` |
+| H3 | `activeSessionPeers` is populated optimistically (on `PeerJoined`, `RelaySdpOffer/Answer`) before any DataChannel is open, so the counter and `survivingCount = max(openPeerCount, activeSessionPeers.size)` report a healthy session while no direct channel exists, masking failure. | `updatePeerCountDisplay`, `handlePeerDeparture` |
+| H4 | Only one side initiates (`myPeerId < remotePeerId`); if that offer is lost, the other never retries - no retry, timeout, or reconciliation of expected vs. actual mesh links. | `PeerJoined` handler |
+| H5 | Send path (`broadcast_text`) throws or sends only to existing channels; sender shows message locally with no failure indication. | `broadcast_text`, send handler |
+
+## 2. Scope Boundaries
+- **In-Scope**:
+  - `zero_client/index.html`: mesh engine, introduction/relay-handshake logic, peer lifecycle, departure handling, peer counter source of truth.
+  - `zero_client/src/mesh.rs` / `zero_client/src/ui.rs`: Rust-side parity of protocol/state-machine changes, and tests.
+  - `tests/` and `zero_client/tests/`: simulation/regression tests for the A/B/C scenario.
+- **Out-of-Scope**:
+  - Cloudflare Worker / Durable Object signalling (`zero_network`).
+  - TURN servers / guaranteed NAT traversal (a direct-connection failure between two NATed peers is reported, not solved).
+  - UI redesign.
+
+## 3. Requirements & Acceptance Criteria
+
+- [x] **REQ-031.1 (Reproduce & Diagnose First)**:
+  - A failing automated test (Rust mesh simulation and/or headless browser scenario) reproduces: A-B joined, A-C joined, A leaves, C sends, B receives nothing.
+  - The implementer documents the confirmed root cause(s) (H1-H5 or new) in its report before fixing.
+- [x] **REQ-031.2 (Full-Mesh Guarantee)**:
+  - When C joins via any member, within a bounded time (<= 10s) C holds a direct open DataChannel to **every** other member, verified on both ends.
+  - Joins through a different inviter (e.g. B invites D) likewise yield links to all members.
+  - Introduction/handshake is idempotent, glare-safe, and never closes/replaces an already-open channel (H2).
+- [x] **REQ-031.3 (Mesh Reconciliation / Retry)**:
+  - Each client tracks known session members (from `PeerJoined` introductions) and periodically reconciles them against open channels; a missing link triggers a re-handshake with bounded retries/backoff via any still-connected peer as relay.
+  - Handshake failure after retries is logged and surfaced, not silent.
+  - Either side may initiate after the deterministic tie-breaker window expires (H4).
+- [x] **REQ-031.4 (Survives Any Departure While >= 2 Remain)**:
+  - After the original host (or any single member) leaves, remaining clients keep direct channels, can send/receive to each other, and the chat stays active.
+  - Only the departed peer's bubbles are purged; others' messages preserved.
+  - The session returns to home only when no other peer remains.
+- [x] **REQ-031.5 (Truthful Peer Count & State)**:
+  - `#peer-count` and `survivingCount` derive from actually **open** DataChannels only (H3).
+  - Re-handshaking a link never triggers "Peer left chat" or purges; `departedPeers` entries are cleared when that peer legitimately reconnects.
+- [x] **REQ-031.6 (Send Reliability Feedback)**:
+  - Messages go to all open channels; if none are open the UI shows a clear error instead of showing the message as delivered (H5).
+  - Gossip forwarding stays as fallback for not-yet-direct links, with dedup preserved.
+- [x] **REQ-031.7 (Workspace Integrity)**:
+  - `cargo test --workspace` passes, `cargo clippy --workspace --all-targets -- -D warnings` clean, `wasm32-unknown-unknown` build clean; ticket-029/030 behaviours (single-click copy invite, system messages, selective purge) not regressed.
+- [x] **REQ-031.8 (Review Cycle 1 Hardening)**:
+  - (a) Browser glare handling: when an incoming `RelaySdpOffer` arrives while a local outgoing offer to the same peer is `connecting`, the lower peer ID (`myPeerId < remotePeerId`) keeps its offer and ignores the incoming one; the higher ID rolls back its offer and answers. Crossed offers must converge without waiting for the 8s watchdog.
+  - (b) Browser stalled-`connecting` watchdog runs even when zero open peers remain; orphaned connecting peers are cleaned and the UI transitions to disconnected.
+  - (c) Rust `reconcile_mesh` applies the same tie-breaker (`local_peer_id < member.peer_id` initiates immediately; otherwise only after a grace/attempt threshold) for parity with the browser.
+  - Regression tests for each (browser harness for a and b; Rust simulation for c).
+
+---
+
+## 4. Verification Plan
+
+| Test ID | Description | Expected Result |
+|---|---|---|
+| `V-031-1` | Sim: A-B, A invites C; assert link table | B-C direct link exists; all three have 2 open peers |
+| `V-031-2` | After V-031-1, A leaves; C sends | B receives; both stay active, count 1 each |
+| `V-031-3` | After V-031-1, B leaves instead; A sends | C receives; symmetric |
+| `V-031-4` | 4 clients, chain joins (A->B, B->C, C->D), A leaves | B, C, D fully meshed and chatting |
+| `V-031-5` | Relay handshake dropped once | Reconciliation retries; link established |
+| `V-031-6` | Re-handshake over open link | Channel not closed; no "Peer left chat"; no purge |
+| `V-031-7` | Last two clients, one leaves | Remaining client returns to home state |
+| `V-031-8` | Browser (headless/manual): 3 tabs per user scenario | B displays C's message after A closes tab |
+| `V-031-9` | Workspace test/clippy/wasm build | All pass |
+
+## 5. Target Architecture & Affected Modules
+- `zero_client/index.html` (JS mesh engine + UI glue) - primary.
+- `zero_client/src/mesh.rs`, `zero_client/src/ui.rs` - parity + tests.
+- `tests/mesh_simulation_test.rs`, `zero_client/tests/*` - regression tests.
+
+## 6. Brief Decomposition (executed by `implement-task`)
+
+Stage 1 (parallel, disjoint blast radius):
+
+| Brief | Size | Files | Covers |
+|---|---|---|---|
+| `brief-impl-031-browser` - diagnose (REQ-031.1) and fix JS mesh H1-H5, truthful count, reconciliation loop | H | `zero_client/index.html` | REQ-031.1-.6 (browser) |
+| `brief-impl-031-rust` - Rust mesh: A/B/C regression sim tests V-031-1..7, reconciliation + idempotent snap parity | H | `zero_client/src/mesh.rs`, `zero_client/tests/mesh_simulation_test.rs` | REQ-031.1-.5 (Rust model) |
+
+Stage 2: `brief-validation` (L), then reviewer cycles (max 3).
+
+## 7. Risks / Open Questions
+- Browser root cause may only reproduce with real WebRTC; mitigation: V-031-8.
+- Symmetric NAT without TURN can legitimately block B-C; we surface the failure and keep the star link as gossip fallback.
+
+```
+
+## FILE: openspec/changes/archive/ticket-032/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-032"
+title: "Canonical Pre-Assigned Peer IDs and Resilient Full-Mesh Snapping"
+state: "COMPLETED"
+created_at: "2026-10-24T12:50:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-032/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Root Cause Analysis
+
+In manual browser testing of a 3-user chat session, the network topology degraded into an unroutable star topology ($B \leftrightarrow A \leftrightarrow C$):
+1. Client 1 created a chat; Client 2 joined. Both reported `#peer-count = 1`.
+2. Client 1 generated a second invite link (`+` button); Client 3 joined.
+   - Client 1 reported `#peer-count = 2`.
+   - Client 2 and Client 3 both reported `#peer-count = 1` (Client 2 and Client 3 failed to establish a direct DataChannel).
+3. Client 1 (the initial host) departed.
+   - Client 2 and Client 3 both saw `#peer-count` drop to `0`.
+   - Client 2 and Client 3 were completely disconnected and unable to message each other.
+   - On both surviving clients, `"Peer left chat"` was logged twice.
+
+### Root Cause Analysis:
+1. **Cloudflare Worker Serde Stripping**: In `zero_network/src/handlers.rs`, the HTTP `POST /drop/:do_id/:uuid` endpoint parses the request body into `DropPayload` and re-serializes it over the host WebSocket. Because `DropPayload` in `crates/zero_protocol/src/envelope.rs` lacked a `joiner_peer_id` field, Serde silently stripped `joiner_peer_id` during re-serialization.
+2. **Peer ID Desynchronization**: On Client 1, `drop.joiner_peer_id` arrived as `undefined`, causing Client 1 to fall back to `invitePeerId` (`peer-abc`). Meanwhile, Client 3 used its own self-generated random `localPeerId` (`peer-333`).
+3. **Unroutable In-Band Signaling**: When Client 1 introduced Client 2 and Client 3 via `PeerJoined`, Client 2 dispatched `RelaySdpOffer` targeted to `to_peer_id: "peer-abc"`. Client 3 received this packet, saw that `to_peer_id !== myPeerId` (`"peer-abc" !== "peer-333"`), and treated the packet as an unroutable bridge frame rather than an offer directed to itself, never generating an answer.
+4. **Duplicate Departure Emissions**: In `onMessageCb`, `handlePeerDeparture(leavingPeerId)` was invoked directly, while `close_peer(leavingPeerId)` asynchronously triggered `onPeerStateChangeCb("closed")`, which also invoked `handlePeerDeparture(leavingPeerId)`.
+
+---
+
+## 2. Scope Boundaries
+
+- **In-Scope**:
+  - `zero_client/index.html`:
+    - Generate `assigned_peer_id` for invitees during room/invite creation and pack into `#payload=` URL hash.
+    - Adopt `assigned_peer_id` on join (`joinRoomFromHash`), setting `localPeerId` and `engine.localPeerId` before creating answers.
+    - Connect answers against `invite.host_peer_id` so joiners store the host under their canonical ID.
+    - Eliminate `rename_peer` and identity drift.
+    - Scope `clearPendingInvite()` to match `peerId === pendingInvitePeerId`.
+    - Fix departure order: call `handlePeerDeparture` before `close_peer` and ensure `departedPeers` suppresses duplicate notices.
+  - `crates/zero_protocol/src/envelope.rs`:
+    - Add `#[serde(default)] pub host_peer_id: Option<String>` and `pub assigned_peer_id: Option<String>` to `InvitePayload`.
+    - Add `#[serde(default)] pub joiner_peer_id: Option<String>` to `DropPayload`.
+  - `zero_network/src/handlers.rs` & tests:
+    - Ensure `DropPayload` propagates `joiner_peer_id` to host WebSocket.
+  - `tests/` & `zero_client/tests/`:
+    - Update regression test suites to validate pre-assigned canonical peer IDs and full-mesh survival on host departure.
+- **Out-of-Scope**:
+  - Replacing the Cloudflare Worker architecture.
+  - Introducing third-party TURN servers.
+
+---
+
+## 3. Requirements & Acceptance Criteria
+
+- [ ] **REQ-032.1 (Pre-Assigned Canonical Peer IDs in URL Fragment)**:
+  - When Client 1 creates a room (`createRoomAsHost`) or generates an invite (`handleHeaderAddPeerClick`), it generates `assigned_peer_id = "peer-" + randomHex(6)`.
+  - The offer is created under `assigned_peer_id` in `engine.peers`.
+  - The URL hash `#payload=` contains both `host_peer_id: localPeerId` and `assigned_peer_id: assigned_peer_id`.
+  - In `joinRoomFromHash`, the joiner sets its own `localPeerId = invite.assigned_peer_id` and targets the host via `invite.host_peer_id`.
+  - No `rename_peer` calls or identity remapping races occur.
+- [ ] **REQ-032.2 (Protocol Schema Support in zero_protocol & zero_network)**:
+  - `InvitePayload` includes `host_peer_id: Option<String>` and `assigned_peer_id: Option<String>`.
+  - `DropPayload` includes `joiner_peer_id: Option<String>`.
+  - Serde deserialization and serialization in Cloudflare Worker preserves `joiner_peer_id` across the dead-drop pipe.
+- [ ] **REQ-032.3 (Deterministic Full-Mesh In-Band Snapping)**:
+  - When a peer channel transitions to `"open"` on any node, introductions (`PeerJoined`) are dispatched using the canonical IDs.
+  - The tie-breaker `myPeerId < remotePeerId` evaluates symmetrically on Client 2 and Client 3.
+  - `RelaySdpOffer` routes to `to_peer_id === myPeerId`, generating a `RelaySdpAnswer` that establishes direct $B \leftrightarrow C$ DataChannel.
+  - In a 3-user session (A, B, C), all 3 clients report `#peer-count = 2`.
+- [ ] **REQ-032.4 (Scoped Pending Invite Cleanup)**:
+  - `clearPendingInvite()` only closes `pendingInviteWs` when `peerId === pendingInvitePeerId`, preventing secondary peer channel transitions from terminating an active invite socket.
+- [ ] **REQ-032.5 (Clean Single Departure & Host Departure Survivability)**:
+  - When Client 1 leaves, pairwise $B \leftrightarrow C$ DataChannel remains open and active.
+  - Both Client 2 and Client 3 update `#peer-count` from `2` to `1`.
+  - Messages sent by Client 2 are received and displayed by Client 3 (and vice versa).
+  - Only one `"Peer left chat"` notice is displayed across surviving clients.
+- [ ] **REQ-032.6 (Workspace Integrity & Verification)**:
+  - `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, and `wasm32-unknown-unknown` builds pass cleanly.
+  - Headless browser test suite and simulation tests pass 100%.
+
+---
+
+## 4. Verification Plan
+
+| Test ID | Description | Expected Result |
+|---|---|---|
+| `V-032-1` | Schema serialization in `crates/zero_protocol` | `DropPayload` with `joiner_peer_id` roundtrips without field loss |
+| `V-032-2` | Dead-drop handler test in `zero_network` | Worker preserves `joiner_peer_id` when piping answer to host WebSocket |
+| `V-032-3` | Multi-node simulation test in Rust | 3-node join with canonical IDs forms full mesh; host departs; survivors maintain direct link |
+| `V-032-4` | Headless browser test harness | Client 2 and Client 3 connect via pre-assigned IDs; both show 2 peers; host leaves, count drops to 1, messages exchange |
+| `V-032-5` | Departure notice deduplication | Single `"Peer left chat"` emitted on peer exit |
+| `V-032-6` | Real browser 3-tab verification | Manual confirmation in 3 browser tabs matching user scenario |
+
+---
+
+## 5. Proposed Brief Decomposition (for `implement-task`)
+
+| Brief | Sizing | Files | Description |
+|---|---|---|---|
+| `brief-impl-032-protocol` | LOW | `crates/zero_protocol/src/envelope.rs`, `zero_network/src/handlers.rs`, tests | Add schema fields and test dead-drop serialization roundtrip |
+| `brief-impl-032-browser` | MEDIUM | `zero_client/index.html`, `zero_client/tests/browser/*` | Pre-assigned peer IDs in URL, joiner ID adoption, scoped invite cleanup, departure dedup |
+| `brief-validation` | LOW | reports only | Run full workspace fmt, clippy, tests, wasm, and browser test suite |
+| `reviewer` | HIGH | reviews/ | Code review cycle (max 3 cycles) |
+
+```
+
+## FILE: openspec/changes/archive/ticket-033/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-033"
+title: "Simplified Icon-Only Room Creation and Temporary System Messages"
+state: "COMPLETED"
+created_at: "2026-10-24T14:02:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-033/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+The current room creation button and system message lifecycle contain visual clutter and inconsistent feedback:
+1. **Bottom Button Text & Multi-State Transitions**: The bottom button (`#btn-create-room`) currently includes text labels (`"Create Chat"`, `"Link copied to clipboard!"`, `"Share link copied · Waiting for peer..."`) across multiple timer-driven states. The user desires a simplified, icon-only button flow with exactly 2 visual stages.
+2. **System Message Transience**: All system messages currently display timestamps and persist permanently in the feed. Transient actions like copying invite links or waiting for peer connection should be temporary (without timestamps) and cleaned up automatically once real session activity begins.
+3. **In-Room Add Peer Feedback**: Clicking the header `[+]` button copies the invite link silently without clear inline feedback. The user wants a temporary `"Invite link copied to clipboard"` notice that automatically self-clears after 5 seconds, restarting the timer on repeated clicks.
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-033.1: Icon-Only Two-Stage Bottom Button
+- The bottom button (`#btn-create-room`) must contain **no text labels** (remove `<span>` text elements).
+- Flow consists of exactly **2 stages**:
+  - **Stage 1 (Unclicked / Default)**:
+    - Displays the **create chat symbol** (message bubble with `+` icon).
+    - Uses the standard bright emerald styling (`.btn-emerald`).
+    - Tooltip / `aria-label="Create Chat"`.
+  - **Stage 2 (Clicked / Active Invite & Copy)**:
+    - Upon clicking `#btn-create-room`, transitions immediately to display the **copy icon** (two overlapping rectangles).
+    - Uses the darker shade of green (`.btn-waiting` styling).
+    - Tooltip / `aria-label="Copy invite link"`.
+    - If clicked again while in Stage 2, re-copies the existing invite link to clipboard and remains in Stage 2.
+- When the chat session is reset, disconnected, or burned, the button returns to Stage 1.
+
+### REQ-033.2: Temporary System Messages & Bottom Button Flow
+- **Temporary System Message Definition**:
+  - Rendered without a timestamp (`.system-timestamp` omitted).
+  - Styled with a dedicated temporary class (e.g. `system-message system-temporary`).
+- **Bottom Button Click Behavior**:
+  - When `#btn-create-room` is clicked (both initial click and subsequent re-clicks), it clears any existing temporary messages and displays:
+    1. `"Invite link copied to clipboard"` (temporary, no timestamp)
+    2. `"Waiting for peer..."` (temporary, no timestamp, with animated ticking ellipsis `.ticking-dots`)
+- **Clearing Contract**:
+  - All temporary system messages are automatically removed from the DOM when the next permanent system message is appended (e.g., `"Joined chat"`, `"Peer joined chat"`, `"Peer left chat"`, `"Session burned"`, etc.).
+  - Re-clicking the bottom button clears and re-displays these 2 temporary messages.
+
+### REQ-033.3: Top Bar `[+]` Button 5-Second Self-Clearing Temporary Notice
+- When the user clicks the top-bar Add Peer button (`#header-add-btn`):
+  - Copies (or re-copies) the invite link to `navigator.clipboard`.
+  - Displays a temporary `"Invite link copied to clipboard"` system message (without timestamp) with a subtle CSS pulse micro-animation (e.g. `@keyframes noticePulse`).
+  - The message self-clears (is removed from the feed) automatically after **5,000ms (5 seconds)**.
+  - **Re-click Feedback**: If the user clicks `#header-add-btn` again during the 5-second countdown, the existing temporary notice re-triggers the subtle pulse micro-animation (providing tactile visual feedback that the re-copy occurred) and restarts the 5-second countdown timer. The `[+]` button itself is left unchanged.
+
+### REQ-033.4: Quality Gates & Automated Regression
+- Update headless browser regression tests (`zero_client/tests/browser/test_mesh_scenario.js`) to assert:
+  - Bottom button has 0 text content and transitions icon and classes between Stage 1 and Stage 2.
+  - Temporary messages have no timestamp.
+  - Permanent messages remove active temporary messages.
+  - Re-clicking bottom button clears and re-emits temporary messages.
+  - Header `[+]` click produces temporary message that disappears after 5 seconds, and restarts timer on re-click.
+- Full workspace quality gates pass: `cargo fmt`, `cargo clippy`, `cargo test`, `wasm32` builds, and `run_test.sh`.
+
+---
+
+## 3. Scope Boundaries
+
+- **In-Scope**:
+  - `zero_client/index.html` (DOM structure, button states, temporary message functions, timer management).
+  - `zero_client/style.css` (temporary system message styling, icon-only button styling adjustments).
+  - `zero_client/tests/browser/test_mesh_scenario.js` (DOM assertions and unit tests).
+- **Out-of-Scope**:
+  - No changes to WebRTC signaling, `zero_protocol`, cryptographic envelope, or Cloudflare Workers.
+
+---
+
+## 4. Verification Criteria
+
+| ID | Description |
+|---|---|
+| **V-033.1** | Verify `#btn-create-room` has no text and displays create chat SVG in Stage 1 and copy SVG in Stage 2 with darker green. |
+| **V-033.2** | Verify clicking `#btn-create-room` displays `"Invite link copied to clipboard"` and `"Waiting for peer..."` with ticking dots and without timestamps. |
+| **V-033.3** | Verify re-clicking `#btn-create-room` clears and re-emits both temporary messages. |
+| **V-033.4** | Verify arrival of any permanent system message clears all active temporary messages. |
+| **V-033.5** | Verify clicking `#header-add-btn` emits `"Invite link copied to clipboard"` without timestamp, self-clears after 5s, and re-clicking re-triggers the pulse animation and restarts the 5s timer without modifying the button itself. |
+| **V-033.6** | Verify all headless browser mesh tests and cargo test suites pass cleanly. |
+
+```
+
+## FILE: openspec/changes/archive/ticket-034/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-034"
+title: "UI Refinements: Zero Placeholder, Staggered Notice Timing, Ellipsis Fix and Disconnected Indicator"
+state: "COMPLETED"
+created_at: "2026-10-24T15:25:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-034/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+In pursuit of a clean zero-text UI outside of system messages and chat messages:
+1. **Residual Input Placeholder**: When all remote peers disconnect and the user remains in the empty room, `handlePeerDeparture` assigns `msgInput.placeholder = "Peer left chat"`. The user wants this placeholder removed completely so the input box remains permanently blank in all states.
+2. **Synchronous Temporary Message Clutter**: Clicking `#btn-create-room` currently renders both `"Invite link copied to clipboard"` and `"Waiting for peer..."` simultaneously on the exact same tick. The user desires a staggered 1, 2 delivery (e.g. Message 1 immediately, followed by Message 2 after a brief rhythmic delay of ~450ms) both on initial click and upon subsequent re-clicks.
+3. **Double Ellipsis Bug**: The temporary message was passing `"Waiting for peer..."` (literal 3 dots) while also appending `<span class="ticking-dots"></span>` (which appends `.`, `..`, `...` via CSS `::after`). This caused visual duplication: `"Waiting for peer...   ..."`. The base text must be `"Waiting for peer"` without dots so the ticking animation renders smoothly as `"Waiting for peer." -> "Waiting for peer.." -> "Waiting for peer..."`.
+4. **Home View Slashed Person Icon vs. Empty Chat Counter**: In the header badge (`#peer-count`), while in the **home view** (initial state before room creation, with welcome splash visible), the badge should display a **slashed person icon** (user/person silhouette with a diagonal slash to indicate "no peers", in default blue / `--accent-cyan` styling). Once the user clicks the create chat button and transitions into the empty chat view (or joins a room), the peer counter transitions to display its current numeric value: `0` (and `1`, `2`, ... as peers connect). Upon returning to the home view (`resetToHome()`), it resets to the slashed person icon.
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-034.1: Permanent Removal of Input Placeholder
+- Eliminate `msgInput.placeholder = "Peer left chat"` in `handlePeerDeparture`.
+- Ensure `#message-input` has `placeholder=""` in all states (initial disconnected, active chat, peer departed, and reset).
+- Update existing browser test assertions from `msgInput.placeholder === "Peer left chat"` to `msgInput.placeholder === ""`.
+
+### REQ-034.2: Staggered Delivery for Room Creation Temporary Messages
+- When `#btn-create-room` is clicked (both initial click in Stage 1 and re-clicks in Stage 2):
+  1. Clear any existing temporary messages and cancel any in-flight stagger timers.
+  2. Display notice 1 immediately: `"Invite link copied to clipboard"`.
+  3. After a brief stagger delay (~450ms), append notice 2: `"Waiting for peer"` (with ticking ellipsis).
+- If the user re-clicks `#btn-create-room` in Stage 2:
+  - Cancel any pending second notice timer.
+  - Clear existing temporary messages.
+  - Re-render notice 1 immediately, followed by notice 2 after the stagger delay.
+- If a permanent system message or peer connection arrives before notice 2 renders:
+  - Cancel the pending stagger timer and purge all temporary messages.
+
+### REQ-034.3: Fix Double Ellipsis in "Waiting for peer" Notice
+- Update the temporary notice invocation from `appendTemporarySystemMessage("Waiting for peer...", true)` to `appendTemporarySystemMessage("Waiting for peer", true)`.
+- Ensure the DOM text node contains strictly `"Waiting for peer"` without trailing dots.
+- The ticking ellipsis `.ticking-dots` (`::after`) animates 0 to 3 dots cleanly without duplicate punctuation.
+
+### REQ-034.4: Home View Slashed Person Icon & Empty Chat Numeric Counter
+- **Home View State**:
+  - While disconnected in the home view (e.g. initial page load or after `resetToHome()`), `#peer-count` displays a clean SVG **slashed person icon** (user/person silhouette with a diagonal slash indicating "no peers", in default blue `var(--accent-cyan)`).
+- **In-Room State Transition**:
+  - As soon as the user clicks `#btn-create-room` (or joins a room from a hash fragment) and enters the chat view, `#peer-count` transitions to displaying its numeric value: `"0"`.
+  - When peers connect, `#peer-count` displays `"1"`, `"2"`, etc.
+  - When peers disconnect and 0 peers remain in an active room, `#peer-count` truthfully displays `"0"`.
+- **Return to Home**:
+  - When returning to the home view via `#destroy-session-button`, `#header-leave-btn`, or `resetToHome()`, `#peer-count` restores the slashed person SVG icon.
+
+### REQ-034.5: Quality Gates & Automated Regression
+- Update/extend headless browser regression suite (`zero_client/tests/browser/test_mesh_scenario.js`):
+  - Assert `msgInput.placeholder === ""` after peer departure.
+  - Assert staggered delivery timing and sequence of the two notices.
+  - Assert `"Waiting for peer"` text content has no trailing literal dots.
+  - Assert `#peer-count` renders slashed person icon SVG in home view, `"0"` upon room creation, and numeric counts (`"1"`, etc.) when connected.
+- All existing 123 Rust tests and browser regression tests pass 100%.
+
+---
+
+## 3. Architecture & Affected Modules
+
+- `zero_client/index.html`:
+  - `handlePeerDeparture`: set `msgInput.placeholder = ""`
+  - `updatePeerCountDisplay`: render disconnected symbol when `count === 0`
+  - `createRoomAsHost` & re-copy click handler: implement staggered delivery with timer management
+  - Fix string literal from `"Waiting for peer..."` to `"Waiting for peer"`
+- `zero_client/tests/browser/test_mesh_scenario.js`:
+  - Update Test 11 line 482 assertion for placeholder
+  - Update / add assertions for REQ-034.1 - REQ-034.4
+
+```
+
+## FILE: openspec/changes/archive/ticket-035/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-035"
+title: "Enhanced Burn Behavior: 90s Ephemeral TTL with Aging Fade, Per-Message Distributed Burn, and Minimal Dissolve"
+state: "COMPLETED"
+created_at: "2026-10-24T16:15:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-035/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+`zero_chat` currently supports whole-session destruction (`GlobalBurnSession`), selective peer purge on disconnect (`PeerLeftAndBurn`), and temporary notice clearing. However, during an active conversation:
+1. **Persistent History During Session**: Messages persist in the DOM indefinitely until the session is terminated or burned. The user's core philosophy is that conversation lives in the *here and now*—words are spoken and naturally dissolve into the air as conversation moves forward in time.
+2. **Aging Fade & 90-Second Ephemeral Lifecycle**: Messages (both user chat bubbles and system messages) should naturally age and dissolve over 90 seconds. To provide an intuitive acoustic sense of time without hurting legibility, messages remain at 100% full contrast for 70 seconds, gently soften to 80% opacity between 70s and 90s (preserving strong >9:1 contrast), and smoothly dissolve away at 90s with a 200ms soft fade.
+3. **Quiet Room Invariant**: When all messages have dissolved in an active session, the screen remains an open, serene, quiet space (never re-popping the welcome marketing splash cards).
+4. **Per-Message Distributed Burn**: The user wants the ability to selectively retract any specific chat message immediately across the entire mesh. Each user chat bubble needs a subtle flame button in its top-right corner. Clicking it burns the message across all connected peers in real time with the 200ms soft dissolve.
+5. **Chat Bubble Sizing & Burn Button Aesthetics**: Chat bubbles must have an expanded minimum size (`min-width: 135px; min-height: 44px;`) so the top-right burn button does not crowd or overlap timestamps and text. The button should have no border, a subtle gradient separating it from the bubble background, and hover to the flame-red accent color.
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-035.1: 90-Second Local Message Lifecycle with Aging Fade
+- Every element appended to the chat feed (`.message-bubble` and `.system-message`) registers a client-side 90-second self-destruct lifecycle:
+  - **0s – 70s**: Full brightness and contrast (`opacity: 1.0`).
+  - **70s – 90s (Aging Fade)**: Transitions gently to `opacity: 0.80` via smooth CSS transition (`transition: opacity 20s linear;`), maintaining complete legibility (>9:1 contrast ratio) while visually signaling temporal aging.
+  - **At 90s**: Triggers the 200ms minimal soft fade (`opacity: 0.80 -> 0; transform: scale(0.98);`), collapses height/margin over ~150ms, and removes the element from the DOM (`el.remove()`).
+- Self-contained and client-local: does not require network packets or peer consensus.
+- Timer hygiene: if a message is burned manually before 90s or the room is reset/left, its aging and removal timers are cleanly cancelled.
+- **Quiet Room Invariant**: In an active room session (`isInRoomSession === true`), dissolving all messages leaves an empty chat view and never restores the welcome splash screen.
+
+### REQ-035.2: Per-Message Distributed Burn Button on Chat Bubbles
+- Every user chat bubble (`.message-bubble`, both outgoing and incoming) features a dedicated flame button in its top-right corner (`position: absolute; top: 6px; right: 8px;`).
+- Uses the same flame SVG icon as the header session burn button (scaled to ~13-14px).
+- Styling:
+  - No button border (`border: none;`).
+  - Subtle radial/linear gradient background against the bubble surface so the flame icon remains visible and distinct.
+  - Subtle normal color (`color: rgba(255, 255, 255, 0.45);`).
+  - Interactive cursor: `cursor: pointer;` on the flame button, transitioning on hover to the top burn button's red accent (`color: #fca5a5; background: rgba(239, 68, 68, 0.25); box-shadow: 0 0 10px rgba(239, 68, 68, 0.35);`).
+  - Text selection and cursor on bubble content remain default browser behavior (standard I-beam on selectable text).
+- Sizing:
+  - Chat bubbles have an increased minimum size (`min-width: 135px; min-height: 44px;`) to ensure short messages (e.g. "ok", "hi") accommodate the dot, timestamp, and flame button cleanly without collision.
+
+### REQ-035.3: In-Band Distributed Burn Signaling (`BurnMessage`)
+- Each chat message element stores its unique message UUID (`data-message-id="<uuid>"`).
+- When the user clicks the per-message burn button:
+  1. The local bubble plays the 200ms soft fade animation and is removed from the DOM.
+  2. The client broadcasts an in-band `BurnMessage` frame over all active WebRTC DataChannels:
+     ```json
+     {
+       "frame_id": "<uuid>",
+       "ttl": 3,
+       "signal": {
+         "BurnMessage": {
+           "message_uuid": "<target_message_uuid>"
+         }
+       }
+     }
+     ```
+- Remote recipient peers:
+  - Deduplicate via `frame_id`.
+  - Locate `.message-bubble[data-message-id="<target_message_uuid>"]`.
+  - Trigger the 200ms soft fade animation and remove the matching bubble from the DOM.
+  - Forward the `BurnMessage` frame across the mesh if TTL > 1 (Gossip flooding with loop suppression).
+
+### REQ-035.4: Minimal Soft Fade CSS Animation
+- Dedicated minimal CSS transition (e.g. `.message-dissolve`):
+  - Fades opacity to 0 over 200ms with a subtle scale contraction (`scale(0.98)`).
+  - Concurrently collapses `max-height` and `margin` smoothly so adjacent messages glide into place without abrupt jumping.
+  - Applied uniformly to:
+    - Chat bubbles burned manually via the flame button.
+    - Chat bubbles burned remotely via `BurnMessage` signal.
+    - Chat bubbles and system messages expiring via the 90-second TTL.
+
+### REQ-035.5: Automated Headless Regression Tests & Quality Gates
+- Update/extend headless browser regression suite (`zero_client/tests/browser/test_mesh_scenario.js`):
+  - Test 15 covering:
+    - Top-right burn button DOM existence and bubble minimum sizing.
+    - Local burn button click triggers 200ms dissolve and purges the bubble.
+    - Multi-peer mesh distributed message burn (peer A burns message; peer B and C receive `BurnMessage` and purge the bubble).
+    - 70s aging transition and 90s auto-burn timer (using simulated mock environment timers).
+    - Quiet room invariant (empty feed in active room does not pop welcome splash).
+- All 123 Rust workspace tests pass.
+- `cargo fmt` and `cargo clippy` pass with zero warnings.
+
+---
+
+## 3. Architecture & Affected Modules
+
+- `zero_client/index.html`:
+  - `appendMessageBubble`: attach `data-message-id`, render top-right flame button, register 70s aging timer & 90s auto-burn timer.
+  - `appendSystemMessage` & `appendTemporarySystemMessage`: register 70s aging timer & 90s auto-burn timer.
+  - In-band signal listener: handle `signal.BurnMessage`, query matching bubble, animate & remove, forward with TTL.
+  - Burn action helper: broadcast `BurnMessage`, animate & remove local bubble.
+  - `showWelcomeSplash`: enforce quiet room invariant (`if (isInRoomSession) return;`).
+- `zero_client/style.css`:
+  - Minimum bubble width/height constraints (`min-width: 135px; min-height: 44px;`).
+  - Per-message flame button styling, pointer cursor (`cursor: pointer;`), gradient background, hover red accent.
+  - `.message-aging` (opacity 0.8) and `.message-dissolve` (200ms soft exit with height collapse).
+- `zero_client/tests/browser/test_mesh_scenario.js`:
+  - Test 15 covering per-message burn, distributed sync, 90s TTL, aging fade, and quiet room.
+
+```
+
+## FILE: openspec/changes/archive/ticket-036/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-036"
+title: "Limbo Recovery: In-Room Plus Invite Button on Peer Disconnect, Staggered Notice Flow, and Two-Stage Icon Morphing"
+state: "COMPLETED"
+created_at: "2026-10-24T18:20:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-036/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+In `zero_chat`, when all peers disconnect from an active chat room, the remaining participant is left in an unrecoverable "limbo state":
+1. **Disabled Bottom Input**: The bottom message bar (`#message-form`) remains visible with a disabled text input and disabled send button.
+2. **Hidden Top-Bar Invite Button**: `#header-add-btn` in the top control bar is hidden upon peer departure (`headerAddBtn.classList.add("hidden")`), and the bottom `#create-room-bar` is also hidden.
+3. **Trapped Without In-Room Invite Capability**: The remaining user cannot generate a new invite link to bring someone into the chat without completely exiting or burning their session, which prematurely destroys their existing chat feed.
+
+### Desired Behavior
+- In this disconnected in-room state:
+  1. The disabled message input form (`#message-form`) is hidden and replaced with the full-width action button bar (`#create-room-bar`).
+  2. The button (`#btn-create-room`) is rendered in a modified initial Stage 1: displaying a clean plus (`+`) icon (matching the top bar add-peer button SVG geometry), rather than the speech-bubble-plus icon used on the empty home screen.
+  3. On click, the button transforms into the identical copy icon (`COPY_ICON_SVG`) and waiting state (`.btn-waiting`) as the create chat button.
+  4. On click, the button generates/copies an invite link to the clipboard and triggers the same staggered system messages: Notice 1 (`"Invite link copied to clipboard"`) immediately, followed by Notice 2 (`"Waiting for peer..."` with `.ticking-dots`) after ~450ms.
+  5. Subsequent clicks while waiting re-copy the invite link to the clipboard and restart the staggered notices cleanly.
+  6. When a new peer connects, the bottom button bar is hidden, the chat text input form (`#message-form`) is restored and enabled for messaging, and `#header-add-btn` is restored.
+  7. When the session is exited or burned (return to home screen), `#btn-create-room` restores to its default home view icon (`CREATE_CHAT_ICON_SVG`, speech bubble with +).
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-036.1: Limbo State Detection & Footer Input Replacement
+- In `handlePeerDeparture(leavingPeerId)` when all peers have departed and no peers are connecting (`!anyConnecting` / `openPeerCount === 0` in an active session):
+  - Hide the disabled `#message-form` (`messageForm.classList.add("hidden")`).
+  - Display `#create-room-bar` (`createRoomBar.classList.remove("hidden")`).
+  - Configure `#btn-create-room` in Stage 1 Plus mode:
+    - CSS classes: `btn-action btn-action-full btn-emerald`.
+    - SVG icon: Plus (`+`) icon with matching top-bar SVG geometry (`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`).
+    - Accessibility: `aria-label="Add peer"`.
+
+### REQ-036.2: Two-Stage Morphing & In-Room Invite Generation
+- Clicking `#btn-create-room` while in this in-room disconnected state:
+  - If a pending invite link is already active (`pendingInviteUrl`), re-copy it to `navigator.clipboard`.
+  - If no pending invite is active, generate a fresh WebRTC peer offer via `engine.create_peer_offer(assignedPeerId)`, establish the signaling dead-drop WebSocket (`pendingInviteWs`), and copy the invite URL to `navigator.clipboard`.
+  - Morph `#btn-create-room` into Stage 2:
+    - CSS classes: `btn-action btn-action-full btn-waiting`.
+    - SVG icon: Copy icon (`COPY_ICON_SVG`).
+    - Accessibility: `aria-label="Copy invite link"`.
+
+### REQ-036.3: Staggered Temporary System Notices
+- On click (and re-clicks), trigger identical staggered feedback via `triggerCreateRoomNotices()`:
+  - Stage 1 notice immediately: `"Invite link copied to clipboard"` (clearing prior temporary notices).
+  - Stage 2 notice after 450ms: `"Waiting for peer"` with animated `.ticking-dots`.
+  - Re-clicking while in Stage 2 cleanly restarts the 450ms timer, clears temporary notices, and displays the staggered notices again.
+
+### REQ-036.4: Reconnection & Session Teardown Restoration
+- When a new peer connects (`onStateChangeCb` or `onPeerStateChangeCb` becomes `"open"`):
+  - Pending invite WebSocket is closed and cleaned up (`clearPendingInvite`).
+  - `#create-room-bar` is hidden (`createRoomBar.classList.add("hidden")`).
+  - `#message-form` is unhidden (`messageForm.classList.remove("hidden")`), and `#message-input` and `#send-button` are enabled.
+  - Top-bar `#header-add-btn` is unhidden (`headerAddBtn.classList.remove("hidden")`).
+- When the room is left (`headerLeaveBtn`) or destroyed (`destroy-session-button`):
+  - `resetToHome()` restores `#btn-create-room` to default Stage 1 (`CREATE_CHAT_ICON_SVG`, speech bubble with +).
+
+### REQ-036.5: Temporary System Message TTL Exemption
+- Temporary system messages (`.system-temporary`, which omit timestamps, e.g. `"Invite link copied to clipboard"` and `"Waiting for peer"`):
+  - Must be explicitly exempt from `registerEphemeralLifecycle(el)`.
+  - They do not age-fade at 70s and do not dissolve at 90s. They remain visible until naturally cleared by UX flow (`clearTemporarySystemMessages()`, such as upon peer connection, permanent message arrival, or re-clicking the invite button).
+- The special-case 5-second self-clearing message generated by `#header-add-btn` (`triggerHeaderAddFeedback`) retains its existing 5-second pulse timer behavior.
+- Permanent system messages (with timestamps, e.g. `"Peer joined chat"`, `"Peer left chat"`) and user chat bubbles continue to participate in the 90s ephemeral lifecycle with 70s aging fade.
+
+### REQ-036.6: Headless Browser Regression Tests & Quality Gates
+- Extend `zero_client/tests/browser/test_mesh_scenario.js` with **Test 16**:
+  - Connect a peer to host, then disconnect the peer.
+  - Verify `#message-form` is hidden and `#create-room-bar` is visible with `+` icon.
+  - Click `#btn-create-room`: verify clipboard copy, transition to copy icon (`COPY_ICON_SVG`), and staggered temporary notices ("Invite link copied to clipboard" + "Waiting for peer").
+  - Verify temporary notices do not expire after 90s simulated time (`isWaitingDots` / `.system-temporary` elements remain in feed).
+  - Re-click `#btn-create-room`: verify re-copy and restart of staggered notices.
+  - Connect a new peer: verify `#create-room-bar` is hidden, `#message-form` is restored & enabled, temporary notices are cleared, and `#header-add-btn` is shown.
+  - Disconnect and leave to home: verify `#btn-create-room` restores to `CREATE_CHAT_ICON_SVG`.
+- All 123 Rust workspace tests pass (`cargo test --workspace`).
+- `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` pass cleanly with zero warnings.
+
+### REQ-036.7: Zero Whitespace Between Text and Ticking Ellipsis
+- In all messages featuring animated ticking dots (`.ticking-dots`), there must be zero whitespace between the preceding text and the animated ticking ellipsis.
+- Specifically:
+  - In `zero_client/style.css`, remove the 8px flex gap between `.system-text`/`.transient-text` and `.ticking-dots`:
+    ```css
+    .system-temporary,
+    .transient-status,
+    .system-message:has(.ticking-dots) {
+      gap: 0;
+    }
+    ```
+  - Across all call sites (`appendTemporarySystemMessage`, `showTransientStatus`): verify base text strings contain no literal trailing whitespace (e.g. `"Waiting for peer"` without trailing space).
+
+---
+
+## 3. Architecture & Affected Modules
+
+- `zero_client/index.html`:
+  - Constant `ADD_PEER_ICON_SVG`: define the 20x20 `+` icon SVG.
+  - Function `setCreateRoomStage1(mode = "default")` (or `setCreateRoomStage1Plus()`): supports switching between the default chat bubble icon and the `+` icon while maintaining `btn-emerald` styling.
+  - Function `handleCreateRoomClick()`: checks whether the client is in an active room session (`isInRoomSession && engine`). If in-room, routes through in-room peer invite generation (`handleInRoomAddPeerClick`) while applying the full two-stage copy icon and staggered notices flow.
+  - Function `handlePeerDeparture`: when `!anyConnecting` occurs, hides `messageForm`, unhides `createRoomBar`, and sets Stage 1 Plus mode.
+  - Engine state transitions (`onStateChangeCb`, `onPeerStateChangeCb`): when a peer opens, hides `createRoomBar`, unhides `messageForm`, and restores `headerAddBtn`.
+  - Function `resetToHome`: restores `createRoomBar` to default Stage 1 (`CREATE_CHAT_ICON_SVG`).
+  - Function `appendTemporarySystemMessage`: removes call to `registerEphemeralLifecycle(el)`, ensuring temporary messages do not timeout at 90s.
+- `zero_client/style.css`:
+  - `.system-temporary`, `.transient-status`, `.system-message:has(.ticking-dots)`: `gap: 0;` eliminating gap before ticking dots.
+- `zero_client/tests/browser/test_mesh_scenario.js`:
+  - Add Test 16 testing the complete limbo recovery workflow, temporary notice TTL exemption, and zero whitespace ticking dots.
+
+```
+
+## FILE: openspec/changes/archive/ticket-037/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-037"
+title: "UI Architecture Refinement: Unified Header & Footer State Rules, Minimalist Top-Bar Badges, Clean Burn Icon, Timestamp Removal, and Joiner Message Integrity"
+state: "COMPLETED"
+created_at: "2026-10-24T20:30:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-037/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+Through comprehensive user experience testing across room creation, peer joins, limbo disconnections, and connection failures, several inconsistencies and opportunities for aesthetic refinement were identified:
+
+1. **Header & Footer Visibility Inconsistencies**:
+   - In empty chat views (waiting for peers, limbo state, or connection failure), the Leave button (`#header-leave-btn`) was frequently missing, trapping users.
+   - The bottom action button frequently appeared in the wrong visual variant (e.g. chat-bubble-plus instead of plus icon, or remained hidden for 15–30s during connection failures).
+   - The user has established four clear, invariant UI rules to govern the entire client lifecycle:
+     - **Rule 1**: If the peer counter is visible (numeric value `0`, `1`, `2`... in any room session), the Leave button (`#header-leave-btn`) MUST also be visible.
+     - **Rule 2**: If the peer counter value is `0` (waiting for peer, limbo disconnect, or connection failure), the bottom action button (`#create-room-bar`) MUST be visible in the **plus icon variant** (`setCreateRoomStage1Plus()`), and the message input form (`#message-form`) must be hidden.
+     - **Rule 3**: If the peer counter value is `> 0`, the `+` button (`#header-add-btn`) MUST be visible in the top bar, the message input form (`#message-form`) must be enabled and visible, and the bottom action bar (`#create-room-bar`) must be hidden.
+     - **Rule 4**: The "new chat" version of the bottom button (`CREATE_CHAT_ICON_SVG`, chat bubble with plus) MUST ONLY be used as part of the home view (`resetToHome()`).
+2. **Minimalist Top-Bar Badges & Brand Icon**:
+   - The top-bar badges (`#peer-count`, `#idle-status-capsule`, `.peer-pill` lock capsule) currently render with pill borders and translucent background fills, creating visual clutter.
+   - The brand icon (`.brand-icon`) on the left of the top bar has a gradient background and border around the `0` glyph.
+   - **Intent**: Only interactive top-bar buttons (`#header-add-btn`, `#header-leave-btn`) should have a background and border. All badges (`.peer-count-badge`, `#idle-status-capsule`, `.peer-pill`) must have transparent backgrounds and no borders. The brand icon `.brand-icon` must remove its back/border so only the crisp cyan `0` glyph renders beside `zero-chat.pages.dev`.
+3. **Streamlined Welcome Splash Messaging**:
+   - The welcome splash contains the heading `"Zero accounts. Zero servers. Zero history."` and subtitle `"Create Chat -> Share Link -> Talk P2P"`.
+   - **Intent**: Remove `"Zero accounts. Zero servers. Zero history."` from the splash. Change `"Create Chat -> Share Link -> Talk P2P"` to `"Create -> Share -> Chat"`.
+4. **Circular Glow Around Message Burn Icon**:
+   - In message bubbles, `.btn-message-burn` has a radial-gradient background and on hover exhibits a glowing red circle (`box-shadow: 0 0 10px rgba(239, 68, 68, 0.35)`).
+   - **Intent**: Remove all circular backgrounds and glow. Only the SVG flame icon should be visible against the native bubble background color, shifting to `#fca5a5` on hover.
+5. **Delayed Connection Failure Recovery**:
+   - When joining via invite fails, an unclosed `RTCPeerConnection` kept gathering ICE for 15–30s in the background before belatedly unhiding the bottom bar.
+   - **Intent**: Immediately close and abort engine resources upon failure, immediately display the Leave button in the header, and immediately display the bottom button in the plus icon variant with zero delay.
+6. **Timestamp Removal**:
+   - Timestamps are currently displayed alongside system messages (`.system-timestamp`) and inside chat bubbles (`.message-timestamp`).
+   - **Intent**: Completely remove timestamps from display across both system messages (the two types—permanent and temporary—remain) and chat message bubbles.
+7. **"Joined chat" System Message Integrity**:
+   - A `"Joined chat"` system message must strictly and only be displayed when a client joins a chat via an invite link.
+   - A host must never display `"Joined chat"`.
+   - A joining client must only display `"Joined chat"` once upon initial connection; subsequent peer connections must trigger `"Peer joined chat"`.
+   - A single peer connection must never trigger both `"Joined chat"` and `"Peer joined chat"` on the same client.
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-037.1: Unified Header & Footer State Machine
+In `zero_client/index.html`, establish consistent reactive UI synchronization:
+- **Home View (`!inRoom`)**:
+  - Peer badge (`#peer-count`) displays slashed-person icon (`SLASHED_PERSON_ICON_SVG`).
+  - Leave button (`#header-leave-btn`) is **hidden**.
+  - Top `+` button (`#header-add-btn`) is **hidden**.
+  - Message input (`#message-form`) is **hidden**.
+  - Bottom action bar (`#create-room-bar`) is **visible** in New Chat mode (`setCreateRoomStage1()`, chat bubble with plus).
+- **In-Room with 0 Peers (`inRoom && openPeerCount === 0`)**:
+  - Peer badge (`#peer-count`) displays numeric string `"0"`.
+  - Status capsule (`#idle-status-capsule`) displays blue dot.
+  - Leave button (`#header-leave-btn`) is **visible** (`classList.remove("hidden")`).
+  - Top `+` button (`#header-add-btn`) is **hidden**.
+  - Message input (`#message-form`) is **hidden**.
+  - Bottom action bar (`#create-room-bar`) is **visible** in Plus mode (`setCreateRoomStage1Plus()`, 20x20 plus icon). On click, transitions to Stage 2 waiting state (`.btn-waiting`, copy icon).
+- **In-Room with >0 Peers (`inRoom && openPeerCount > 0`)**:
+  - Peer badge (`#peer-count`) displays numeric string (`"1"`, `"2"`...).
+  - Leave button (`#header-leave-btn`) is **visible**.
+  - Top `+` button (`#header-add-btn`) is **visible** (`classList.remove("hidden")`).
+  - Message input (`#message-form`) is **visible** and enabled.
+  - Bottom action bar (`#create-room-bar`) is **hidden**.
+- **Home Button Scope**:
+  - `setCreateRoomStage1()` (chat bubble with plus) is strictly restricted to `resetToHome()`. All other 0-peer room views (host waiting, join failure, limbo disconnect) use `setCreateRoomStage1Plus()` (plus icon variant).
+
+### REQ-037.2: Minimalist Top-Bar Badges & Brand Icon
+- In `zero_client/style.css`:
+  - **Brand Icon (`.brand-icon`)**: Remove gradient background and border (`background: transparent; border: none;`). Only the cyan `0` character displays.
+  - **Badges (`.peer-count-badge`, `#peer-count`, `.status-capsule-disconnected`, `#idle-status-capsule`, `.peer-pill`)**:
+    - Remove backgrounds and borders (`background: transparent; border: none;`).
+    - Retain inner icon / text rendering (cyan font, slashed person icon, blue status dot, cyan lock icon).
+  - **Top-Bar Buttons (`#header-add-btn`, `#header-leave-btn`)**:
+    - Retain button backgrounds, borders, and hover micro-animations.
+
+### REQ-037.3: Streamlined Welcome Splash
+- In `zero_client/index.html` (initial DOM and `WELCOME_SPLASH_HTML` constant):
+  - Remove `<h2 class="welcome-title">Zero accounts. Zero servers. Zero history.</h2>`.
+  - Replace `<p class="welcome-subtitle">Create Chat -&gt; Share Link -&gt; Talk P2P</p>` with `<p class="welcome-subtitle">Create -&gt; Share -&gt; Chat</p>`.
+
+### REQ-037.4: Clean Message Burn Button (No Background Circle or Glow)
+- In `zero_client/style.css`, `.btn-message-burn`:
+  - Default state: `background: transparent; border: none; box-shadow: none;`.
+  - Hover state (`.btn-message-burn:hover`): `background: transparent; box-shadow: none; color: #fca5a5; transform: scale(1.1);`.
+  - Active state (`.btn-message-burn:active`): `background: transparent; box-shadow: none; color: #f87171; transform: scale(0.95);`.
+  - Only the SVG flame icon is visible against the background colour of the chat bubble.
+
+### REQ-037.5: Immediate Connection Failure Recovery (Zero 15–30s Wait)
+- In `zero_client/index.html` `joinRoomFromHash`:
+  - If dead-drop fetch fails, or connection fails before opening:
+    - Immediately terminate/close the active engine (`engine.close()`) so that background ICE gathering ceases immediately.
+    - Clear active transient status message (`clearTransientStatus()`).
+    - Append `"Failed to establish connection"`.
+    - Apply In-Room 0-Peer UI rules immediately:
+      - Leave button `#header-leave-btn` is visible in the top bar.
+      - Bottom button `#create-room-bar` is immediately visible in Stage 1 Plus mode (`setCreateRoomStage1Plus()`).
+      - `#message-form` is hidden.
+    - Set `isJoining = false`.
+
+### REQ-037.6: Display Timestamp Removal Across All Messages
+- In `zero_client/index.html` and `zero_client/src/ui.rs`:
+  - **System Messages**: Remove `<span class="system-timestamp">` creation and display from `appendSystemMessage()`. System messages render solely with `<span class="system-text">` (and optional `.ticking-dots` for temporary notices).
+  - **Chat Message Bubbles**: Remove `<span class="message-timestamp">` creation and display from `appendMessageBubble()` in `index.html` and `create_message_element()` in `ui.rs`. Bubble header renders peer dot / self dot without a timestamp.
+  - Retain the two functional classes of system messages: permanent messages (subject to 90s auto-burn) and temporary messages (exempt from auto-burn, cleared on UX transitions).
+
+### REQ-037.7: "Joined chat" Message Integrity
+- In `zero_client/index.html`:
+  - `"Joined chat"` is strictly emitted ONLY when a joiner client successfully establishes its initial data channel to the room (`isJoining === true`).
+  - Immediately upon emitting `"Joined chat"`, set `isJoining = false`.
+  - A host creating a room never emits `"Joined chat"`.
+  - Subsequent peer connections (via mesh introduction or in-room invite) always emit `"Peer joined chat"`.
+  - Ensure `announcedJoinPeers` suppresses duplicate announcements so that the initial connection never emits both `"Joined chat"` and `"Peer joined chat"` on the same client.
+
+### REQ-037.8: Automated Regression Test Suite (Test 17)
+- Add Test 17 in `zero_client/tests/browser/test_mesh_scenario.js`:
+  1. Verify `.brand-icon` and top-bar badges (`.peer-count-badge`, `.status-capsule-disconnected`, `.peer-pill`) have transparent background and no border.
+  2. Verify welcome splash displays `"Create -> Share -> Chat"` and omits `"Zero accounts. Zero servers. Zero history."`.
+  3. Verify `.btn-message-burn` has `background: transparent` and `box-shadow: none` on default and hover.
+  4. Verify that no `.system-timestamp` or `.message-timestamp` elements exist in the feed or bubbles.
+  5. Verify top/bottom bar rules across states:
+     - Home: peer counter has slashed-person icon, leave button hidden, bottom button has chat-bubble icon.
+     - Host waiting (0 peers): peer counter has "0", leave button visible, bottom button has plus icon.
+     - Active chat (1 peer): peer counter has "1", leave button visible, top `+` button visible, message input visible.
+     - Peer disconnect (0 peers / limbo): peer counter has "0", leave button visible, bottom button has plus icon.
+     - Failed connection (0 peers): leave button visible, bottom button immediately visible with plus icon.
+  6. Verify Joiner sees `"Joined chat"` exactly once and does not see `"Peer joined chat"` for that same initial host connection.
+  7. Verify clicking Leave button returns client to home view across all states.
+
+### REQ-037.9: Splash Screen Default Blue Vector Icons
+- In `zero_client/index.html` (initial `#welcome-splash` DOM and `WELCOME_SPLASH_HTML` template):
+  - Replace platform emojis (⚡, 🔒, 🛡️) with crisp, uniform inline SVG vector icons (lightning bolt polygon, padlock rect/path, shield path).
+- In `zero_client/style.css`:
+  - Style `.feature-icon` and `.feature-icon svg` in default blue (`color: var(--accent-blue); stroke: var(--accent-blue);`), replacing disparate multi-color emojis (yellow lightning, gold lock, red shield) with a uniform default blue appearance.
+
+---
+
+## 3. Target Architecture & Affected Modules
+
+| Module / File | Changes & Responsibilities |
+|---|---|
+| `zero_client/style.css` | 1. Remove background and border from `.brand-icon`, `.peer-count-badge`, `#peer-count`, `.status-capsule-disconnected`, and `.peer-pill`.<br>2. Remove background and glow from `.btn-message-burn`.<br>3. Remove / clean up `.system-timestamp` and `.message-timestamp` styles. |
+| `zero_client/index.html` | 1. Update welcome splash markup and `WELCOME_SPLASH_HTML` to `"Create -> Share -> Chat"`.<br>2. Implement unified UI state updates according to Rules 1–4.<br>3. Omit timestamp rendering in `appendSystemMessage` and `appendMessageBubble`.<br>4. Fix `isJoining` lifecycle so `"Joined chat"` is emitted only on join and never duplicated with `"Peer joined chat"`.<br>5. Immediately close engine and restore UI on connection failure. |
+| `zero_client/src/ui.rs` | Remove timestamp span rendering in `create_message_element` to keep Rust WASM UI client in sync with `index.html`. |
+| `zero_client/tests/browser/test_mesh_scenario.js` | 1. Update existing assertions that expected timestamps in system messages to assert absence.<br>2. Add Test 17 covering all UI rules, badge minimalism, splash text, clean burn icon, join message integrity, and immediate failure recovery. |
+| `openspec/specs/overview.md` | Reconcile canonical spec with UI state rules, splash text, and update test metrics. |
+
+---
+
+## 4. Verification & Quality Gates
+
+1. **Gate 1: Rust Unit & Integration Tests**: `cargo test --workspace` (123 / 123 tests pass).
+2. **Gate 2: Dual WASM Compilation**:
+   - `cargo check --target wasm32-unknown-unknown -p zero_client`
+   - `cargo check --target wasm32-unknown-unknown -p zero_network`
+3. **Gate 3: Formatting & Linting**:
+   - `cargo fmt -- --check`
+   - `cargo clippy --workspace --all-targets -- -D warnings`
+4. **Gate 4: Headless Browser Regression Suite**:
+   - `bash zero_client/tests/browser/run_test.sh` (17 / 17 tests pass, including updated assertions and new Test 17).
+5. **Gate 5: Architectural & Security Review**: Reviewer Cycle 1 verification and unanimous `APPROVE` verdict.
+
+```
+
+## FILE: openspec/changes/archive/ticket-038/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-038"
+title: "Align Chat Bubble Coloured Dot with Burn Button Icon"
+state: "COMPLETED"
+created_at: "2026-10-24T23:30:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-038/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+In chat message bubbles (`.message-bubble`), the left-side colored identity dot (`.peer-dot` / `.self-dot`) is vertically misaligned relative to the right-side flame burn button (`.btn-message-burn`).
+
+### Root Cause Analysis
+1. **Uncoupled Geometry**: `.btn-message-burn` was historically implemented with `position: absolute; top: 6px; right: 8px; width: 22px; height: 22px;`. The vertical center of the flame SVG icon is located at `y = 6px + 11px = 17px` relative to the top border of the bubble.
+2. **Disconnected Header Flow**: Following the removal of sender labels and timestamps in ticket-037, `.message-header` contains only the 7px dot (`.peer-dot` / `.self-dot`). Because `.message-bubble` has `padding: 8px 12px;`, the top of `.message-header` sits at `y = 8px`. The 7px dot's vertical center is at `y = 8px + 3.5px = 11.5px`.
+3. **5.5px Vertical Drift**: The colored dot sits ~5.5px higher than the flame burn button icon, creating an awkward, uneven header row inside every incoming and outgoing chat bubble.
+
+### Objective
+Unify `.message-header` into a single flex container row that houses both the colored dot on the left and `.btn-message-burn` on the right, ensuring their vertical centers are strictly aligned along the exact same horizontal axis (`align-items: center;`).
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-038.1: Unified Flex Message Header & Vertical Alignment
+- In `zero_client/index.html` `appendMessageBubble`:
+  - Mount `.btn-message-burn` directly into `.message-header` (after the dot), rather than as a direct child of `.message-bubble`.
+  - The DOM structure for a chat bubble shall be:
+    ```html
+    <div class="message-bubble message-outgoing" data-message-id="...">
+      <div class="message-header">
+        <span class="peer-dot self-dot"></span>
+        <button type="button" class="btn-message-burn" aria-label="Burn message">
+          <svg ...>...</svg>
+        </button>
+      </div>
+      <div class="message-text">hello</div>
+    </div>
+    ```
+- In `zero_client/style.css`:
+  - `.message-header`:
+    - Define `display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 22px; margin-bottom: 2px;`.
+  - `.btn-message-burn`:
+    - Remove `position: absolute; top: 6px; right: 8px;`.
+    - Set `position: relative; margin-left: auto; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;`.
+    - Retain existing transparent background, clean icon hover effect (`color: #fca5a5; transform: scale(1.1);`), and active effect (`color: #f87171; transform: scale(0.95);`).
+  - `.peer-dot`, `.self-dot`:
+    - Retain `width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0;`.
+    - Both dot and flame SVG are vertically centered at `11px` within the 22px header.
+
+### REQ-038.2: Outgoing & Incoming Header Symmetry
+- In `zero_client/style.css`:
+  - Ensure `.message-outgoing .message-header` and `.message-incoming .message-header` both support the space-between flex layout with no conflicting alignment overrides.
+  - The left colored dot and right burn button icon must align identically across outgoing (`--accent-emerald`) and incoming (`--peer-color`) bubbles.
+
+### REQ-038.3: Regression & Automated Test Verification
+- In `zero_client/tests/browser/test_mesh_scenario.js`:
+  - Update / add assertions in Test 15 and Test 17:
+    1. Verify `outBubble.querySelector(".message-header .btn-message-burn") !== null` and `inBubble.querySelector(".message-header .btn-message-burn") !== null`.
+    2. Verify `outBubble.querySelector(".message-header .peer-dot") !== null`.
+    3. Verify clicking `.btn-message-burn` when nested in `.message-header` cleanly dissolves the message and broadcasts `BurnMessage` without event propagation issues.
+  - Verify all 17 browser headless tests pass cleanly (`bash zero_client/tests/browser/run_test.sh`).
+  - Verify all 123 Rust workspace tests pass (`cargo test --workspace`).
+
+---
+
+## 3. Target Architecture & Affected Modules
+
+| Module / File | Changes & Responsibilities |
+|---|---|
+| `zero_client/index.html` | Mount `burnBtn` inside `header` instead of directly on `bubble` in `appendMessageBubble()`. |
+| `zero_client/style.css` | 1. Update `.message-header` to `display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 22px;`.<br>2. Remove `position: absolute; top: 6px; right: 8px;` from `.btn-message-burn`, adding `margin-left: auto; position: relative;`. |
+| `zero_client/tests/browser/test_mesh_scenario.js` | Assert that `.btn-message-burn` resides within `.message-header` and functions identically. |
+| `openspec/specs/overview.md` | Document header flex alignment invariant upon completion. |
+
+---
+
+## 4. Verification & Quality Gates
+
+1. **Gate 1: Rust Unit & Integration Tests**: `cargo test --workspace` (123 / 123 tests pass).
+2. **Gate 2: Dual WASM Compilation**:
+   - `cargo check --target wasm32-unknown-unknown -p zero_client`
+   - `cargo check --target wasm32-unknown-unknown -p zero_network`
+3. **Gate 3: Formatting & Linting**:
+   - `cargo fmt -- --check`
+   - `cargo clippy --workspace --all-targets -- -D warnings`
+4. **Gate 4: Headless Browser Regression Suite**:
+   - `bash zero_client/tests/browser/run_test.sh` (17 / 17 tests pass).
+5. **Gate 5: Architectural & Security Review**: Reviewer verification with `APPROVE` verdict.
+
+```
+
+## FILE: openspec/changes/archive/ticket-039/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-039"
+title: "UI Tweaks: Add Peer Icon, Bottom-Left Invite Button, Top-Bar Home Cleanliness, Zero-Peer Slashed Badge & Blue Dot Unification"
+state: "COMPLETED"
+created_at: "2026-10-25T08:45:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-039/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+Through visual testing and iterative design review, five user interface refinements have been requested to streamline navigation and unify top-bar / footer interactions:
+
+1. **Add Peer Icon (`+[person_icon]`)**:
+   - The Stage 1 Plus bottom button variant previously displayed a generic plus sign (`+`).
+   - **Intent**: Replace the bare `+` icon with a dedicated "add peers" icon featuring a person silhouette with a plus sign (`+[person_icon]`, e.g. `<svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><line x1="19" y1="8" x2="19" y2="14"></line><line x1="22" y1="11" x2="16" y2="11"></line></svg>`).
+2. **In-Room Add Peer Button Left of Text Input (Precursor to Nested Attachments)**:
+   - In active chat (`inRoom && openPeerCount > 0`), users previously had to reach for the small `+` icon in the top-right header to invite additional peers.
+   - Floating a full-width bar above the input adds vertical bulk and visual competition with the top burn bar, while dynamic swap risks trapped drafts.
+   - **Intent**: Remove `#header-add-btn` from the top bar entirely. Place an inlined Add Peer button (`#input-add-peer-btn`) on the **left side of the text input** inside `#message-form`, displaying the `+[person_icon]` SVG.
+   - This keeps the input bar as a compact single row (~54px total height), prevents thumb collision with Send, preserves draft text safety, and establishes the bottom-left action anchor for a future nested attachment flow (where Add User and file attachments can be combined into an action drawer).
+3. **Clean Home View Top Bar**:
+   - On the Home view (`!inRoom`), the top bar previously showed the slashed person icon badge and the blue dot capsule.
+   - **Intent**: Remove badges from the top bar at home view (`#peer-count` `[no_peers_badge]`, `#idle-status-capsule` `[blue_dot_badge]`, and `#peer-list` are all hidden). The top bar displays only the brand text on the left, with zero badges or buttons on the right.
+4. **Zero-Peer Slashed Badge Invariant**:
+   - When a session is entered or all peers depart (`inRoom && openPeerCount === 0`), the peer counter previously rendered the numeric character `"0"`.
+   - **Intent**: Replace numeric `"0"` with `[no_peers_badge]` (`SLASHED_PERSON_ICON_SVG`). Inside a room session with 0 peers, `#peer-count` renders the slashed person icon. When peers > 0, `#peer-count` renders the numeric string (`"1"`, `"2"`...).
+5. **Zero-Peer Badge Unification (Blue Dot Instead of Padlock)**:
+   - Previously, when a user started a new chat (host waiting), the header showed `[0_peer_counter] [blue dot] [leave]`. However, when peers departed (limbo state), the header showed `[0_peer_counter] [padlock] [leave]`.
+   - **Intent**: Unify the UI state across all 0-peer room states: whenever the 0-peer counter badge is displayed, the blue dot badge (`#idle-status-capsule`) MUST be displayed, and the padlock (`#peer-list`) MUST be hidden. The padlock is reserved strictly for active encrypted sessions with >0 peers. Both host waiting and peer limbo show identical top-bar icons: `[no_peers_badge] [blue dot] [leave]`.
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-039.1: Add Peer Icon (`+[person_icon]`)
+- In `zero_client/index.html`:
+  - Update `ADD_PEER_ICON_SVG` from a bare plus sign to a user-plus icon featuring a person silhouette and plus symbol:
+    ```javascript
+    const ADD_PEER_ICON_SVG = `
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+            <circle cx="9" cy="7" r="4"></circle>
+            <line x1="19" y1="8" x2="19" y2="14"></line>
+            <line x1="22" y1="11" x2="16" y2="11"></line>
+        </svg>`.trim();
+    ```
+  - Both `#btn-create-room` (in 0-peer room view) and `#input-add-peer-btn` (in active chat) use `ADD_PEER_ICON_SVG` and `aria-label="Add peer"`.
+
+### REQ-039.2: Top-Bar Cleanliness at Home View
+- In `zero_client/index.html` `updatePeerCountDisplay()`:
+  - When `!inRoom` (Home view):
+    - `#peer-count` (`peerCountEl`) is **hidden** (`classList.add("hidden")`).
+    - `#idle-status-capsule` (`idleStatusCapsule`) is **hidden** (`classList.add("hidden")`).
+    - `#peer-list` (`peerListEl`) is **hidden** (`classList.add("hidden")` and `innerHTML = ""`).
+    - `#header-leave-btn` (`headerLeaveBtn`) is **hidden** (`classList.add("hidden")`).
+    - `#header-add-btn` (`headerAddBtn`) is **hidden** (`classList.add("hidden")`).
+    - `#message-form` is **hidden**.
+    - `#create-room-bar` is **visible** in Create Chat mode (`setCreateRoomStage1()`).
+
+### REQ-039.3: Zero-Peer Slashed Badge & Numeric Counter Lifecycle (Blue Dot Unification)
+- In `zero_client/index.html` `updatePeerCountDisplay()` and limbo disconnect handler:
+  - When `inRoom && openPeerCount === 0` (host waiting, limbo disconnect, join failure):
+    - `#peer-count` is **visible** (`classList.remove("hidden")`) and renders `SLASHED_PERSON_ICON_SVG` (`[no_peers_badge]`) instead of `"0"`.
+    - `#idle-status-capsule` (blue dot) is **visible** (`classList.remove("hidden")`).
+    - `#peer-list` (padlock) is **hidden** (`classList.add("hidden")` and `innerHTML = ""`).
+    - `#header-leave-btn` is **visible** (`classList.remove("hidden")`).
+    - `#message-form` is **hidden**.
+    - `#create-room-bar` is **visible** (`classList.remove("hidden")`):
+      - **Host Waiting (Initial creation from Home view)**: Since the invite URL was generated and copied to the clipboard during room creation, `#btn-create-room` is in **Stage 2 (`.btn-waiting`, Copy Icon)**. Clicking it re-copies the invite link to the clipboard and restarts temporary feedback notices.
+      - **Limbo Disconnect (Peers have left)**: Before a new invite is requested, `#btn-create-room` is initialized in **Stage 1 Plus (`+[person_icon]`)**. Clicking it generates a new in-room offer, copies to clipboard, and transitions to **Stage 2 (`.btn-waiting`, Copy Icon)**.
+      - `updatePeerCountDisplay()` preserves `.btn-waiting` if already in Stage 2 (never prematurely resets active Stage 2 copy buttons).
+    - **UI Unification Invariant**: Whenever the 0-peer counter badge is displayed, the blue dot badge (`#idle-status-capsule`) is always displayed alongside it (`[no_peers_badge] [blue dot] [leave]`), and the padlock icon (`#peer-list`) is strictly hidden. Both host waiting and peer departure limbo states present identical top-bar controls.
+  - When `inRoom && openPeerCount > 0` (active chat with 1+ peers):
+    - `#peer-count` is **visible** (`classList.remove("hidden")`) and renders numeric string `String(count)` (`"1"`, `"2"`...).
+    - `#idle-status-capsule` is **hidden** (`classList.add("hidden")`).
+    - `#peer-list` (padlock) is **visible** (`classList.remove("hidden")`).
+    - `#header-leave-btn` is **visible** (`classList.remove("hidden")`).
+    - `#create-room-bar` is **hidden** (`classList.add("hidden")`).
+    - `#message-form` is **visible** (`classList.remove("hidden")`).
+
+### REQ-039.4: Remove Top Bar `+` Icon & Place `+[person_icon]` Left of Text Input
+- In `zero_client/index.html`:
+  - Permanently remove or hide `#header-add-btn` from `#header-controls`.
+  - In `#message-form`, add `#input-add-peer-btn` immediately before `#message-input`:
+    ```html
+    <form id="message-form" class="message-form hidden" onsubmit="return false;">
+        <button id="input-add-peer-btn" class="btn btn-action-peer btn-icon" type="button" aria-label="Add peer">
+            <!-- ADD_PEER_ICON_SVG -->
+        </button>
+        <input id="message-input" class="message-input" type="text" autocomplete="off" disabled />
+        <button id="send-button" class="btn btn-send-emerald btn-icon" type="button" aria-label="Send message" disabled>
+            ...
+        </button>
+    </form>
+    ```
+  - Clicking `#input-add-peer-btn` in active chat:
+    - Generates in-room peer offer and dead-drop signaling socket (`pendingInviteWs`).
+    - Copies invite URL to clipboard.
+    - Transitions `#input-add-peer-btn` to Stage 2 (`.btn-waiting`, copy icon).
+    - Emits immediate Notice 1 (`"Invite link copied to clipboard"`) and staggered Notice 2 (`"Waiting for peer..."`).
+    - Re-clicks re-copy the URL and restart notices without disabling or clearing the message text input.
+    - Preserves all drafted text in `#message-input` with zero loss or friction.
+- In `zero_client/style.css`:
+  - Style `#input-add-peer-btn` / `.btn-action-peer`:
+    - Dimensions: `width: 44px; height: 42px;` (symmetrical with `#send-button`).
+    - Background: `rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--accent-cyan); border-radius: 8px;`.
+    - Hover: `background: rgba(56, 189, 248, 0.22); border-color: rgba(56, 189, 248, 0.5); transform: translateY(-1px);`.
+    - Active: `transform: translateY(0);`.
+    - Waiting state (`.btn-waiting`): `background: rgba(245, 158, 11, 0.15); border-color: rgba(245, 158, 11, 0.4); color: #fbbf24;`.
+
+### REQ-039.5: Automated Regression Test Suite Updates
+- In `zero_client/tests/browser/test_mesh_scenario.js`:
+  - Update Home view assertions:
+    - Assert `#peer-count` is hidden (`classList.contains("hidden") === true`).
+    - Assert `#idle-status-capsule` is hidden (`classList.contains("hidden") === true`).
+    - Assert `#peer-list` is hidden (`classList.contains("hidden") === true`).
+  - Update 0-peers room assertions (both host waiting and peer limbo after disconnect):
+    - Assert `#peer-count` is visible and contains `peer-slashed-user-icon` SVG (instead of text `"0"`).
+    - Assert `#idle-status-capsule` is visible (`classList.contains("hidden") === false`).
+    - Assert `#peer-list` is hidden (`classList.contains("hidden") === true`).
+    - Assert `#header-leave-btn` is visible.
+  - Update active chat assertions:
+    - Assert `#header-add-btn` is hidden or omitted from top bar.
+    - Assert `#input-add-peer-btn` is visible on the left of `#message-input` inside `#message-form`.
+    - Assert `#input-add-peer-btn` contains `+[person_icon]` icon.
+    - Assert `#peer-list` is visible and contains padlock icon.
+    - Assert clicking `#input-add-peer-btn` in active chat copies invite link, morphs to copy icon, and emits notices cleanly without altering draft input text.
+  - All 17 browser headless tests must pass (`bash zero_client/tests/browser/run_test.sh`).
+  - All 123 Rust workspace tests must pass (`cargo test --workspace`).
+
+---
+
+## 3. Target Architecture & Affected Modules
+
+| Module / File | Changes & Responsibilities |
+|---|---|
+| `zero_client/index.html` | 1. Update `ADD_PEER_ICON_SVG` to user-plus vector icon.<br>2. In Home view: hide `#peer-count`, `#idle-status-capsule`, and `#peer-list`.<br>3. In 0-peer room view & limbo state: render `SLASHED_PERSON_ICON_SVG` in `#peer-count`, show `#idle-status-capsule` (blue dot), hide `#peer-list` (padlock).<br>4. In active chat: remove `#header-add-btn`, add `#input-add-peer-btn` immediately before `#message-input` with `ADD_PEER_ICON_SVG`, wire invite flow. |
+| `zero_client/style.css` | Style `#input-add-peer-btn` / `.btn-action-peer` with cyan accent, 44px × 42px dimensions symmetrical with `#send-button`, hover and `.btn-waiting` states. |
+| `zero_client/tests/browser/test_mesh_scenario.js` | Update assertions across test scenarios for hidden home badges, slashed badge for 0 peers, unified blue dot (no padlock) in 0-peer states, and bottom-left `#input-add-peer-btn` in active chat. |
+| `openspec/specs/overview.md` | Reconcile canonical spec with Invariant 16 upon task completion. |
+
+---
+
+## 4. Verification & Quality Gates
+
+1. **Gate 1: Rust Unit & Integration Tests**: `cargo test --workspace` (123 / 123 tests pass).
+2. **Gate 2: Dual WASM Compilation**:
+   - `cargo check --target wasm32-unknown-unknown -p zero_client`
+   - `cargo check --target wasm32-unknown-unknown -p zero_network`
+3. **Gate 3: Formatting & Linting**:
+   - `cargo fmt -- --check`
+   - `cargo clippy --workspace --all-targets -- -D warnings`
+4. **Gate 4: Headless Browser Regression Suite**:
+   - `bash zero_client/tests/browser/run_test.sh` (17 / 17 tests pass).
+5. **Gate 5: Architectural & Security Review**: Reviewer verification with `APPROVE` verdict.
+
+```
+
+## FILE: openspec/changes/archive/ticket-040/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-040"
+title: "In-Chat Add Peer Button: 2-Stage Blue/Cyan Styling and 5s Temporary Notice Timeout"
+state: "COMPLETED"
+created_at: "2026-10-25T10:38:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-040/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+Through visual testing and iterative UX review of the newly introduced in-chat bottom-left Add Peer button (`#input-add-peer-btn`), two behavioral refinements have been identified:
+
+1. **Eliminate Orange Coloring in Chat View (2 Stages of Blue/Cyan)**:
+   - When clicked, `#input-add-peer-btn` currently adopts `.btn-waiting`, shifting its background and icon to amber/orange (`#fbbf24`, `rgba(245, 158, 11, 0.15)`).
+   - This clashes visually with the cyan/emerald palette of the input bar and message feed.
+   - **Intent**: The in-chat `#input-add-peer-btn` must strictly use 2 stages of blue/cyan styling:
+     - **Stage 1 (Default / Idle)**: Subtle translucent cyan (`background: rgba(56, 189, 248, 0.12); border-color: rgba(56, 189, 248, 0.3); color: var(--accent-cyan);`) displaying `ADD_PEER_ICON_SVG` (`+[person_icon]`).
+     - **Stage 2 (Active / Copied)**: Deeper/accented blue/cyan (`background: rgba(56, 189, 248, 0.28); border-color: rgba(56, 189, 248, 0.65); color: #38bdf8;`) displaying `COPY_ICON_SVG` (`[copy_icon]`). Completely eliminate orange/amber in the active chat view.
+2. **Restore 5-Second Notice Timeout & Eliminate "Waiting for peer..." in Chat View**:
+   - In active chat view (`openPeerCount > 0`), clicking `#input-add-peer-btn` currently invokes `triggerCreateRoomNotices()`, which emits permanent/semi-permanent notices: `"Invite link copied to clipboard"` followed by a staggered `"Waiting for peer..."` message with ticking dots.
+   - In an active chat where participants are already connected and conversing, `"Waiting for peer..."` is inaccurate, distracting, and clutters the conversation feed.
+   - **Intent**: Restore the previous top-bar button invite behavior (`triggerInChatInviteFeedback()`):
+     - Emit a single clean notice: `"Invite link copied to clipboard"`.
+     - Apply `.notice-pulse` for subtle animation.
+     - Auto-dismiss and remove the notice from the DOM after exactly 5 seconds (`setTimeout(..., 5000)`).
+     - Never emit `"Waiting for peer..."` in active chat view.
+     - Re-clicks re-copy the invite URL, re-pulse the notice, and reset the 5-second timer.
+     - Synchronize the button state: after the 5-second timeout expires, `#input-add-peer-btn` cleanly reverts from Stage 2 (copy icon) back to Stage 1 (`+[person_icon]`), while caching the pending invite for instant re-copying.
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-040.1: In-Chat Add Peer Button 2-Stage Blue/Cyan Styling
+- In `zero_client/style.css`:
+  - Scoped specifically to `.btn-action-peer` (or `.btn-action-peer.btn-waiting`):
+    - Completely eliminate amber/orange colors (`#fbbf24`, `rgba(245, 158, 11, ...)`).
+    - Define Stage 2 styling using the blue/cyan palette:
+      ```css
+      .btn-action-peer.btn-waiting {
+          background: rgba(56, 189, 248, 0.28);
+          border-color: rgba(56, 189, 248, 0.65);
+          color: #38bdf8;
+      }
+      ```
+    - The full-width `#btn-create-room` in 0-peer room view / limbo retains its independent styling.
+
+### REQ-040.2: 5-Second Notice Timeout & Elimination of "Waiting for peer..." in Active Chat
+- In `zero_client/index.html`:
+  - Implement a dedicated in-chat feedback handler `triggerInChatInviteFeedback()`:
+    ```javascript
+    let inChatInviteFeedbackTimer = null;
+    let inChatInviteFeedbackEl = null;
+
+    function triggerInChatInviteFeedback() {
+        if (inChatInviteFeedbackTimer) {
+            clearTimeout(inChatInviteFeedbackTimer);
+            inChatInviteFeedbackTimer = null;
+        }
+
+        if (inChatInviteFeedbackEl && inChatInviteFeedbackEl.parentNode === feed) {
+            inChatInviteFeedbackEl.classList.remove("notice-pulse");
+            void inChatInviteFeedbackEl.offsetWidth;
+            inChatInviteFeedbackEl.classList.add("notice-pulse");
+        } else {
+            clearTransientStatus();
+            inChatInviteFeedbackEl = document.createElement("div");
+            inChatInviteFeedbackEl.className = "system-message system-temporary in-chat-invite-notice notice-pulse";
+
+            const textSpan = document.createElement("span");
+            textSpan.className = "system-text";
+            textSpan.textContent = "Invite link copied to clipboard";
+            inChatInviteFeedbackEl.appendChild(textSpan);
+
+            feed.appendChild(inChatInviteFeedbackEl);
+            feed.scrollTop = feed.scrollHeight;
+        }
+
+        inChatInviteFeedbackTimer = setTimeout(() => {
+            if (inChatInviteFeedbackEl && inChatInviteFeedbackEl.parentNode) {
+                inChatInviteFeedbackEl.remove();
+            }
+            inChatInviteFeedbackEl = null;
+            inChatInviteFeedbackTimer = null;
+            // Revert button to Stage 1 after timeout
+            resetInputAddPeerButton();
+        }, 5000);
+    }
+    ```
+  - Clicking `#input-add-peer-btn` calls `triggerInChatInviteFeedback()` instead of `triggerCreateRoomNotices()`.
+  - In active chat view, `"Waiting for peer..."` is **never** appended to the feed.
+
+### REQ-040.3: Button State Reversion Synchronized with 5s Notice
+- In `zero_client/index.html`:
+  - When `#input-add-peer-btn` is clicked in active chat:
+    - Transitions to Stage 2 (`.btn-waiting`, `COPY_ICON_SVG`, `aria-label="Copy invite link"`).
+  - When the 5-second timer expires:
+    - Reverts `#input-add-peer-btn` to Stage 1 (`ADD_PEER_ICON_SVG`, `aria-label="Add peer"`, removes `.btn-waiting`).
+  - Re-clicking within the 5-second window:
+    - Re-copies the invite URL to clipboard.
+    - Re-animates `notice-pulse` on the existing notice.
+    - Resets the 5-second timeout, keeping the button in Stage 2 and notice visible for another 5 seconds.
+  - When a peer joins or when leaving the room:
+    - Any active `inChatInviteFeedbackTimer` is cleared, `inChatInviteFeedbackEl` is removed, and `#input-add-peer-btn` is restored to Stage 1.
+  - Message input text draft in `#message-input` is never modified or cleared.
+
+### REQ-040.4: Automated Browser Regression Test Updates
+- In `zero_client/tests/browser/test_mesh_scenario.js`:
+  - Update Test 13 and related active chat assertions:
+    - Assert `#input-add-peer-btn` does NOT contain orange/amber styles upon click.
+    - Assert exactly 1 temporary notice `"Invite link copied to clipboard"` is appended to the feed.
+    - Assert `"Waiting for peer..."` is NOT in the feed.
+    - Assert advancing fake timers by 5000ms removes the temporary notice from the feed.
+    - Assert `#input-add-peer-btn` reverts to Stage 1 (`ADD_PEER_ICON_SVG`) after 5000ms.
+    - Assert re-clicking within 5000ms re-copies link, restarts 5000ms timer, and preserves notice.
+  - All 17 browser headless tests must pass (`bash zero_client/tests/browser/run_test.sh`).
+  - All 123 Rust workspace tests must pass (`cargo test --workspace`).
+
+---
+
+## 3. Target Architecture & Affected Modules
+
+| Module / File | Changes & Responsibilities |
+|---|---|
+| `zero_client/index.html` | Implement `triggerInChatInviteFeedback()` with 5-second auto-dismiss timeout, wire `#input-add-peer-btn` to it, and handle 5s Stage 2 -> Stage 1 button reversion without emitting `"Waiting for peer..."`. |
+| `zero_client/style.css` | Update `.btn-action-peer.btn-waiting` to use Stage 2 blue/cyan styling (`rgba(56, 189, 248, 0.28)`, `#38bdf8`), eliminating amber/orange. |
+| `zero_client/tests/browser/test_mesh_scenario.js` | Update Test 13 assertions to verify the 5s notice timeout, absence of `"Waiting for peer..."`, and 2-stage blue/cyan button behavior in chat view. |
+| `openspec/specs/overview.md` | Reconcile canonical spec Invariant 16 upon task completion. |
+
+---
+
+## 4. Verification & Quality Gates
+
+1. **Gate 1: Rust Unit & Integration Tests**: `cargo test --workspace` (123 / 123 tests pass).
+2. **Gate 2: Dual WASM Compilation**:
+   - `cargo check --target wasm32-unknown-unknown -p zero_client`
+   - `cargo check --target wasm32-unknown-unknown -p zero_network`
+3. **Gate 3: Formatting & Linting**:
+   - `cargo fmt -- --check`
+   - `cargo clippy --workspace --all-targets -- -D warnings`
+4. **Gate 4: Headless Browser Regression Suite**:
+   - `bash zero_client/tests/browser/run_test.sh` (17 / 17 tests pass).
+5. **Gate 5: Architectural & Security Review**: Reviewer verification with `APPROVE` verdict.
+
+```
+
+## FILE: openspec/changes/archive/ticket-041/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-041"
+title: "Mobile Browser Support & Resilience: Viewport, Safe-Area Insets, Focus Retention, and Reconnection"
+state: "COMPLETED"
+created_at: "2026-10-25T13:55:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-041/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+`zero_chat` operates reliably on desktop browsers, but exhibits both visual clipping and functional lifecycle failures on mobile browsers (iOS Safari, Android Chrome, mobile Firefox, and in-app WebViews):
+
+1. **iOS Status Bar / Notch Collision**: `<meta name="viewport" ... viewport-fit=cover>` allows the page to render underneath the iOS status bar (clock, battery, Wi-Fi), causing `.chat-header` to overlap system icons.
+2. **Virtual Keyboard Displacing Header Off-Screen**: On iOS Safari, focusing `#message-input` slides up the virtual keyboard; Safari does not reduce `100vh` layout height, scrolling the entire page upward and pushing `.chat-header` and top messages off-screen.
+3. **Horizontal Clipping & Auto-Zoom**: Font sizes below 16px on `#message-input` trigger iOS Safari's mandatory ~114% auto-zoom on focus, cropping left and right margins (~15–20px). Flex containers lacking `min-width: 0` overflow `100vw`.
+4. **Keyboard Dismissal on Send**: Tapping `#send-button` shifts focus away from `#message-input`, closing the virtual keyboard after every single message sent.
+5. **Mobile Clipboard User-Gesture Expiration (`NotAllowedError`)**: Generating an invite awaits non-trickle ICE gathering (up to 3000ms). Transient user activation expires during this await on mobile browsers, causing `navigator.clipboard.writeText(url)` to throw `NotAllowedError`. Currently, the error is swallowed and falsely reports `"Invite link copied to clipboard"`.
+6. **Host WebSocket Drop & Joiner 404 on App Switch**: When the Host switches to a messaging app (WhatsApp, Signal, iMessage) to paste the invite URL, the mobile OS suspends or closes background WebSockets. When the Joiner opens the link, the Durable Object returns HTTP 404 (`HostSocketUnavailable`). If the Joiner immediately fails on 404, connection is aborted before the Host can switch back.
+7. **Mobile ICE Gathering Latency**: Mobile cellular/Wi-Fi interfaces require additional time to wake the radio and receive STUN responses.
+8. **Premature Session Burn on Tab Backgrounding**: `window.addEventListener("pagehide", sendOpportunisticLeave)` fires during system dialogs or app switching on iOS Safari even when the page is merely cached in the bfcache (`event.persisted === true`), falsely broadcasting `leave_and_burn` and incinerating the session.
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-041.1: Mobile Viewport, Safe-Area Insets & Virtual Keyboard Geometry
+- In `zero_client/style.css`:
+  - Lock `html, body` against unintended elastic scrolling:
+    ```css
+    html, body {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: var(--app-height, 100dvh);
+      overflow: hidden;
+      overscroll-behavior: none;
+      -webkit-text-size-adjust: 100%;
+    }
+    #app {
+      position: fixed;
+      top: var(--app-offset-top, 0px);
+      left: 0;
+      right: 0;
+      width: 100%;
+      max-width: 100vw;
+      height: var(--app-height, 100dvh);
+      overflow: hidden;
+      box-sizing: border-box;
+    }
+    ```
+  - Apply top safe-area insets:
+    ```css
+    .chat-header {
+      padding-top: calc(12px + env(safe-area-inset-top, 0px));
+    }
+    #landing-view, .welcome-splash {
+      padding-top: env(safe-area-inset-top, 0px);
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    ```
+  - Apply bottom safe-area insets to `.message-dock` / `.message-form`:
+    - Default (keyboard closed): `padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));`
+    - When `.keyboard-open` class is present on `html`: `padding-bottom: 8px;` (eliminates gap above virtual keyboard).
+- In `zero_client/index.html`:
+  - Register `window.visualViewport` listeners for `resize` and `scroll`:
+    - Update CSS variables `--app-height: ${vv.height}px` and `--app-offset-top: ${vv.offsetTop}px`.
+    - Toggle `.keyboard-open` class on `document.documentElement` when `vv.height < window.innerHeight * 0.85`.
+    - Prevent scroll drift with `window.scrollTo(0, 0)`.
+    - Automatically maintain feed scroll pinned to bottom (`feed.scrollTop = feed.scrollHeight`) when keyboard opens.
+
+### REQ-041.2: Horizontal Clipping Elimination & 16px Font Size Invariant
+- In `zero_client/style.css`:
+  - `#message-input`, `.message-input`:
+    ```css
+    #message-input,
+    .message-input {
+      font-size: 16px;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+    ```
+    (Strictly `>= 16px` to disable iOS Safari mandatory focus zoom).
+  - Enforce `box-sizing: border-box; width: 100%; max-width: 100%; overflow-x: hidden;` across `.chat-header`, `.global-burn-row`, `#chat-feed`, `.message-form`, and container panels.
+  - Constrain message bubbles: `max-width: 82%; word-break: break-word; overflow-wrap: anywhere;` with touch scrolling `-webkit-overflow-scrolling: touch; overscroll-behavior: contain;`.
+
+### REQ-041.3: Touch Interaction & Input Focus Retention on Send
+- In `zero_client/index.html`:
+  - Attach a `pointerdown` / `touchstart` listener on `#send-button`:
+    ```javascript
+    sendBtn.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+    });
+    ```
+    This prevents button click from taking focus and blurring `#message-input`.
+  - In `doSendMessage()`, ensure focus is explicitly preserved on `#message-input` after message submission so the user can continue typing continuously on mobile keyboards without reopening the virtual keyboard.
+
+### REQ-041.4: Mobile Clipboard User-Gesture Compliance & Honest Fallback
+- In `zero_client/index.html`:
+  - For asynchronous invite generation in `createRoomAsHost` and in-room invite click handlers:
+    - If `window.ClipboardItem && navigator.clipboard && navigator.clipboard.write` is available, initiate the write synchronously inside the user-activation click handler using a `ClipboardItem` wrapping a deferred `Promise` resolving to `new Blob([url], { type: "text/plain" })`.
+  - Honest Fallback on Clipboard Failure:
+    - If both `ClipboardItem` and `navigator.clipboard.writeText` fail or throw `NotAllowedError`:
+      - Do NOT emit `"Invite link copied to clipboard"`.
+      - Store the generated URL in `activeHostInviteUrl` or `pendingInviteUrl`.
+      - Morph button to Stage 2 (`.btn-waiting`, `COPY_ICON_SVG`).
+      - Display honest temporary notice: `"Invite ready — tap Copy to copy link"`.
+      - When user taps the Stage 2 button, `navigator.clipboard.writeText` executes synchronously within 0ms of the user gesture, succeeding 100% of the time across all mobile browsers and triggering `"Invite link copied to clipboard"`.
+
+### REQ-041.5: Host WebSocket Suspension & Auto-Reconnection on App Switch
+- In `zero_client/index.html`:
+  - Store active waiting signaling context in memory:
+    - `activeHostSignaling = { doId, hostSecretHex, assignedPeerId }` for host room creation.
+    - `activeInviteSignaling = { doId, hostSecretHex, assignedPeerId }` for in-room secondary invites.
+  - Listen to `visibilitychange` on `document`:
+    - When `document.visibilityState === "visible"` (or if `hostWs`/`pendingInviteWs` fires unexpected `onclose` while still waiting for `assignedPeerId` to transition to `"open"`):
+      - Re-open WebSocket to `${WORKER_WS_ORIGIN}/host/${doId}?secret=${hostSecretHex}`.
+      - Re-bind message listener to receive joiner answers piped by the Durable Object.
+  - Clear signaling context once peer channel opens or room session is reset.
+
+### REQ-041.6: Joiner 404 Retry Loop on Delayed Host Return
+- In `zero_client/index.html`:
+  - In `joinRoomFromHash`: When Joiner executes `POST /drop/${invite.do_id}/${invite.invite_uuid}`:
+    - If response status is HTTP 404 (`HostSocketUnavailable`, host switched to messaging app and hasn't returned yet):
+      - Display transient status notice: `"Waiting for host..."`.
+      - Retry `POST /drop/...` every 1500ms up to 10 attempts (~15 seconds).
+      - If HTTP 401 (invalid HMAC/token) or 410 (burned), abort retry immediately with failure.
+      - When Host returns to browser, WebSocket reconnects, Durable Object returns 200 OK, and WebRTC connection snaps open.
+
+### REQ-041.7: Mobile ICE Gathering Latency & Bfcache False-Burn Prevention
+- In `zero_client/index.html`:
+  - In `_waitForIceGatheringComplete(pc)`: Increase fallback timeout limit from 3000ms to 4500ms to accommodate mobile cellular STUN latency. Ensure cleanup removes `icegatheringstatechange` and `icecandidate` listeners.
+  - In `sendOpportunisticLeave`:
+    - Update `pagehide` event listener:
+      ```javascript
+      window.addEventListener("pagehide", (event) => {
+        if (!event.persisted) {
+          sendOpportunisticLeave();
+        }
+      });
+      ```
+    - Prevents tab backgrounding/app-switching into bfcache from firing `sendOpportunisticLeave()` and burning active sessions prematurely.
+
+### REQ-041.8: Automated Headless Mobile & Regression Test Suite
+- In `zero_client/tests/browser/test_mesh_scenario.js`:
+  - Implement Test 18 (Mobile Viewport, Virtual Keyboard & Reconnection):
+    - Assert `document.documentElement.scrollWidth <= window.innerWidth` across landing view, chat view with long text, and notices.
+    - Assert `getComputedStyle(document.getElementById('message-input')).fontSize === '16px'`.
+    - Simulate `visualViewport` height resizing (keyboard open) and verify `.chat-header` top offset remains `>= 0` and `.input-dock` padding adapts.
+    - Verify `sendBtn` `pointerdown` preventDefault behavior.
+    - Verify Joiner 404 retry loop when host WebSocket drops and reconnects on visibility resume.
+    - Verify `pagehide` with `event.persisted === true` does NOT trigger opportunistic leave.
+  - Ensure all 123 Rust workspace tests pass (`cargo test --workspace`).
+  - Dual WASM checks pass (`zero_client` and `zero_network`).
+  - All 18 headless browser tests pass (`bash zero_client/tests/browser/run_test.sh`).
+
+---
+
+## 3. Target Architecture & Affected Modules
+
+| Module / File | Scope & Responsibilities |
+|---|---|
+| `zero_client/style.css` | Safe-area inset paddings (`env(safe-area-inset-top/bottom)`), fixed viewport scroll lock (`--app-height`, `--app-offset-top`), 16px font-size on `#message-input`, overflow guards, and `.keyboard-open` padding adjustment. |
+| `zero_client/index.html` | `visualViewport` sync handler, `#send-button` pointerdown focus preservation, `ClipboardItem` async promise copy with honest fallback, host WebSocket auto-reconnect on `visibilitychange`, Joiner 404 retry loop, 4500ms ICE gathering fallback, and `!event.persisted` check on `pagehide`. |
+| `zero_client/tests/browser/test_mesh_scenario.js` | Test 18 automated headless assertions for mobile viewport dimensions, font size invariant, visualViewport adaptation, Joiner 404 retry, and bfcache persistence. |
+| `openspec/specs/overview.md` | Reconcile canonical spec with Mobile Browser Support Invariant 17 upon task completion. |
+
+---
+
+## 4. Verification & Quality Gates
+
+1. **Gate 1: Rust Unit & Integration Tests**: `cargo test --workspace` (123 / 123 tests pass).
+2. **Gate 2: Dual WASM Compilation**:
+   - `cargo check --target wasm32-unknown-unknown -p zero_client`
+   - `cargo check --target wasm32-unknown-unknown -p zero_network`
+3. **Gate 3: Formatting & Linting**:
+   - `cargo fmt -- --check`
+   - `cargo clippy --workspace --all-targets -- -D warnings`
+4. **Gate 4: Headless Browser Regression Suite**:
+   - `bash zero_client/tests/browser/run_test.sh` (18 / 18 tests pass).
+5. **Gate 5: Architectural & Security Review**: Reviewer verification with `APPROVE` verdict.
+
+```
+
+## FILE: openspec/changes/archive/ticket-042/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-042"
+title: "UI Architecture Refinements: Transparent Panels, Relocated Header Burn Button, and Rounded Controls"
+state: "COMPLETED"
+created_at: "2026-10-25T14:55:00Z"
+completed_at: "2026-10-25T15:35:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-042/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+The application UI currently exhibits several visual inconsistencies and sub-optimal spatial layouts across both desktop and mobile viewports:
+1. **Unnecessary Panel Backgrounds**: The top bar (`.chat-header`), splash screen (`.welcome-splash`), and bottom footer dock (`.chat-footer`, `#create-room-bar`) have distinct panel backgrounds (`rgba(18, 24, 38, 0.7)`), creating hard boxed borders and color disparity against the dark ambient gradient background.
+2. **Top-Bar Clutter in Active Chat**: The text `"zero-chat.pages.dev"` and tagline `"SECURE P2P CHAT"` remain visible during active chat, crowding header controls and consuming valuable horizontal space.
+3. **Dedicated Burn Row Consuming Vertical Height**: The burn chat button currently sits in a separate full-width row (`#burn-room-bar`) underneath the header, pushing messages down and creating visual fragmentation.
+4. **Bottom Bar Button & Input Box Geometry**: Bottom bar buttons (`#input-add-peer-btn` and `#send-button`) have boxy 8px border-radii instead of matching the rounded glass aesthetic of top bar controls. Furthermore, the footer container has an opaque background while the text input box has a darker inset background.
+
+### User Intent & Core Principles
+- **Atmospheric Transparency**: Remove the background color, borders, and box-shadows of `.chat-header`, `.welcome-splash`, and `.chat-footer` / `#create-room-bar` so the background gradient flows seamlessly through the interface.
+- **Brand Minimalism in Active Chat**: Display the domain title (`zero-chat.pages.dev`) and subtitle (`SECURE P2P CHAT`) strictly in the Home view. In active chat, show only the cyan `0` brand glyph on the top-left, freeing up horizontal header space.
+- **Header-Integrated Burn Button**: Move the burn chat button (`#destroy-session-button`) into the top-right header row (`.header-controls`) as the leftmost button of that row (positioned to the left of the peer count badge, status indicator, and leave button). Give it a significantly wider oval shape that matches the top-bar button style and takes advantage of the freed-up header space, eliminating the `#burn-room-bar` row entirely.
+- **Rounded Bottom Bar Buttons & Top-Bar Styling**: Make bottom bar buttons (`#input-add-peer-btn` and `#send-button`) rounded (pill/circle `border-radius: 9999px`) and style them using the top-bar button translucent glass language.
+- **Inverted Dock & Input Styling**: Make the bottom bar dock background completely transparent; style `#message-input` with the previous bottom bar panel background (`rgba(18, 24, 38, 0.7)`), `backdrop-filter: blur(16px)`, rounded pill border-radius, and subtle border.
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-042.1: Transparent Background Top Bar
+- In `zero_client/style.css`:
+  - Set `.chat-header`:
+    ```css
+    .chat-header {
+      background: transparent !important;
+      border: none !important;
+      box-shadow: none !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+    ```
+  - Remove any background color difference between the top bar and the ambient page background.
+
+### REQ-042.2: Transparent Background Splash Screen
+- In `zero_client/style.css`:
+  - Set `.welcome-splash`:
+    ```css
+    .welcome-splash {
+      background: transparent !important;
+      border: none !important;
+      box-shadow: none !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+    ```
+  - Features inside `.welcome-features` retain their readable layout against the background.
+
+### REQ-042.3: Transparent Background for Create New Chat & Limbo Bottom Bar
+- In `zero_client/style.css` and `zero_client/index.html`:
+  - The bottom footer container `.chat-footer` and `#create-room-bar`:
+    ```css
+    .chat-footer {
+      background: transparent !important;
+      border: none !important;
+      box-shadow: none !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+    .create-room-bar {
+      background: transparent !important;
+      border: none !important;
+      box-shadow: none !important;
+    }
+    ```
+  - `#btn-create-room.btn-emerald` preserves its vivid emerald color (`--accent-emerald` gradient and glow) in both Home View (`Create Chat`) and Limbo Disconnect view (`+` Add peer).
+
+### REQ-042.4: Active Chat Top-Bar Brand Visibility
+- In `zero_client/index.html`:
+  - In Home view (`!inRoom`): `.brand-text` (`.brand-title` and `.brand-tagline`) is visible alongside `.brand-icon` (`0`).
+  - In Room / Active chat view (`inRoom`): `.brand-text` is hidden (`classList.add("hidden")`), leaving only the brand glyph `0` on the left.
+  - On `resetToHome()`: `.brand-text` is unhidden (`classList.remove("hidden")`).
+
+### REQ-042.5: Relocate Burn Button to Top-Right Header as a Wide Oval Button
+- In `zero_client/index.html`:
+  - Move the burn button (`#destroy-session-button`) inside `.header-controls` as the leftmost element of that row (positioned before `#peer-count`, `#idle-status-capsule`, `#peer-list`, and `#header-leave-btn`).
+  - Delete or omit `#burn-room-bar`, eliminating the extra vertical row underneath the header.
+- In `zero_client/style.css`:
+  - Style `#destroy-session-button.btn-header-burn`:
+    - Adopts the top-bar button visual style (translucent glass, subtle border, smooth hover/active transitions).
+    - Shaped as a significantly wider oval:
+      ```css
+      #destroy-session-button.btn-header-burn {
+        min-width: 80px;
+        height: 28px;
+        padding: 0 14px;
+        border-radius: 9999px;
+        background: rgba(239, 68, 68, 0.12);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+        color: var(--accent-rose);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        transition: all 0.2s ease;
+      }
+      #destroy-session-button.btn-header-burn:hover {
+        background: rgba(239, 68, 68, 0.24);
+        border-color: rgba(239, 68, 68, 0.6);
+        color: #ffffff;
+        box-shadow: 0 0 10px rgba(239, 68, 68, 0.35);
+        transform: translateY(-1px);
+      }
+      ```
+- In `zero_client/index.html`:
+  - Managed by `updatePeerCountDisplay()`:
+    - In Home view (`!inRoom`): hidden.
+    - In 0-peer room view (`inRoom && openPeerCount === 0`): hidden.
+    - In active chat (`inRoom && openPeerCount > 0`): visible (`classList.remove("hidden")`).
+
+### REQ-042.6 & REQ-042.7: Rounded Bottom Bar Buttons with Top-Bar Styling
+- In `zero_client/style.css`:
+  - `#input-add-peer-btn` (`.btn-action-peer`) and `#send-button` (`.btn-send-emerald`):
+    - `border-radius: 9999px;` (fully rounded / pill).
+    - Dimensions: 42px × 42px circular or pill shaped.
+    - Adopt top bar button styling:
+      - Translucent glass background with subtle borders and micro-glow hover states.
+      - `#input-add-peer-btn`: Stage 1 cyan translucent (`background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--accent-cyan);`), Stage 2 deeper cyan (`background: rgba(56, 189, 248, 0.28); border-color: rgba(56, 189, 248, 0.65); color: #38bdf8;`).
+      - `#send-button`: emerald translucent (`background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.35); color: var(--accent-emerald);`), hover (`background: rgba(16, 185, 129, 0.28); border-color: rgba(16, 185, 129, 0.65); box-shadow: 0 0 10px rgba(16, 185, 129, 0.35); color: #ffffff;`), disabled (`background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06); color: #475569;`).
+
+### REQ-042.8: Transparent Dock & Input Background Adoption
+- In `zero_client/style.css`:
+  - `.message-form, .input-dock`:
+    - `background: transparent !important;`
+  - `#message-input, .message-input`:
+    - Adopts the bottom dock panel background:
+      ```css
+      background: rgba(18, 24, 38, 0.7);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 9999px;
+      padding: 10px 18px;
+      font-size: 16px;
+      ```
+    - Focus state: `border-color: rgba(56, 189, 248, 0.5); box-shadow: 0 0 12px rgba(56, 189, 248, 0.2);`.
+
+### REQ-042.9: Automated Regression Test Suite
+- In `zero_client/tests/browser/test_mesh_scenario.js`:
+  - Update tests to verify:
+    - Top bar `.chat-header` transparent styling.
+    - Splash screen `.welcome-splash` transparent styling.
+    - Footer `.chat-footer` transparent styling.
+    - Active chat hides `.brand-text`, home view displays `.brand-text`.
+    - `#destroy-session-button` located in `.header-controls` as the leftmost element.
+    - Rounded buttons and pill input styling.
+  - All 123 Rust workspace tests pass (`cargo test --workspace`).
+  - Dual WASM checks pass (`zero_client` and `zero_network`).
+  - Headless browser test suite passes (`bash zero_client/tests/browser/run_test.sh`).
+
+---
+
+## 3. Target Architecture & Affected Modules
+
+| Module / File | Scope of Changes |
+|---|---|
+| `zero_client/style.css` | Transparent backgrounds for header, splash, footer; wide oval burn button in header; rounded bottom buttons adopting top-bar glass styling; `#message-input` adopting dock panel background and pill border-radius. |
+| `zero_client/index.html` | Move burn button into `.header-controls`; toggle `.brand-text` visibility between home and room states; wire burn button visibility in header controls. |
+| `zero_client/tests/browser/test_mesh_scenario.js` | Update regression test assertions for header burn button location, brand text visibility, and CSS transparency. |
+| `openspec/specs/overview.md` | Reconcile canonical spec with Invariant 18 upon task completion. |
+
+---
+
+## 4. Verification & Quality Gates
+
+1. **Gate 1: Rust Unit & Integration Tests**: `cargo test --workspace` (123 / 123 tests pass).
+2. **Gate 2: Dual WASM Compilation**:
+   - `cargo check --target wasm32-unknown-unknown -p zero_client`
+   - `cargo check --target wasm32-unknown-unknown -p zero_network`
+3. **Gate 3: Formatting & Linting**:
+   - `cargo fmt -- --check`
+   - `cargo clippy --workspace --all-targets -- -D warnings`
+4. **Gate 4: Headless Browser Regression Suite**:
+   - `bash zero_client/tests/browser/run_test.sh` (all tests pass).
+5. **Gate 5: Architectural & Security Review**: Reviewer verification with `APPROVE` verdict.
+
+```
+
+## FILE: openspec/changes/archive/ticket-043/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-043"
+title: "UI Architecture Fixes: Glow Clipping, Burn/Leave Theme Alignment, Limbo Burn Visibility, Mobile Bubble Flex Containment, and Ellipsis De-duplication"
+state: "COMPLETED"
+created_at: "2026-10-25T16:15:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-043/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+Following the visual modernization in `ticket-042`, five specific UI glitches and behavioral discrepancies were reported on desktop and mobile viewports:
+1. **Bottom Button On-Hover Glow Clipping**: When hovering `#send-button` or `#input-add-peer-btn`, a dark patch/cutoff appears along the top perimeter of the circular button glow. This is caused by `overflow-x: hidden` and zero top padding on `.message-form`, which forces browsers to clip vertical `box-shadow` extending beyond `y = 0`.
+2. **Burn Button Theme Mismatch with Leave Button**: `#destroy-session-button` in the header currently uses red-500 palette (`rgba(239, 68, 68, ...)`), a 28px height, and `var(--accent-rose)` text, while the adjacent `#header-leave-btn` uses a cooler rose-500 palette (`rgba(244, 63, 94, ...)`), a 26px height, and `#fda4af` text. The two header action buttons appear visually mismatched when rendered in the same row.
+3. **Burn Button Hidden in Limbo State**: In `ticket-042`, `#destroy-session-button` was hidden when `openPeerCount === 0`. However, the user requires that whenever `#header-leave-btn` is visible (any in-room session), `#destroy-session-button` must also remain visible, enabling users to incinerate a room session even when in a 0-peer limbo state.
+4. **Chat Bubble Text Spilling Out on Mobile Keyboard Open**: On mobile viewports (e.g. iOS Safari), opening the virtual keyboard compresses the vertical space of `.messages-container`. Because `.message-bubble` lacks `flex-shrink: 0`, flexbox forcibly compresses each bubble down to its `min-height: 44px`. Because `overflow` is visible, the message text (`.message-text`) spills out below the bubble background onto the dark page background.
+5. **Redundant Static Ellipses in Ticking System Messages**: Transient system status displays like `"Waiting for host..."` include three literal trailing dots in the input string, while the `.ticking-dots` element adds an additional 1 to 3 animated dots, producing an erroneous `"Waiting for host......"` (6 dots). All ellipsis messages must strictly display their dynamic ticking ellipsis with zero static dots.
+6. **Mobile Browser Web Share API & Dynamic Share Icon**: On mobile browsers, sending invite links via the system share sheet (`navigator.share`) is significantly faster and more intuitive than manual copy-paste. When `navigator.share` is supported, clicking the bottom `#input-add-peer-btn` or the full-width `#btn-create-room` must trigger the native share sheet with the invite link, and the Stage 2 waiting button must dynamically morph to a Share icon (`SHARE_ICON_SVG`) and `aria-label="Share invite link"`, with re-clicking re-opening the share sheet. On desktop or unsupported platforms, the button gracefully falls back to clipboard copying with the Copy icon (`COPY_ICON_SVG`).
+7. **Favicon Badge Outer Border Rounding**: The SVG favicon defined in `<link rel="icon">` previously used a square-ish rectangle (`rx='8'`), contrasting with the application-wide design system where badges and icons use fully rounded geometry (`border-radius: 9999px`). The outer border of the favicon badge must be smoothly rounded into a circular badge (`rx='15'` / `rx='16'`) with cleanly contained stroke.
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-043.1: Bottom Button On-Hover Glow Clipping Fix
+- In `zero_client/style.css`:
+  - Update `.message-form` and `.input-dock`:
+    - Remove or override `overflow-x: hidden;` so that `overflow: visible;` allows box-shadows to bloom in 360 degrees.
+    - Provide sufficient vertical clearance (e.g. `padding-top: 4px;` on `.message-form` or container margin) so that `transform: translateY(-1px)` and `box-shadow: 0 0 10px ...` never clip against parent boundaries.
+    - Ensure `#send-button:hover` and `#input-add-peer-btn:hover` render seamless, uniform circular glows with no dark patches or linear clipping at the top.
+
+### REQ-043.2: Burn Button Theme & Geometry Alignment with Leave Button
+- In `zero_client/style.css`:
+  - Update `#destroy-session-button` / `.btn-header-burn`:
+    - Match `#header-leave-btn` vertical height: `height: 26px;` (aligned with leave button's 26px height).
+    - Match `#header-leave-btn` color palette:
+      - Default: `background: rgba(244, 63, 94, 0.12); border: 1px solid rgba(244, 63, 94, 0.32); color: #fda4af;`
+      - Hover: `background: rgba(244, 63, 94, 0.24); border-color: rgba(244, 63, 94, 0.6); color: #ffffff; box-shadow: 0 0 10px rgba(244, 63, 94, 0.35); transform: translateY(-1px);`
+      - Active: `transform: translateY(0);`
+    - Geometry: `border-radius: 9999px; min-width: 80px; padding: 0 14px;` (wide oval pill).
+
+### REQ-043.3: In-Room Burn Button Visibility Invariant (Limbo Parity with Leave Button)
+- In `zero_client/index.html`:
+  - In `updatePeerCountDisplay()`:
+    - Whenever `inRoom` is true (whether `count === 0` in limbo or `count > 0` in active chat), if `headerLeaveBtn` is visible, `#destroy-session-button` MUST also be visible (`burnBtn.classList.remove("hidden")`).
+    - In Home view (`!inRoom` / `resetToHome()`): both `headerLeaveBtn` and `burnBtn` are hidden (`classList.add("hidden")`).
+  - In `handlePeerDeparture()`, `initEngineListeners()`, and room join flows: verify `burnBtn` stays visible in limbo when all peers depart, matching `headerLeaveBtn`.
+
+### REQ-043.4: Mobile Chat Bubble Flex Containment (`flex-shrink: 0`)
+- In `zero_client/style.css`:
+  - On `.message-bubble`:
+    ```css
+    .message-bubble {
+      flex-shrink: 0;
+      flex: 0 0 auto;
+      height: auto;
+    }
+    ```
+  - When `.messages-container` height shrinks due to virtual keyboard opening, `.message-bubble` MUST NEVER shrink below its intrinsic content height (wrapping both `.message-header` and `.message-text`).
+  - Text content (`.message-text`) remains 100% contained within the bubble background and border.
+
+### REQ-043.5: Ellipsis De-duplication in System Messages
+- In `zero_client/index.html`:
+  - Update `showTransientStatus(text)`:
+    - Defensively strip any trailing dots from `text` (`text.replace(/\.+$/, "")`) before appending `<span class="ticking-dots"></span>`.
+    - Update all call sites (e.g. `showTransientStatus("Waiting for host")`) to omit literal dots.
+  - Update `appendTemporarySystemMessage(text, isWaitingDots)`:
+    - If `isWaitingDots` is true, defensively strip any trailing dots from `text`.
+  - All status/temporary messages render strictly with dynamic animated ticking dots and 0 redundant static dots.
+
+### REQ-043.6: Mobile Browser Web Share API Integration and Stage 2 Dynamic Share Icon
+- In `zero_client/index.html`:
+  - Define `SHARE_ICON_SVG`:
+    ```javascript
+    const SHARE_ICON_SVG = `
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="18" cy="5" r="3"></circle>
+            <circle cx="6" cy="12" r="3"></circle>
+            <circle cx="18" cy="19" r="3"></circle>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+        </svg>`.trim();
+    ```
+  - Feature detection:
+    `const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";`
+  - When `canShare` is true:
+    - On clicking `#btn-create-room` (in `createRoomAsHost()` or `handleInRoomInvite()`), or `#input-add-peer-btn` (in `handleInRoomInvite()`):
+      - Invoke `navigator.share({ title: "zero-chat", text: "Join my encrypted zero-chat session:", url: inviteUrl })` (silently swallowing `AbortError` if user dismisses native share dialog).
+      - Maintain background clipboard write (`navigator.clipboard.writeText`) as a fallback so the invite link is also in clipboard.
+      - In Stage 2 (`setCreateRoomStage2()` and `setInputAddPeerBtnStage2()`):
+        - Set button innerHTML to `SHARE_ICON_SVG` instead of `COPY_ICON_SVG`.
+        - Set `aria-label` to `"Share invite link"` instead of `"Copy invite link"`.
+      - On subsequent clicks while in Stage 2 (waiting for peer):
+        - Re-invoke `navigator.share(...)` and background clipboard write.
+  - When `canShare` is false (desktop browsers or browsers without Web Share support):
+    - Maintain existing behavior: clipboard copy, `COPY_ICON_SVG`, and `aria-label="Copy invite link"`.
+
+### REQ-043.7: Favicon Badge Outer Border Rounding
+- In `zero_client/index.html`:
+  - Update `<link rel="icon">` SVG data URI:
+    - Replace the squarish `<rect width='32' height='32' rx='8' ...>` with a fully rounded circular badge:
+      `<rect x='1' y='1' width='30' height='30' rx='15' fill='%23121826' stroke='%2338bdf8' stroke-width='2' stroke-opacity='0.4'/>`
+    - Ensures the 2px cyan border (`#38bdf8`) has 100% round curvature matching the application-wide pill/circle design language (`border-radius: 9999px`) without clipping against the viewBox boundary.
+
+### REQ-043.8: Automated Headless Browser & Workspace Test Verification
+- In `zero_client/tests/browser/test_mesh_scenario.js`:
+  - Update Test 18 and Test 19 to assert:
+    - `.message-bubble` has `flex-shrink: 0`.
+    - `#destroy-session-button` theme matches `rgba(244, 63, 94, ...)` and `#fda4af`.
+    - `#destroy-session-button` remains visible during 0-peer limbo room state when `#header-leave-btn` is visible.
+    - `showTransientStatus` strips trailing dots and never produces 6 dots.
+  - Add Test 20 to assert:
+    - When `navigator.share` is present: `#btn-create-room` and `#input-add-peer-btn` invoke `navigator.share`, display `SHARE_ICON_SVG` in Stage 2, set `aria-label="Share invite link"`, and subsequent clicks re-invoke `navigator.share`.
+    - When `navigator.share` is absent: `#btn-create-room` and `#input-add-peer-btn` copy to clipboard, display `COPY_ICON_SVG` in Stage 2, and set `aria-label="Copy invite link"`.
+    - Favicon `<link rel="icon">` has rounded outer border (`rx='15'` or circular geometry).
+  - All browser test suites pass (`bash zero_client/tests/browser/run_test.sh`).
+  - All 123 Rust workspace tests pass (`cargo test --workspace`).
+  - Dual WASM compilation checks pass (`zero_client` and `zero_network`).
+
+---
+
+## 3. Target Architecture & Affected Modules
+
+| Module / File | Scope of Changes |
+|---|---|
+| `zero_client/style.css` | Fix bottom button hover glow clipping (`overflow: visible`, padding); align burn button color palette/height with leave button (`rgba(244, 63, 94, ...)`, 26px); add `flex-shrink: 0` to `.message-bubble`. |
+| `zero_client/index.html` | Ensure `#destroy-session-button` is visible whenever `#header-leave-btn` is visible (including limbo); clean static dots from `showTransientStatus`; integrate Web Share API (`navigator.share`) on mobile browsers for `#btn-create-room` and `#input-add-peer-btn`, morphing Stage 2 to dynamic `SHARE_ICON_SVG` and `aria-label="Share invite link"`; round outer border of favicon badge in `<link rel="icon">`. |
+| `zero_client/tests/browser/test_mesh_scenario.js` | Update test assertions for limbo burn button visibility, burn button color palette, bubble flex containment, ellipsis de-duplication, and Web Share API / Share icon behavior. |
+| `openspec/specs/overview.md` | Reconcile canonical spec with Invariant 18 & 19 updates upon completion. |
+
+---
+
+## 4. Verification & Quality Gates
+
+1. **Gate 1: Rust Unit & Integration Tests**: `cargo test --workspace` (all tests pass).
+2. **Gate 2: Dual WASM Compilation**:
+   - `cargo check --target wasm32-unknown-unknown -p zero_client`
+   - `cargo check --target wasm32-unknown-unknown -p zero_network`
+3. **Gate 3: Formatting & Linting**:
+   - `cargo fmt -- --check`
+   - `cargo clippy --workspace --all-targets -- -D warnings`
+4. **Gate 4: Headless Browser Regression Suite**:
+   - `bash zero_client/tests/browser/run_test.sh` (all 19 tests pass).
+5. **Gate 5: Architectural & Security Review**: Independent Reviewer evaluation with `APPROVE` verdict.
+
+```
+
+## FILE: openspec/changes/archive/ticket-044/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-044"
+title: "UI Architecture: Desktop Share Bypass, Clean Mobile Share URL, Burn Icon Optical Alignment, and Vertical Layout Compaction"
+state: "COMPLETED"
+created_at: "2026-10-25T17:35:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-044/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+Following the delivery of `ticket-043`, four UI behaviors and layout discrepancies require refinement across desktop and mobile platforms:
+
+1. **Unwanted OS Share Popover on Desktop Browsers**: Modern desktop browsers on macOS (Chrome, Safari, Edge) and Windows 10+ implement the W3C Web Share API (`navigator.share`) by displaying the desktop OS system sharing menu (AirDrop, Mail, Messages, Notes). Because `ticket-043` evaluated only `typeof navigator.share === "function"`, clicking the bottom action buttons on desktop triggers the desktop OS share menu instead of instantaneously copying the invite URL to the clipboard. Desktop users expect direct, zero-friction clipboard copying.
+2. **Mobile Share Sheet "Copy" Action Prepends Text to URL**: In `ticket-043`, `navigator.share` was invoked with `{ title, text, url }`, where `text` was `"Join my encrypted zero-chat session:"`. On iOS (Safari) and Android (Chrome), tapping the "Copy" action inside the native OS share sheet concatenates the text and the URL into a single clipboard string: `"Join my encrypted zero-chat session: https://zero-chat.pages.dev/#payload=..."`. When users attempt to paste this into their mobile browser's address bar to follow the invite, the browser treats the prepended English words as a search query rather than navigating to the hash-fragment URL, preventing session join.
+3. **In-Chat Bubble Flame Burn Icon Optical Misalignment**: Within `.message-header`, the left identity dot (`.peer-dot` / `.self-dot`) is a 7px circle centered at $y = 11\text{px}$. The right flame burn icon (`.btn-message-burn`) has a teardrop geometry with 80% of its visual mass in the lower bulb ($y \approx 13.5\text{px}$). Because of this bottom-heavy shape, the flame icon visually sits ~2px lower than the identity dot. Elevating the button by 2px (`top: -2px;`) restores perfect horizontal optical balance.
+4. **Excessive Compounding Vertical Spacing at Top and Bottom of Viewport**: When card borders, solid panel backgrounds, and backdrop filters were removed from `.chat-header` and `.chat-footer` in `ticket-042`, the compounding internal and external paddings were left untouched. `.chat-layout` enforced `padding: 16px; gap: 12px;`, `.chat-header` added `padding: 12px 20px;`, `.messages-container` added `padding: 12px 6px;`, and `.chat-footer` + `.message-form` added `padding: 12px 16px;` + `padding-bottom: calc(12px + safe-area)`. This produces ~48px of empty void above the chat stream and ~40px of dead space below the bottom buttons, causing the bottom action buttons and header controls to float awkwardly with excessive wasted vertical height on both desktop and mobile viewports.
+5. **Full-Width Action Button Theme Mismatch**: `#btn-create-room` currently uses an outdated `border-radius: 8px` boxy rectangle with an opaque gradient (`linear-gradient(135deg, #10b981, #059669)`), contrasting sharply with the glassmorphic pill design system (`border-radius: 9999px`) used by `#destroy-session-button`, `#header-leave-btn`, `#input-add-peer-btn`, and `#send-button`. Aligning it to a sleek pill with translucent emerald glass styling and glowing borders restores complete aesthetic coherence across the application.
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-044.1: Desktop Web Share Bypass & Robust Mobile-Only Detection
+- In `zero_client/index.html`:
+  - Implement a dedicated helper function `isMobileBrowser()`:
+    ```javascript
+    function isMobileBrowser() {
+        if (typeof navigator === "undefined") return false;
+        if (navigator.userAgentData && typeof navigator.userAgentData.mobile === "boolean") {
+            return navigator.userAgentData.mobile;
+        }
+        const ua = navigator.userAgent || "";
+        const isMobileUA = /Mobi|Android|iPhone|iPad|iPod/i.test(ua);
+        const isTouchMac = Boolean(navigator.maxTouchPoints && navigator.maxTouchPoints > 2 && /Macintosh/.test(ua));
+        return isMobileUA || isTouchMac;
+    }
+    ```
+  - Scope `canShare`:
+    ```javascript
+    const canShare = isMobileBrowser() && typeof navigator !== "undefined" && typeof navigator.share === "function";
+    ```
+  - **Desktop Invariant**: On all desktop browsers (macOS, Windows, Linux, non-touch devices):
+    - `canShare` evaluates to `false`.
+    - Clicking `#btn-create-room` or `#input-add-peer-btn` NEVER triggers `navigator.share` or an OS share popover.
+    - Directly writes the invite URL to clipboard via `navigator.clipboard.writeText`.
+    - Stage 2 button displays `COPY_ICON_SVG` with `aria-label="Copy invite link"`.
+    - Temporary system notice displays `"Invite link copied to clipboard"`.
+  - **Mobile Invariant**: On mobile browsers (iOS Safari, Android Chrome, iPadOS):
+    - When `navigator.share` is supported, `canShare` evaluates to `true`.
+    - Stage 2 button displays `SHARE_ICON_SVG` with `aria-label="Share invite link"`.
+    - Clicking opens the native mobile share sheet, and re-clicking in Stage 2 re-invokes the mobile share sheet.
+
+### REQ-044.2: Clean URL-Only Mobile Share Payload
+- In `zero_client/index.html`:
+  - When invoking `navigator.share` in both `createRoomAsHost()` and `handleInRoomInvite()`:
+    ```javascript
+    await navigator.share({
+        title: "zero-chat",
+        url: inviteUrl
+    });
+    ```
+  - Strictly omit the `text` field from the share payload.
+  - Guarantees that when a user selects **"Copy"** inside the native mobile share sheet (iOS/Android), the clipboard receives **strictly and exclusively** the clean URL (`https://zero-chat.pages.dev/#payload=...`), without any leading description or text prefix.
+  - Pasting into a mobile browser's address bar immediately navigates to and joins the session.
+
+### REQ-044.3: In-Chat Bubble Flame Burn Icon Optical Alignment
+- In `zero_client/style.css`:
+  - On `.btn-message-burn`:
+    - Add `top: -2px;` (preserving existing `position: relative;`).
+    - Elevates the flame icon's visual center of mass to align in optical symmetry with the left `.peer-dot` / `.self-dot` ($y \approx 11.5\text{px}$).
+    - Preserves all hover and active micro-interactions (`transform: scale(1.1)`, etc.) without altering the flex layout of `.message-header` or colliding with `.message-text`.
+
+### REQ-044.4: Vertical Layout Compaction & Elimination of Dead Space
+- In `zero_client/style.css`:
+  - `.chat-layout`:
+    - Update padding: `padding: 0 16px;` (preserving 16px horizontal margins while stripping redundant vertical padding).
+    - Update gap: `gap: 6px;` (reduced from `12px`).
+  - `.chat-header`:
+    - Update padding: `padding: 4px 4px; padding-top: calc(8px + env(safe-area-inset-top, 0px)); padding-bottom: 4px;` (reduced from `12px 20px`).
+  - `.messages-container`:
+    - Update padding: `padding: 4px 6px;` (reduced from `12px 6px`).
+  - `.chat-footer`:
+    - Update padding: `padding: 4px 0;` (reduced from `12px 16px`).
+  - `.message-form, .input-dock`:
+    - Preserve `padding-top: 4px;` (for button hover glow clearance).
+    - Update bottom padding: `padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));` (reduced from `calc(12px + env...)`).
+  - `.create-room-bar`:
+    - Update bottom padding: `padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));`.
+  - Reclaims ~50–60px of vertical viewport height across both desktop and mobile, anchoring controls comfortably near edges while strictly preserving safe-area insets.
+
+### REQ-044.5: Full-Width Action Button Theme & Geometry Alignment (`#btn-create-room`)
+- In `zero_client/style.css`:
+  - Update `.btn-action-full` and `#btn-create-room`:
+    - Geometry: `border-radius: 9999px; height: 44px; padding: 0 24px;` (sleek rounded pill matching `#message-input` and `#send-button`).
+    - Emerald Glassmorphic Styling:
+      - Default Stage 1: `background: rgba(16, 185, 129, 0.14) !important; border: 1px solid rgba(16, 185, 129, 0.35) !important; color: #34d399 !important; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: 0 0 12px rgba(16, 185, 129, 0.15);`
+      - Hover Stage 1: `background: rgba(16, 185, 129, 0.25) !important; border-color: rgba(16, 185, 129, 0.6) !important; color: #ffffff !important; box-shadow: 0 0 20px rgba(16, 185, 129, 0.35); transform: translateY(-1px);`
+      - Stage 2 (`.btn-waiting`): `background: rgba(16, 185, 129, 0.22) !important; border: 1px solid rgba(52, 211, 153, 0.45) !important; color: #6ee7b7 !important; box-shadow: 0 0 14px rgba(16, 185, 129, 0.2);`
+      - Active: `transform: translateY(0);`
+
+### REQ-044.6: Automated Test & Verification Gates
+- In `zero_client/tests/browser/test_mesh_scenario.js`:
+  - Update Test 20 to assert:
+    - Desktop simulation (`isMobileBrowser() === false`): `#btn-create-room` and `#input-add-peer-btn` do NOT invoke `navigator.share`, copy clean URL to clipboard, display `COPY_ICON_SVG`, and set `aria-label="Copy invite link"`.
+    - Mobile simulation (`isMobileBrowser() === true`): `#btn-create-room` and `#input-add-peer-btn` invoke `navigator.share` with strictly `{ title, url }` and `undefined` text.
+    - `.btn-message-burn` defines `top: -2px;` in `style.css`.
+    - Compacted vertical padding defined on `.chat-layout`, `.chat-header`, and `.chat-footer`.
+    - `#btn-create-room` defines `border-radius: 9999px;` in `style.css`.
+  - All 20 browser tests pass (`bash zero_client/tests/browser/run_test.sh`).
+  - All 123 Rust workspace tests pass (`cargo test --workspace`).
+  - Dual WASM compilation checks pass (`zero_client` and `zero_network`).
+  - `cargo fmt -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` pass cleanly.
+
+---
+
+## 3. Target Architecture & Affected Modules
+
+| Module / File | Scope of Changes |
+|---|---|
+| `zero_client/index.html` | Implement `isMobileBrowser()`; scope `canShare` to mobile platforms; remove `text` field from `navigator.share` payload to ensure clean URL copying from OS share sheets. |
+| `zero_client/style.css` | Add `top: -2px;` to `.btn-message-burn`; compact vertical padding and gaps on `.chat-layout`, `.chat-header`, `.messages-container`, `.chat-footer`, and `.message-form` / `.create-room-bar`; modernize `#btn-create-room` to glassmorphism pill (`border-radius: 9999px`, height 44px, emerald glass styling). |
+| `zero_client/tests/browser/test_mesh_scenario.js` | Update Test 20 to verify desktop share bypass, clean URL share payload (no `text` attribute), `.btn-message-burn` optical offset, compacted vertical layout styles, and button pill geometry. |
+| `openspec/specs/overview.md` | Reconcile canonical spec with Invariant 19 updates upon completion. |
+
+---
+
+## 4. Verification & Quality Gates
+
+1. **Gate 1: Rust Unit & Integration Tests**: `cargo test --workspace` (all tests pass).
+2. **Gate 2: Dual WASM Compilation**:
+   - `cargo check --target wasm32-unknown-unknown -p zero_client`
+   - `cargo check --target wasm32-unknown-unknown -p zero_network`
+3. **Gate 3: Formatting & Linting**:
+   - `cargo fmt -- --check`
+   - `cargo clippy --workspace --all-targets -- -D warnings`
+4. **Gate 4: Headless Browser Regression Suite**:
+   - `bash zero_client/tests/browser/run_test.sh` (all 20 tests pass).
+5. **Gate 5: Architectural & Security Review**: Independent Reviewer evaluation with `APPROVE` verdict.
+
+```
+
+## FILE: openspec/changes/archive/ticket-045/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-045"
+title: "Unified Mobile & Desktop Connectivity Resilience: Per-Peer Roles, Background Disconnect Grace Period & Smart ICE Gathering"
+state: "COMPLETED"
+created_at: "2026-10-25T20:10:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-045/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+Following live testing across mobile browsers (iOS Safari, Android Chrome) and multi-tab/throttled desktop sessions, three critical connectivity and state-machine defects have been diagnosed in [`docs/HANDOVER_TICKET_045.md`](file:///Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My%20Drive/zero_chat/docs/HANDOVER_TICKET_045.md):
+
+1. **Premature Departure & Post-Disconnect Ghost Messaging on Background Tab Suspension**:
+   - When a mobile browser tab (or throttled desktop tab) is backgrounded for ~30–60 seconds, the OS suspends SCTP network heartbeats without firing `beforeunload`.
+   - The active remote peer's WebRTC engine detects `dc.onclose` or `iceConnectionState === "disconnected"` and immediately executes `handlePeerDeparture(peerId)`: it prints `"Peer left chat"`, purges all messages authored by `peerId`, and adds `peerId` to `departedPeers`.
+   - When the user switches back to the suspended tab, the WebRTC transport wakes up or background mesh reconciliation reconnects the peers (`dc.onopen`). Because the connection recovers, new chat messages can be received and displayed underneath `"Peer left chat"`. However, because `peerId` remains stuck in `departedPeers`, `get_connected_count()` permanently excludes it, breaking the header peer counter (`#peer-count` stuck at `0`).
+2. **Role-Swap System Notice Bug ("Joined chat" vs "Peer joined chat")**:
+   - In [`zero_client/index.html`](file:///Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My%20Drive/zero_chat/zero_client/index.html), the client relies on a single global boolean `isHost` to decide whether `onStateChangeCb("open", peerId)` emits `"Joined chat"` or `"Peer joined chat"`.
+   - During mobile app/tab switching, background socket closures, limbo state resets, or mesh reconciliation handshakes, `isHost` gets overwritten or evaluated out of context. Consequently, Client 1 (the room creator/inviter) falsely displays `"Joined chat"` and Client 2 (the joiner) displays `"Peer joined chat"`.
+3. **Mobile Cellular (4G/5G), Hairpinning & Non-Trickle ICE Gathering Latency**:
+   - `_waitForIceGatheringComplete(pc)` currently waits for a flat timer (3000ms–4500ms) or exits without verifying whether routable public candidates (`typ srflx` or `typ relay`) were gathered.
+   - Over 4G/5G cellular networks or when testing two tabs on the same mobile device over cellular data, Carrier-Grade Symmetric NAT (CGNAT) and cellular hairpinning blocks prevent pure STUN from finding a direct UDP path without redundant STUN ports or TURN relay fallback.
+
+### Core Architectural Principle: Unified Adaptive Resilience
+This implementation maintains a single, unified codebase across all platforms. Every resilience mechanism applies uniformly to all client instances, fortifying both mobile browsers (iOS Safari, Android Chrome) and desktop environments (throttled background tabs, laptop sleep/wake, restrictive corporate NATs).
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-045.1: Deterministic Per-Peer Role Tracking & System Notice Invariant
+- In [`zero_client/index.html`](file:///Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My%20Drive/zero_chat/zero_client/index.html):
+  - Replace the global `isHost` evaluation for join notices with an explicit per-peer role map:
+    ```javascript
+    const peerRoles = new Map(); // peerId -> "inviter" | "joiner" | "mesh"
+    const announcedJoinPeers = new Set(); // peerId set of already announced joins
+    let hasAnnouncedInitialSelfJoin = false;
+    ```
+  - **Deterministic Role Assignment**:
+    - In `createRoomAsHost()` and `handleInRoomInvite()`: execute `peerRoles.set(assignedPeerId, "inviter")` prior to creating the offer.
+    - In `joinRoomFromHash()`: execute `peerRoles.set(hostPeerId, "joiner")` prior to creating the answer.
+    - In `PeerJoined` and `RelaySdpOffer` mesh introductions: if `!peerRoles.has(remotePeerId)`, execute `peerRoles.set(remotePeerId, "mesh")`.
+  - **Deterministic Join Notice on State Transition to "open"**:
+    - When `peerId` transitions to `"open"` for the first time (`!announcedJoinPeers.has(peerId)`):
+      - Add `peerId` to `announcedJoinPeers`.
+      - If `peerRoles.get(peerId) === "joiner"` AND `!hasAnnouncedInitialSelfJoin`:
+        - Set `hasAnnouncedInitialSelfJoin = true`.
+        - Emit `"Joined chat"` system message.
+      - If `peerRoles.get(peerId) === "inviter"` or `"mesh"` (or for any subsequent peer channel connections):
+        - Emit `"Peer joined chat"` system message.
+  - **Signaling Guard Against Premature Glare / Reconciliation**:
+    - Do not trigger `reconcile_mesh` or glare replacement offers for any `peerId` actively awaiting its initial `hostWs` or `pendingInviteWs` dead-drop answer.
+  - **Reset Cleanup**:
+    - In `resetToHome()`: execute `peerRoles.clear()`, `announcedJoinPeers.clear()`, and `hasAnnouncedInitialSelfJoin = false`.
+
+### REQ-045.2: Transient Background Freeze Grace Period & Self-Healing `departedPeers`
+- In [`zero_client/index.html`](file:///Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My%20Drive/zero_chat/zero_client/index.html):
+  - **Immediate Departure on Explicit `PeerLeftAndBurn`**:
+    - When an explicit `PeerLeftAndBurn` frame is received over an open DataChannel:
+      - Cancel and delete any pending disconnect timer for `leavingPeerId` in `pendingDisconnectTimers`.
+      - Immediately invoke `handlePeerDeparture(leavingPeerId)` (purging messages and emitting `"Peer left chat"` once).
+      - Execute `engine._teardownPeerQuietly(leavingPeerId)`.
+  - **Transient Disconnect Grace Period (`DISCONNECT_GRACE_MS = 12000`) for Unannounced Channel Drops**:
+    - Maintain `pendingDisconnectTimers = new Map(); // peerId -> { timeoutId, expiryTimestamp }`.
+    - When `onPeerStateChangeCb(peerId, "closed")` or `"disconnected"` fires without having received an explicit `PeerLeftAndBurn` (and `!departedPeers.has(peerId)`):
+      - Do NOT invoke `handlePeerDeparture(peerId)` immediately.
+      - Calculate grace timeout: if `document.visibilityState === "hidden"`, record extended grace window (active until `visibilityState === "visible"` + 8000ms); otherwise 12000ms.
+      - Schedule timer in `pendingDisconnectTimers`.
+  - **Visibilitychange Recovery**:
+    - On `document.addEventListener("visibilitychange")` when `visibilityState === "visible"`:
+      - If any `peerId` has an active entry in `pendingDisconnectTimers`, extend/adjust its timer to now + 8000ms.
+      - Trigger non-destructive mesh reconciliation to re-probe or re-establish pending peer channels.
+  - **Channel Reconnection Before Grace Expiry**:
+    - If `peerId` transitions to `"open"` while in `pendingDisconnectTimers`:
+      - Clear and delete the timer from `pendingDisconnectTimers`.
+      - Execute `departedPeers.delete(peerId)`.
+      - Because `announcedJoinPeers.has(peerId)` is already true, do NOT emit duplicate `"Peer joined chat"` or `"Joined chat"` notices.
+      - All existing chat messages and peer identity attribution remain intact in the DOM.
+      - Update the header peer counter (`updatePeerCountDisplay()`).
+  - **Grace Expiry Without Recovery**:
+    - If the grace timer fires without channel recovery:
+      - Delete `peerId` from `pendingDisconnectTimers`.
+      - Execute `handlePeerDeparture(peerId)` (emitting `"Peer left chat"` and purging the peer's messages).
+  - **Self-Healing `departedPeers` Invariant**:
+    - Whenever any peer transitions to `"open"` (including late reconnection after a grace window expiration), always execute `departedPeers.delete(peerId)` and call `updatePeerCountDisplay()`, ensuring that active DataChannels are never locked out of the peer counter.
+
+### REQ-045.3: Smart Non-Trickle ICE Gathering & Cellular / CGNAT Relay Support
+- In [`zero_client/index.html`](file:///Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My%20Drive/zero_chat/zero_client/index.html):
+  - **Smart Candidate Inspection in `_waitForIceGatheringComplete(pc)`**:
+    - Monitor candidates in `pc.onicecandidate`:
+    - Detect when at least one public candidate (`typ srflx`) or relay candidate (`typ relay`) has been gathered:
+      ```javascript
+      const isPublicOrRelay = ev.candidate.candidate.includes("typ srflx") || ev.candidate.candidate.includes("typ relay");
+      ```
+    - Once detected, start a short 400ms settle timer to gather any secondary local interface candidates, then resolve immediately.
+    - If no public/relay candidate has arrived, wait up to a maximum safety ceiling of 5000ms before resolving.
+  - **Redundant Multi-Port STUN & Configurable TURN in `this.rtcConfig`**:
+    - Configure redundant Google STUN servers on standard ports (19302 and 3478):
+      - `stun:stun.l.google.com:19302`
+      - `stun:stun1.l.google.com:19302`
+      - `stun:stun2.l.google.com:19302`
+      - `stun:stun.l.google.com:3478`
+    - Check for `window.ZERO_TURN_SERVERS` and merge any defined TURN relay servers into `this.rtcConfig.iceServers`, allowing automatic fallback to encrypted `typ relay` transport across Symmetric 4G/5G CGNAT or same-phone cellular hairpinning.
+
+### REQ-045.4: Automated Test & Verification Gates
+- In [`zero_client/tests/browser/test_mesh_scenario.js`](file:///Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My%20Drive/zero_chat/zero_client/tests/browser/test_mesh_scenario.js):
+  - Implement **Test 21: Unified Mobile & Desktop Connectivity Resilience Suite**:
+    - **Scenario A (Per-Peer Role Notice Invariant)**: Simulate Client 1 creating an invite, backgrounding/switching visibility during the dead-drop, and Client 2 joining. Assert Client 1 displays `"Peer joined chat"` and Client 2 displays `"Joined chat"` (never reversed).
+    - **Scenario B (Transient Tab Freeze & Recovery Without False Departure)**: Establish an open session between Client 1 and Client 2, exchange a message, simulate a transient transport drop (disconnected -> open within 12s grace window), and assert:
+      - `"Peer left chat"` is never rendered.
+      - Existing messages are not purged.
+      - Subsequent messages render normally and the peer counter remains 1.
+    - **Scenario C (True Unannounced Disconnect After Grace Expiry)**: Simulate a peer disconnecting and remaining unreachable past the grace window; assert `"Peer left chat"` is rendered once, the peer's messages are purged, and the peer counter decrements to 0.
+    - **Scenario D (Explicit `PeerLeftAndBurn` Immediate Purge)**: Verify clicking Leave still triggers immediate message purge and `"Peer left chat"` with zero grace-period delay.
+    - **Scenario E (Smart ICE Gathering)**: Verify `_waitForIceGatheringComplete` resolves quickly upon detecting `typ srflx` candidate.
+- All workspace Rust tests pass (`cargo test --workspace` -> 123 tests).
+- Dual WASM compilation checks pass (`zero_client` and `zero_network`).
+- Code formatting and linter checks pass (`cargo fmt -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`).
+- All 21 browser tests pass (`bash zero_client/tests/browser/run_test.sh`).
+
+---
+
+## 3. Target Architecture & Affected Modules
+
+| Module / File | Scope of Changes |
+|---|---|
+| [`zero_client/index.html`](file:///Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My%20Drive/zero_chat/zero_client/index.html) | Implement `peerRoles` Map, `announcedJoinPeers` Set, `pendingDisconnectTimers` Map (12s grace window), visibilitychange recovery extension, smart ICE candidate inspection (400ms settle after `srflx`/`relay`), redundant STUN ports & configurable TURN support in `this.rtcConfig`. |
+| [`zero_client/tests/browser/test_mesh_scenario.js`](file:///Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My%20Drive/zero_chat/zero_client/tests/browser/test_mesh_scenario.js) | Add Test 21 covering Scenarios A, B, C, D, and E. |
+| [`openspec/specs/overview.md`](file:///Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My%20Drive/zero_chat/openspec/specs/overview.md) | Update canonical specification upon task completion (v1.19.0, Invariant 21). |
+
+---
+
+## 4. Verification & Quality Gates
+
+1. **Gate 1: Rust Unit & Integration Tests**: `cargo test --workspace` (all 123 tests pass).
+2. **Gate 2: Dual WASM Compilation**:
+   - `cargo check --target wasm32-unknown-unknown -p zero_client`
+   - `cargo check --target wasm32-unknown-unknown -p zero_network`
+3. **Gate 3: Formatting & Linting**:
+   - `cargo fmt -- --check`
+   - `cargo clippy --workspace --all-targets -- -D warnings`
+4. **Gate 4: Headless Browser Regression Suite**:
+   - `bash zero_client/tests/browser/run_test.sh` (all 21 tests pass).
+5. **Gate 5: Architectural & Security Review**: Independent Reviewer evaluation with `APPROVE` verdict.
+
+```
+
+## FILE: openspec/changes/archive/ticket-046/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-046"
+title: "Option B Burner Keybundle (Ed25519 + X25519 + ChaCha20-Poly1305), Blind Dead-Drop Signaling & WASM Crypto Bridge"
+state: "COMPLETED"
+created_at: "2026-10-26T11:15:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-046/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+As specified in [`docs/HANDOVER_TICKET_046_OPTION_B_RUST_CRYPTO_AND_WASM_BRIDGE.md`](file:///Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My%20Drive/zero_chat/docs/HANDOVER_TICKET_046_OPTION_B_RUST_CRYPTO_AND_WASM_BRIDGE.md):
+
+Currently, `zero_protocol` implements raw `x25519-dalek` Diffie-Hellman key agreement and `chacha20poly1305` symmetric AEAD sealing, but `DropPayload` transmits the Joiner's WebRTC `sdp_answer` in cleartext JSON through the Cloudflare Worker (`zero_network`). Furthermore, multi-peer mesh introductions (`PeerJoined`) lack cryptographic signatures to authenticate peer identities across relay hops, and `zero_client/index.html` relies on stubbed byte payloads with dummy `Array(32).fill(0)` keys.
+
+`ticket-046` implements the **Option B Modernized Burner Keybundle** entirely in Rust (`zero_protocol` and `zero_client`) and exposes it via `#[wasm_bindgen]` so that subsequent tickets (e.g. `ticket-047`) can cleanly swap out JavaScript stubs in `zero_client/index.html` without cryptographic ambiguity.
+
+### Core Cryptographic Enhancements
+1. **Ephemeral Burner Identity (`Ed25519Keypair` + `X25519Keypair`)**: Each client session generates an in-memory `BurnerKeybundle` combining an `x25519-dalek` Diffie-Hellman keypair (for pairwise ChaCha20-Poly1305 AEAD encryption) and an `ed25519-dalek` signing keypair (for authenticating mesh introductions and envelopes), backed by `Zeroize` and `ZeroizeOnDrop`.
+2. **Blind Dead-Drop Signaling (`sealed_sdp_answer`)**: Because the Joiner receives `host_public_key: [u8; 32]` from the `#payload=` URL fragment and sends `joiner_public_key: [u8; 32]` in `DropPayload`, both parties can immediately derive the pairwise X25519 shared secret. The Joiner seals `sdp_answer.sdp` into `sealed_sdp_answer: Option<SealedFrame>` prior to POSTing to `/drop/:do_id/:invite_uuid`. The Cloudflare Worker (`zero_network`) becomes 100% blind to the SDP answer and internal ICE candidates.
+3. **Signed Mesh Introductions & Authenticated Frames (`Ed25519`)**: `PeerJoined` introductions and `SealedFrame` payloads carry verifiable Ed25519 signatures, preventing intermediate relay peers in a multi-user mesh from spoofing peer identities or tampering with introduced public keys.
+4. **Full `#[wasm_bindgen]` Crypto Bridge (`WasmCryptoSession`)**: Exposes a complete, ergonomic WASM API in `zero_client` ready for browser consumption.
+5. **CSPRNG 16-byte UUID Generation**: Replaces Curve25519 scalar multiplication inside UUID generation with a fast, direct 16-byte CSPRNG helper `generate_random_bytes_16()`.
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-046.1: `ed25519-dalek` Dependency & `BurnerKeybundle` in `zero_protocol::crypto`
+- In `crates/zero_protocol/Cargo.toml`:
+  - Add `ed25519-dalek = { version = "2", default-features = false, features = ["rand_core", "zeroize"] }`.
+- In `crates/zero_protocol/src/crypto.rs`:
+  - Implement `Ed25519Keypair`: wraps a 32-byte secret signing seed and 32-byte verifying public key (`[u8; 32]`), implementing `Zeroize` and `ZeroizeOnDrop` for secret material.
+  - Implement `sign(&self, message: &[u8]) -> [u8; 64]` and `verify_ed25519_signature(public_key: &[u8; 32], message: &[u8], signature: &[u8; 64]) -> Result<(), ProtocolError>`.
+  - Implement `BurnerKeybundle`:
+    ```rust
+    pub struct BurnerKeybundle {
+        pub x25519: X25519Keypair,
+        pub ed25519: Ed25519Keypair,
+    }
+    ```
+    - `BurnerKeybundle::generate() -> Result<Self, ProtocolError>`
+    - `x25519_public_key(&self) -> [u8; 32]`
+    - `ed25519_public_key(&self) -> [u8; 32]`
+    - `zeroize(&mut self)` explicitly zeroizing both secret keys in memory.
+  - Implement `generate_random_bytes_16() -> Result<[u8; 16], ProtocolError>` using `getrandom` and update RFC 4122 v4 UUID generation to eliminate Curve25519 point multiplication overhead.
+
+### REQ-046.2: Blind Dead-Drop SDP Encryption
+- In `crates/zero_protocol/src/crypto.rs`:
+  - Implement pairwise shared secret sealing helpers:
+    ```rust
+    pub fn seal_with_shared_secret(shared_secret: &[u8; 32], plaintext: &[u8]) -> Result<SealedFrame, ProtocolError>
+    pub fn open_with_shared_secret(shared_secret: &[u8; 32], frame: &SealedFrame) -> Result<Vec<u8>, ProtocolError>
+    ```
+  - When Joiner prepares `DropPayload`: encrypts `sdp_answer.sdp` into `sealed_sdp_answer: Option<SealedFrame>` using the derived X25519 shared secret between `joiner_private_key` and `host_public_key`, setting `sdp_answer.sdp` to `"SEALED"`.
+  - When Host receives `DropPayload`: derives the shared secret using `drop.joiner_public_key` and decrypts `sealed_sdp_answer` to recover the plaintext SDP string.
+  - Fail-closed: returns `ProtocolError::DecryptionError` if ciphertext or nonce is modified or tampered with.
+
+### REQ-046.3: Backward-Compatible Wire Envelope Extensions
+- In `crates/zero_protocol/src/envelope.rs`:
+  - `InvitePayload`:
+    ```rust
+    #[serde(default)]
+    pub host_signing_key: Option<[u8; 32]>,
+    ```
+  - `DropPayload`:
+    ```rust
+    #[serde(default)]
+    pub joiner_signing_key: Option<[u8; 32]>,
+    #[serde(default)]
+    pub sealed_sdp_answer: Option<SealedFrame>,
+    #[serde(default)]
+    pub signature: Option<Vec<u8>>, // 64-byte Ed25519 signature over (invite_uuid || joiner_public_key || ciphertext)
+    ```
+  - `SealedFrame`:
+    ```rust
+    pub struct SealedFrame {
+        pub nonce: [u8; 12],
+        pub ciphertext: Vec<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub signature: Option<Vec<u8>>, // 64-byte Ed25519 signature over (nonce || ciphertext)
+    }
+    ```
+  - `MeshRelaySignal::PeerJoined`:
+    ```rust
+    PeerJoined {
+        peer_id: String,
+        public_key: [u8; 32],
+        #[serde(default)]
+        signing_key: Option<[u8; 32]>,
+        #[serde(default)]
+        signature: Option<Vec<u8>>,
+    }
+    ```
+  - Ensure all deserialization tests from legacy payloads continue to succeed without schema breakage.
+
+### REQ-046.4: `#[wasm_bindgen]` Crypto Bridge (`WasmCryptoSession`)
+- In `zero_client/src/crypto.rs` (and re-exported from `zero_client/src/lib.rs`):
+  - Implement `#[wasm_bindgen] pub struct WasmCryptoSession`:
+    ```rust
+    #[wasm_bindgen]
+    pub struct WasmCryptoSession {
+        bundle: BurnerKeybundle,
+        peer_sessions: HashMap<String, PeerCryptoEntry>,
+    }
+    ```
+  - Methods:
+    - `#[wasm_bindgen(constructor)] pub fn new() -> Result<WasmCryptoSession, JsValue>`
+    - `pub fn x25519_public_key_bytes(&self) -> Vec<u8>` (32 bytes)
+    - `pub fn ed25519_public_key_bytes(&self) -> Vec<u8>` (32 bytes)
+    - `pub fn register_peer(&mut self, peer_id: &str, peer_x25519_pub: &[u8], peer_ed25519_pub: Option<Vec<u8>>) -> Result<(), JsValue>`
+    - `pub fn has_peer_session(&self, peer_id: &str) -> bool`
+    - `pub fn remove_peer(&mut self, peer_id: &str)` (drops and zeroizes session key)
+    - `pub fn seal_for_peer(&self, peer_id: &str, plaintext: &[u8]) -> Result<String, JsValue>` (encrypts ChaCha20-Poly1305, signs with Ed25519, returns JSON `SealedFrame`)
+    - `pub fn open_from_peer(&self, peer_id: &str, sealed_frame_json: &str) -> Result<Vec<u8>, JsValue>` (verifies signature, decrypts, returns plaintext bytes)
+    - `pub fn seal_drop_sdp(&mut self, host_peer_id: &str, host_x25519_pub: &[u8], host_ed25519_pub: Option<Vec<u8>>, sdp_plaintext: &str) -> Result<String, JsValue>`
+    - `pub fn open_drop_sdp(&mut self, joiner_peer_id: &str, joiner_x25519_pub: &[u8], joiner_ed25519_pub: Option<Vec<u8>>, sealed_frame_json: &str) -> Result<String, JsValue>`
+    - `pub fn sign_bytes(&self, data: &[u8]) -> Vec<u8>`
+    - `pub fn verify_peer_signature(&self, peer_id: &str, data: &[u8], sig: &[u8]) -> Result<bool, JsValue>`
+    - `pub fn compute_hmac_hex(secret: &[u8], invite_uuid: &str) -> Result<String, JsValue>`
+    - `pub fn burn_all(&mut self)` (clears peer sessions and zeroizes bundle)
+
+### REQ-046.5: Automated Verification & Dry-Run Integration
+- In `crates/zero_protocol/tests/protocol_tests.rs`:
+  - `test_burner_keybundle_generation_and_zeroize`: key generation, signing/verification, zeroization.
+  - `test_blind_dead_drop_sdp_encryption_and_tamper_rejection`: blind SDP encryption, host decryption, and fail-closed on tamper.
+  - `test_signed_sealed_frame_authenticity`: authentic Ed25519 signature passes; forged signature fails.
+  - `test_backward_compatible_envelopes`: legacy payloads deserialize with `None` values and pass cleanly.
+- Workspace Quality Gates:
+  - `cargo test --workspace` (100% passing across all crates).
+  - `cargo check --target wasm32-unknown-unknown -p zero_client` & `zero_network`.
+  - `cargo fmt -- --check` & `cargo clippy --workspace --all-targets -- -D warnings`.
+  - `./scripts/deploy_dry_run.sh`: builds release WASM, executes `wasm-bindgen`, and confirms `WasmCryptoSession` is exported.
+  - `bash zero_client/tests/browser/run_test.sh`: all existing 21 browser tests pass without regression.
+
+---
+
+## 3. Target File Scope & Blast Radius
+
+| File | Subsystem | Planned Change |
+| :--- | :--- | :--- |
+| `crates/zero_protocol/Cargo.toml` | Protocol Engine | Add `ed25519-dalek` with `rand_core` & `zeroize` features |
+| `crates/zero_protocol/src/crypto.rs` | Protocol Engine | Implement `Ed25519Keypair`, `BurnerKeybundle`, blind SDP helpers, and CSPRNG UUID bytes |
+| `crates/zero_protocol/src/envelope.rs` | Protocol Engine | Add backward-compatible fields (`signing_key`, `signature`, `sealed_sdp_answer`) |
+| `crates/zero_protocol/tests/protocol_tests.rs` | Protocol Tests | Unit tests for burner bundle, blind SDP encryption, signed frames, and backward compatibility |
+| `zero_client/src/crypto.rs` | Client Crypto | Implement `WasmCryptoSession` and peer session management with Ed25519 verification |
+| `zero_client/src/lib.rs` | Client Root | Export `WasmCryptoSession` via `#[wasm_bindgen]` |
+
+---
+
+## 4. Subagent Brief Decomposition & Sizing
+
+| Brief | Cognitive Sizing | Scope & Role | Target Files |
+| :--- | :---: | :--- | :--- |
+| `brief-impl-046-protocol.md` | `MEDIUM` [M] | Implement `ed25519-dalek`, `Ed25519Keypair`, `BurnerKeybundle`, blind SDP sealing, envelope extensions, and protocol tests | `crates/zero_protocol/**` |
+| `brief-impl-046-wasm.md` | `MEDIUM` [M] | Implement `WasmCryptoSession` in `zero_client`, exposing full crypto bridge to JavaScript | `zero_client/src/crypto.rs`, `zero_client/src/lib.rs` |
+| `brief-validation.md` | `MEDIUM` [M] | Comprehensive quality gates: `cargo test`, dual wasm compilation, clippy, dry-run, browser regression | Workspace-wide |
+| `brief-review-1.md` | `HIGH` [H] | Independent high-scrutiny code review: zeroization audit, timing invariants, backward compatibility | All modified files |
+
+---
+
+## 5. Security & Invariant Safeguards
+
+1. **Zero Forensic Footprint & Volatile Zeroization**:
+   - `Ed25519Keypair`, `X25519Keypair`, and `BurnerKeybundle` implement `Zeroize` and `ZeroizeOnDrop`.
+   - `burn_all()` wipes both secret keys and all active symmetric session keys in WASM linear memory.
+2. **Blind Cloud Edge**:
+   - Cloudflare Worker (`zero_network`) handles only dead-drop routing; with `sealed_sdp_answer`, the worker cannot inspect SDP parameters, IP candidates, or codec profiles.
+3. **Fail-Closed Authenticated Envelopes**:
+   - Tampered signatures or corrupted Poly1305 tags immediately abort with `ProtocolError::DecryptionError` or `ProtocolError::InvalidHmacSignature`, preventing forged relay injections.
+
+```
+
+## FILE: openspec/changes/archive/ticket-047/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-047"
+title: "Browser Runtime Integration of WasmCryptoSession & Blind Dead-Drop"
+state: "COMPLETED"
+created_at: "2026-10-26T19:50:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-047/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+Following the delivery of `ticket-046`, `zero_protocol` and `zero_client` provide a production-ready Rust/WASM cryptographic engine (`WasmCryptoSession`) implementing the Option B Modernized Burner Keybundle (`ed25519-dalek` signing + `x25519-dalek` Diffie-Hellman key agreement + `chacha20poly1305` AEAD encryption + blind dead-drop SDP sealing + `ZeroizeOnDrop` memory wiping).
+
+However, as diagnosed in [`docs/HANDOVER_TICKET_047_BROWSER_WASM_CRYPTO_INTEGRATION.md`](file:///Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My%20Drive/zero_chat/docs/HANDOVER_TICKET_047_BROWSER_WASM_CRYPTO_INTEGRATION.md), [`zero_client/index.html`](file:///Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My%20Drive/zero_chat/zero_client/index.html) still relies on legacy JavaScript stubs:
+1. `crypto.getRandomValues` generates dummy 32-byte byte arrays for public keys.
+2. `PeerJoined` introductions carry `public_key: new Array(32).fill(0)` without Ed25519 signatures.
+3. `DropPayload` transmits the joiner's WebRTC `sdp_answer.sdp` in cleartext JSON through the Cloudflare Worker.
+4. `RelaySdpOffer`, `RelaySdpAnswer`, and `BroadcastChat` encode cleartext strings directly via `new TextEncoder().encode()` inside `SealedFrame.ciphertext` without pairwise AEAD encryption or cryptographic signatures.
+
+`ticket-047` bridges `WasmCryptoSession` into [`zero_client/index.html`](file:///Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My%20Drive/zero_chat/zero_client/index.html), eliminating 100% of the JavaScript cryptographic stubs while strictly preserving all UI, mobile visualViewport, clipboard, and 12-second disconnect grace-timer mechanics established through `ticket-045`.
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-047.1: WASM Module Initialization & Session Lifecycle
+- In [`zero_client/index.html`](file:///Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My%20Drive/zero_chat/zero_client/index.html):
+  - Provide an async readiness singleton `ensureCryptoReady()`:
+    - In browser environments, imports `./pkg/zero_client.js` (`initWasm`, `WasmCryptoSession`).
+    - In test/mock environments, utilizes `globalThis.WasmCryptoSession` and `globalThis.initWasm`.
+    - Initializes a singleton `WasmCryptoSession` instance in `cryptoSession`.
+  - Maintain an in-memory map of verified remote peer public keys:
+    ```javascript
+    const peerPublicKeys = new Map(); // peerId -> { x25519: number[], ed25519: number[] | null }
+    ```
+  - **Session Teardown & Volatile Zeroization**:
+    - In `handlePeerDeparture(peerId)`: call `cryptoSession?.remove_peer(peerId)` and `peerPublicKeys.delete(peerId)`.
+    - In `resetToHome()`: call `cryptoSession?.burn_all()`, reinitialize `cryptoSession = new WasmCryptoSession()`, and `peerPublicKeys.clear()`.
+
+### REQ-047.2: Real Burner Keys & Blind Dead-Drop Handshake
+- **Host Invite Creation** (`createRoomAsHost` & `handleHeaderAddPeerClick`):
+  - Acquire `crypto = await ensureCryptoReady()`.
+  - Export real burner public keys: `hostX25519Pub = Array.from(crypto.x25519_public_key_bytes())` and `hostEd25519Pub = Array.from(crypto.ed25519_public_key_bytes())`.
+  - Compute invite HMAC token via `crypto.compute_hmac_hex(hostSecretBytes, inviteUuid)`.
+  - Embed `host_public_key: hostX25519Pub` and `host_signing_key: hostEd25519Pub` inside `invitePayload` (encoded in URL hash `#payload=`).
+- **Joiner Blind Dead-Drop** (`joinRoomFromHash`):
+  - Acquire `crypto = await ensureCryptoReady()`.
+  - Extract `hostX25519Bytes` and `hostEd25519Bytes` from invite payload; record in `peerPublicKeys.set(hostPeerId, ...)`.
+  - Seal WebRTC SDP answer using `crypto.seal_drop_sdp(...)`, returning `sealed_sdp_frame`.
+  - Dispatch `dropPayload` with `sdp_answer: { sdp: "SEALED" }`, `sealed_sdp_answer: sealed_sdp_frame`, `joiner_public_key: Array.from(crypto.x25519_public_key_bytes())`, and `joiner_signing_key: Array.from(crypto.ed25519_public_key_bytes())`.
+- **Host Dead-Drop Decryption** (`hostWs.onmessage` & `pendingInviteWs.onmessage`):
+  - Extract joiner keys and record in `peerPublicKeys.set(targetPeerId, ...)`.
+  - If `drop.sealed_sdp_answer` is present, decrypt using `crypto.open_drop_sdp(...)` to recover the plaintext SDP string.
+  - Fallback: if `drop.sealed_sdp_answer` is absent (legacy test payloads), register peer via `crypto.register_peer(...)` and use `drop.sdp_answer.sdp`.
+
+### REQ-047.3: Signed Multi-Peer Mesh Introductions (`PeerJoined`)
+- **Propagation of Real Public Keys**:
+  - When an introducer relays `PeerJoined` to `peerId` introducing `otherId`, retrieve `peerPublicKeys.get(otherId)` and populate `public_key: otherKeys.x25519` and `signing_key: otherKeys.ed25519`.
+  - Newly connected peers send an authenticated self-introduction (`PeerJoined` carrying own keys and Ed25519 signature over `(localPeerId || x25519_pub)`).
+- **Registration on Receipt**:
+  - On receiving `PeerJoined`:
+    - Record keys in `peerPublicKeys.set(peer_id, ...)`.
+    - If `!cryptoSession.has_peer_session(peer_id)`, call `cryptoSession.register_peer(...)` prior to `initiate_relay_handshake(peer_id)` so the pairwise key is ready to seal `RelaySdpOffer`.
+
+### REQ-047.4: Per-Peer AEAD Sealing & Opening (`RelaySdpOffer`, `RelaySdpAnswer`, `BroadcastChat`)
+- **Relay SDP Signaling**:
+  - In `initiate_relay_handshake(remotePeerId)`: seal offer SDP for `remotePeerId` using `cryptoSession.seal_for_peer(remotePeerId, offerBytes)`.
+  - Receiving node opens `sealed_offer` with `cryptoSession.open_from_peer(fromPeerId, ...)` and seals answer back with `cryptoSession.seal_for_peer(fromPeerId, answerBytes)`.
+  - Intermediate relay hops (`to_peer_id !== myPeerId`) decrement TTL and forward `sealed_offer`/`sealed_answer` untouched without attempting decryption.
+- **Per-Peer Chat Broadcast (`doSendMessage` & `BroadcastChat`)**:
+  - In `doSendMessage`: iterate over all open peers in `engine.get_connected_peer_ids()`, sealing message text specifically for each `peerId` using `cryptoSession.seal_for_peer(peerId, plaintextBytes)`.
+  - Send the envelope containing that peer's `sealed_payload` directly over its DataChannel.
+  - On receipt of `BroadcastChat`: decrypt and verify Ed25519 signature + Poly1305 tag via `cryptoSession.open_from_peer(senderPeerId, ...)`.
+  - If decryption or verification throws (tampered ciphertext, invalid MAC, forged signature), drop the frame and log a security warning without rendering to the DOM.
+
+### REQ-047.5: Automated Verification & Test 22
+- In `zero_client/tests/browser/test_mesh_scenario.js` and `zero_client/tests/browser/mock_environment.js`:
+  - Implement mock/real `WasmCryptoSession` test bridge.
+  - Add Test 22:
+    - **No Cleartext Wire Leaks**: Assert `DropPayload.sdp_answer.sdp === "SEALED"` and `sealed_sdp_answer.ciphertext` contains no plaintext SDP or IP strings.
+    - **Genuine AEAD Ciphertext**: Assert `BroadcastChat.sealed_payload.ciphertext` does not match message text bytes and carries 12-byte nonce, 16-byte Poly1305 tag, and 64-byte Ed25519 signature.
+    - **3-Peer Full Mesh & Host Departure Continuity**: Complete encrypted chat roundtrip across 3 peers and verify encrypted pairwise messaging persists after host leaves.
+    - **Tamper Rejection**: Verify that mutating ciphertext or signature in an incoming `BroadcastChat` frame causes `open_from_peer` failure and suppresses DOM rendering.
+- Quality Gates:
+  - `cargo test --workspace` (136 tests passing).
+  - Dual WASM check (`zero_client`, `zero_network`).
+  - Formatting & linting (`cargo fmt -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`).
+  - All 22 browser headless regression tests passing cleanly (`bash zero_client/tests/browser/run_test.sh`).
+
+---
+
+## 3. Target File Scope & Blast Radius
+
+| File | Subsystem | Planned Change |
+| :--- | :--- | :--- |
+| `zero_client/index.html` | Client UI & WebRTC Runtime | Bridge `WasmCryptoSession`, eliminate JS stubs, blind dead-drop SDP, signed mesh introductions, per-peer sealed broadcast |
+| `zero_client/tests/browser/mock_environment.js` | Test Infrastructure | Provide `WasmCryptoSession` and `initWasm` test bridge in headless JSC environment |
+| `zero_client/tests/browser/test_mesh_scenario.js` | Browser Test Suite | Implement Test 22 (no cleartext wire leaks, genuine AEAD, tamper rejection, host departure encrypted continuity) |
+
+---
+
+## 4. Subagent Brief Decomposition & Sizing
+
+| Brief | Cognitive Sizing | Scope & Role | Target Files |
+| :--- | :---: | :--- | :--- |
+| `brief-impl-047-runtime.md` | `MEDIUM` [M] | Bridge `WasmCryptoSession` into `zero_client/index.html`: blind dead-drop, signed introductions, per-peer sealed messaging | `zero_client/index.html` |
+| `brief-impl-047-tests.md` | `MEDIUM` [M] | Implement `mock_environment.js` crypto bridge and Test 22 in `test_mesh_scenario.js` | `zero_client/tests/browser/**` |
+| `brief-validation.md` | `MEDIUM` [M] | Comprehensive quality gates: `cargo test`, dual wasm compilation, clippy, dry-run, browser regression | Workspace-wide |
+| `brief-review-1.md` | `HIGH` [H] | Independent high-scrutiny code review: zero cleartext leaks, signature verification, non-degradation of UI/viewport/grace timer | All modified files |
+
+---
+
+## 5. Security & Invariant Safeguards
+
+1. **Non-Degradation of Mobile & UI Mechanics**:
+   - Layout, styling, `.visualViewport` handlers, `peerRoles`, and 12-second `pendingDisconnectTimers` remain completely untouched.
+2. **Zero-Knowledge Ephemerality**:
+   - Memory is zeroized on peer departure (`remove_peer`) and room exit (`burn_all()`).
+3. **Fail-Closed Authenticated Envelopes**:
+   - Any signature tampering or Poly1305 MAC failure immediately aborts frame processing without DOM mutation.
+
+```
+
+## FILE: openspec/changes/archive/ticket-048/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-048"
+title: "Consolidate & Prune Legacy Rust Client Scaffolding"
+state: "COMPLETED"
+created_at: "2026-10-26T21:45:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-048/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+With `ticket-046` and `ticket-047` complete, ZeroChat's production architecture has reached a clean, natural separation of concerns:
+1. **Rust/WASM High-Assurance Core (`zero_protocol` & `zero_client`)**: Executes 100% of the cryptography (`BurnerKeybundle` with `x25519-dalek` + `ed25519-dalek`, `ChaCha20-Poly1305` AEAD per-peer session sealing, blind dead-drop SDP encryption, HMAC token generation, and `ZeroizeOnDrop` memory wiping via `WasmCryptoSession`) alongside canonical wire protocol serialization.
+2. **Browser DOM, Viewport & WebRTC Orchestrator (`zero_client/index.html` & `zero_client/style.css`)**: Handles the glassmorphic UI, mobile `window.visualViewport` keyboard geometry, synchronous touch clipboard gestures, pre-assigned peer IDs (`assigned_peer_id`), per-peer role tracking (`peerRoles`), and the 12-second mobile background freeze grace window (`pendingDisconnectTimers`).
+
+However, `zero_client/src/` still carries ~2,500 lines of obsolete pre-ticket-032 scaffolding (`ui.rs`, `bootstrap.rs`, and legacy unintegrated DOM/WebRTC glue in `webrtc.rs`). Specifically:
+- `zero_client/src/ui.rs` contains a hardcoded, outdated HTML string template (`ChatUi::mount`) and dead DOM bindings that were superseded by `zero_client/index.html`.
+- `zero_client/src/bootstrap.rs` contains legacy DOM initialization routines that are never invoked by the production application.
+- `zero_client/src/webrtc.rs` contains unconfigured `web-sys` RTC stubs lacking STUN/TURN servers and smart ICE candidate gathering.
+- `zero_client/Cargo.toml` includes 45+ unused `web-sys` feature flags for DOM elements.
+
+`ticket-048` consolidates `zero_client` into a lean, purpose-built WASM Cryptography, Protocol & Pure-State library—pruning dead DOM/WebRTC glue, upgrading the pure-Rust state machine (`mesh.rs`) to reflect the battle-tested `ticket-045` resilience invariants (`peerRoles` and disconnect grace periods), slimming `Cargo.toml`, and shrinking the compiled `.wasm` binary footprint.
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-048.1: Prune Obsolete DOM & Bootstrap Modules (`ui.rs`, `bootstrap.rs`)
+- Remove `zero_client/src/ui.rs` and `zero_client/src/bootstrap.rs`.
+- Remove `pub mod ui;` and `pub mod bootstrap;` (and their glob re-exports) from `zero_client/src/lib.rs`.
+- Expose a clean, well-documented public API in `zero_client/src/lib.rs` centered on:
+  - `crypto::WasmCryptoSession` and cryptographic primitives (`ChatSessionCrypto`, etc.)
+  - `invite` (offline invite token generation, fragment packing/unpacking)
+  - `mesh` (`MeshTopology`, `PeerRole`, etc.)
+  - `webrtc` (pure state types: `PeerLifecycleState`, `SdpType`, etc.)
+
+### REQ-048.2: Replace Heavy `web-sys` RTC Glue & Slim Down `Cargo.toml`
+- In `zero_client/src/webrtc.rs`:
+  - Retain pure-Rust state machines and validation primitives (`PeerLifecycleState`, `SdpType`, `WebRtcError`, SDP validation helpers).
+  - Remove unused `#[cfg(target_arch = "wasm32")]` `web-sys` `RtcPeerConnection`, `RtcDataChannel`, and associated browser event closures that are redundant with `ZeroWebRtcEngine` in `index.html`.
+- In `zero_client/Cargo.toml`:
+  - Strip obsolete `web-sys` feature flags (`Document`, `Element`, `HtmlElement`, `HtmlInputElement`, `HtmlButtonElement`, `HtmlTextAreaElement`, `KeyboardEvent`, `MouseEvent`, `Window`, `Storage`, `Node`, `RtcPeerConnection`, `RtcDataChannel`, etc.).
+  - Retain only the minimal dependencies needed for WASM bindings and protocol handling.
+
+### REQ-048.3: Align `zero_client/src/mesh.rs` with Production Invariants
+- In `zero_client/src/mesh.rs`, align `MeshTopology` with the production invariants proven in `ticket-045` and `ticket-047`:
+  - **Per-Peer Role Tracking**:
+    ```rust
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    pub enum PeerRole {
+        Inviter,
+        Joiner,
+        Mesh,
+    }
+    ```
+    - Track `peer_roles: HashMap<String, PeerRole>` inside `MeshTopology`.
+    - Provide `set_peer_role(&mut self, peer_id: &str, role: PeerRole)` and `peer_role(&self, peer_id: &str) -> Option<PeerRole>`.
+  - **Transient Disconnect Grace State**:
+    - Provide `mark_peer_disconnected_grace(&mut self, peer_id: &str, timestamp_ms: u64)`: records the peer as experiencing transient disconnect without prematurely purging messages or emitting `on_peer_left`.
+    - Provide `recover_peer(&mut self, peer_id: &str)`: cancels pending grace state and removes `peer_id` from departed sets upon channel re-establishment.
+    - Provide `expire_peer_grace(&mut self, peer_id: &str)`: triggers definitive departure, firing selective message burn and `on_peer_left` callbacks.
+    - Explicit `PeerLeftAndBurn` continues to immediately bypass grace and burn without delay.
+
+### REQ-048.4: Test Suite Refactoring & Native Test Doubles
+- Update existing native integration tests (`zero_client/tests/mesh_simulation_test.rs`, `zero_client/tests/e2e_handshake.rs`, `zero_client/tests/webrtc_tests.rs`, `zero_client/tests/invite_tests.rs`):
+  - Replace any dependencies on `zero_client::ChatUi` or `zero_client::bootstrap` with local test doubles or direct `MeshTopology` / `ChatSessionCrypto` assertions.
+  - Retain full functional coverage of multi-node mesh simulations, broadcast flooding, loop suppression, selective message burning, and symmetric counter updates.
+  - Ensure 100% test pass rate across `cargo test --workspace`.
+
+### REQ-048.5: Verification Gates & Spec Reconciliation
+- **Gate 1: Rust Workspace Tests & Clippy**:
+  - `cargo test --workspace` must pass with 0 failures across `zero_protocol`, `zero_client`, and `zero_network`.
+  - `cargo clippy --workspace --all-targets -- -D warnings` must pass with 0 warnings.
+  - `cargo fmt -- --check` must pass cleanly.
+- **Gate 2: WASM Build & Bundle Verification**:
+  - `./scripts/deploy_dry_run.sh` must succeed, generating `dist/pkg/zero_client_bg.wasm` and staging assets cleanly.
+  - Verify that `WasmCryptoSession` exports remain 100% intact and functional.
+- **Gate 3: Browser Headless Regression Suite**:
+  - `bash zero_client/tests/browser/run_test.sh` must pass all 22 tests (including Test 22 Scenarios A–E) with 0 regressions.
+- **Canonical Architecture Specs**:
+  - Update `openspec/specs/overview.md` to accurately document the production division of responsibilities and pruned Rust architecture.
+
+---
+
+## 3. Cognitive Sizing & Brief Decomposition
+
+| Brief ID | Subsystem Target | Files Impacted | Cognitive Level |
+| :--- | :--- | :--- | :---: |
+| `brief-impl-048-prune` | Dead DOM/WebRTC Pruning & Cargo Cleanup | `zero_client/src/lib.rs`, `zero_client/src/ui.rs`, `zero_client/src/bootstrap.rs`, `zero_client/src/webrtc.rs`, `zero_client/Cargo.toml` | `MEDIUM` [M] |
+| `brief-impl-048-mesh` | Mesh State Machine & PeerRole/Grace Alignment | `zero_client/src/mesh.rs` | `MEDIUM` [M] |
+| `brief-impl-048-tests` | Native Test Suite Migration & Test Double Refactor | `zero_client/tests/mesh_simulation_test.rs`, `zero_client/tests/e2e_handshake.rs`, `zero_client/tests/webrtc_tests.rs` | `MEDIUM` [M] |
+
+---
+
+## 4. Verification Commands
+
+```bash
+cargo fmt -- --check
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+./scripts/deploy_dry_run.sh
+bash zero_client/tests/browser/run_test.sh
+```
+
+```
+
+## FILE: openspec/changes/archive/ticket-049/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-049"
+title: "Ephemeral Cloudflare Realtime TURN Relay for 4G/5G CGNAT Traversal"
+state: "COMPLETED"
+created_at: "2026-10-27T21:00:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-049/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+While previous milestones resolved smart STUN (`typ srflx`) candidate gathering, per-peer cryptographic sealing (`WasmCryptoSession`), and transient background disconnect grace windows, direct peer-to-peer UDP hole-punching via STUN is physically blocked in two common mobile networking scenarios:
+1. **Carrier-Grade Symmetric NAT (CGNAT) on 4G/5G Cellular Networks**: Mobile carriers (EE, Vodafone, O2, Three, etc.) assign a distinct external UDP port per destination IP/port tuple. Because the port mapped during the STUN binding request to `stun.cloudflare.com:3478` cannot accept incoming UDP packets from a remote peer's IP, `typ srflx` candidates fail to connect when both devices are on cellular data or behind strict corporate/symmetric NATs.
+2. **Same-Device Multi-Tab Cellular Hairpinning**: When operating or testing two browser tabs on the same mobile device over cellular data, mobile OS sandboxes suppress local loopback (`host`) candidates for privacy, and carrier NATs drop hairpinned UDP packets sent from a public cellular IP back to itself.
+
+`ticket-049` implements Zero-Knowledge Ephemeral TURN Relay Provisioning using Cloudflare Calls / Realtime TURN via `zero_network`, wires dynamic ICE server injection and 15-minute caching into `zero_client/index.html`, and tunes non-trickle candidate gathering to ensure `typ relay` candidates are bundled when TURN is configured.
+
+### Privacy & Cryptographic Invariants
+Using a TURN relay (`typ relay`) does not weaken ZeroChat's cryptographic privacy:
+- WebRTC encrypts the underlying SCTP DataChannel transport via DTLS.
+- `WasmCryptoSession` encrypts every payload end-to-end using pairwise X25519 + ChaCha20-Poly1305 AEAD signed with Ed25519.
+- The Cloudflare TURN server sees only opaque, doubly-encrypted UDP/TCP frames and short-lived ephemeral credentials with zero room, user, or message metadata.
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-049.1: Ephemeral TURN Credential Endpoint in `zero_network` (`GET /ice`)
+- In `zero_network/src/handlers.rs` and `zero_network/src/lib.rs`:
+  - Expose `GET /ice` and `OPTIONS /ice` routes with full CORS support (`Access-Control-Allow-Origin: *`).
+  - Support three configuration modes:
+    - **Mode 1 (Cloudflare Realtime TURN API)**: When `CF_TURN_KEY_ID` and `CF_TURN_API_TOKEN` are present in Worker `env`, issue an outbound HTTPS POST from the Worker to `https://rtc.live.cloudflare.com/v1/turn/keys/${CF_TURN_KEY_ID}/credentials/generate` with header `Authorization: Bearer ${CF_TURN_API_TOKEN}` and body `{"ttl": 3600}`. Return the generated `{ "iceServers": [...] }` directly with `200 OK`.
+    - **Mode 2 (Static/Custom JSON Override)**: If `TURN_SERVERS_JSON` is present in `env`, parse and return `{ "iceServers": <parsed> }`.
+    - **Mode 3 (Graceful STUN-Only Fallback)**: If neither secret is configured (or if upstream Cloudflare TURN API fails), return `200 OK` with the default STUN servers:
+      ```json
+      {
+        "iceServers": [
+          { "urls": "stun:stun.cloudflare.com:3478" },
+          { "urls": "stun:stun.l.google.com:19302" }
+        ]
+      }
+      ```
+- In `zero_network/wrangler.toml`:
+  - Document optional environment variable bindings (`CF_TURN_KEY_ID`, `CF_TURN_API_TOKEN`, `TURN_SERVERS_JSON`).
+
+### REQ-049.2: Dynamic ICE Server Provisioning & Caching in `zero_client/index.html`
+- Implement `ensureIceServersReady()` in `zero_client/index.html`:
+  - Fetches `${WORKER_HTTP_ORIGIN}/ice` with an `AbortController` timeout of 2,500ms.
+  - Caches valid `iceServers` in memory for 15 minutes (`ICE_CACHE_TTL_MS = 15 * 60 * 1000`) so rapid multi-peer handshakes avoid repeated HTTP requests.
+  - Merges default STUN servers + fetched `iceServers` + `window.ZERO_TURN_SERVERS`.
+  - In `ZeroWebRtcEngine`: add `setIceServers(iceServers)` to update `this.rtcConfig.iceServers`.
+  - Invoke `await ensureIceServersReady()` alongside `ensureCryptoReady()` in `createRoomAsHost()`, `handleHeaderAddPeerClick()`, and `joinRoomFromHash()`.
+
+### REQ-049.3: Smart Relay Settle Logic for Non-Trickle ICE Candidate Bundling
+- In `_waitForIceGatheringComplete(pc)` in `zero_client/index.html`:
+  - Detect whether any TURN server is configured:
+    ```javascript
+    const hasTurnConfigured = (this.rtcConfig.iceServers || []).some((s) => {
+        const urls = Array.isArray(s.urls) ? s.urls : [s.urls || ""];
+        return urls.some((u) => typeof u === "string" && (u.startsWith("turn:") || u.startsWith("turns:")));
+    });
+    ```
+  - **When `hasTurnConfigured === false`**: Trigger the 400ms settle timer as soon as the first `typ srflx` (or `typ relay`) candidate is gathered.
+  - **When `hasTurnConfigured === true`**:
+    - Trigger a fast 350ms settle timer once at least one `typ relay` candidate is gathered.
+    - If only `typ srflx` candidates arrive (e.g. TURN server is slow or unreachable), trigger fallback settle after 1,200ms.
+    - Retain the existing 5,000ms hard ceiling.
+  - Guarantees that non-trickle SDP bundles both direct `typ srflx` and relay `typ relay` candidates.
+
+### REQ-049.4: Automated Verification & Test 23 Suite
+- **Rust Unit & Integration Tests**:
+  - Add tests in `zero_network` validating `GET /ice` response schemas in default fallback mode and mock configured mode.
+  - Ensure all 115+ workspace tests pass with 0 failures under `cargo test --workspace`.
+- **Browser Headless Suite (Test 23)**:
+  - Add Test 23 in `zero_client/tests/browser/test_mesh_scenario.js` (and mock support in `mock_environment.js`):
+    - **Scenario A**: `/ice` endpoint fallback & dynamic ICE provisioning (`ensureIceServersReady`).
+    - **Scenario B**: 15-minute cache window preventing redundant HTTP fetches.
+    - **Scenario C**: `hasTurnConfigured` relay settle logic ensuring `typ relay` candidates are bundled in non-trickle SDP.
+    - **Scenario D**: Full 3-peer encrypted mesh formation with simulated TURN relay candidates.
+
+### REQ-049.5: Production Deployment Guide & Spec Reconciliation
+- Update `openspec/specs/overview.md` with **Invariant 25** (Zero-Knowledge Ephemeral TURN Relay & CGNAT Traversal).
+- Document operator activation instructions:
+  ```bash
+  wrangler secret put CF_TURN_KEY_ID
+  wrangler secret put CF_TURN_API_TOKEN
+  ```
+
+---
+
+## 3. Cognitive Sizing & Brief Decomposition
+
+| Brief ID | Subsystem Target | Files Impacted | Cognitive Level |
+| :--- | :--- | :--- | :---: |
+| `brief-impl-049-network` | `/ice` Worker Endpoint & Wrangler Configuration | `zero_network/src/handlers.rs`, `zero_network/src/lib.rs`, `zero_network/wrangler.toml`, `zero_network/tests/network_tests.rs` | `MEDIUM` [M] |
+| `brief-impl-049-client` | Dynamic ICE Provisioning & Smart Relay Settle | `zero_client/index.html` | `MEDIUM` [M] |
+| `brief-impl-049-tests` | Headless Test 23 Suite & Mock Environment | `zero_client/tests/browser/mock_environment.js`, `zero_client/tests/browser/test_mesh_scenario.js` | `MEDIUM` [M] |
+
+---
+
+## 4. Verification Commands
+
+```bash
+cargo fmt -- --check
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+./scripts/deploy_dry_run.sh
+bash zero_client/tests/browser/run_test.sh
+```
+
+```
+
+## FILE: openspec/changes/archive/ticket-050/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-050"
+title: "Cloudflare TURN API 201 Created and Generate ICE Servers Path Resolution"
+state: "COMPLETED"
+created_at: "2026-10-27T22:48:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-050/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+In `ticket-049`, zero-knowledge ephemeral TURN credential provisioning was added to `zero_network` via `GET /ice`, checking `CF_TURN_KEY_ID` and `CF_TURN_API_TOKEN` to generate 1-hour credentials from Cloudflare Calls.
+
+However, during live production activation, when the credentials were deployed, `/ice` continued falling back to default STUN due to two Cloudflare Realtime TURN API specifics:
+1. **HTTP Status `201 Created` vs `200 OK`**:
+   Cloudflare's Calls TURN API returns `201 Created` when generating new credential resources. In `zero_network/src/handlers.rs`, the handler strictly checked `if cf_res.status_code() == 200`. Because `201 != 200`, the check evaluated to `false`, emitting a warning and triggering the fallback to default STUN.
+2. **Dedicated WebRTC Endpoint (`generate-ice-servers`)**:
+   Cloudflare provides a dedicated endpoint:
+   `https://rtc.live.cloudflare.com/v1/turn/keys/{key_id}/credentials/generate-ice-servers`
+   which directly returns the standard `{ "iceServers": [...] }` structure expected by WebRTC `RTCPeerConnection`.
+3. **Resilient JSON Parsing**:
+   `parse_custom_ice_servers` currently handles arrays and objects with an `iceServers` key, but should also handle single flat credential objects containing `"urls"`, wrapping them automatically into `{ "iceServers": [obj] }`.
+
+`ticket-050` resolves these discrepancies so that when `CF_TURN_KEY_ID` and `CF_TURN_API_TOKEN` are configured, the Worker successfully mints and returns Cloudflare Realtime TURN credentials with zero fallbacks.
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-050.1: Target `generate-ice-servers` Endpoint
+- In `zero_network/src/handlers.rs` within `handle_ice_config`:
+  - Update the Cloudflare Calls TURN request URL to:
+    `https://rtc.live.cloudflare.com/v1/turn/keys/{key_id}/credentials/generate-ice-servers`
+  - Send the payload `{"ttl": 86400}` (or 3600) with `Authorization: Bearer {api_token}` and `Content-Type: application/json`.
+
+### REQ-050.2: Accept 2xx Status Codes (`201 Created` Support)
+- In `zero_network/src/handlers.rs`:
+  - Check `let status = cf_res.status_code();`
+  - Replace the strict `status == 200` check with `(200..=299).contains(&status)`, explicitly accepting `201 Created` and `200 OK`.
+
+### REQ-050.3: Resilient ICE Server JSON Normalization
+- In `zero_network/src/handlers.rs`:
+  - Update `parse_custom_ice_servers`:
+    - If input is an object with an `iceServers` key, return `{ "iceServers": servers }`.
+    - If input is an object containing `"urls"`, wrap it into `{ "iceServers": [object] }`.
+    - If input is an array, return `{ "iceServers": array }`.
+  - In `handle_ice_config`, parse the Cloudflare response body through `parse_custom_ice_servers` first, falling back to `serde_json::from_str`.
+
+### REQ-050.4: Unit Tests for 201 Response & Flat Credential Objects
+- In `zero_network/tests/network_tests.rs`:
+  - Add test asserting `parse_custom_ice_servers` correctly wraps a flat credential object `{"urls": "turn:turn.cloudflare.com:3478", "username": "user", "credential": "pwd"}` into `{ "iceServers": [...] }`.
+  - Verify default fallback and error handling remain intact.
+
+### REQ-050.5: Quality Gates & Zero Regressions
+- Pass `cargo test --workspace` (117+ tests).
+- Pass `cargo clippy --workspace --all-targets -- -D warnings`.
+- Pass `cargo fmt -- --check`.
+- Pass `bash zero_client/tests/browser/run_test.sh` (23 browser tests).
+
+---
+
+## 3. Architecture & Affected Modules
+
+- `zero_network/src/handlers.rs`:
+  - `parse_custom_ice_servers` update for flat credential objects.
+  - `handle_ice_config` URL path and `(200..=299).contains(&status)` check.
+- `zero_network/tests/network_tests.rs`:
+  - Add test cases for flat credential objects in `parse_custom_ice_servers`.
+
+```
+
+## FILE: openspec/changes/archive/ticket-051/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-051"
+title: "v1.0 Release Polish — WASM Binary Optimization (wasm-opt -Oz) & Root README.md Showcase"
+state: "COMPLETED"
+created_at: "2026-10-27T23:14:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-051/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+With `ticket-045` through `ticket-050` completed and verified in production, ZeroChat's core architecture, Option B modernized cryptography (X25519 + ChaCha20-Poly1305 + Ed25519 + ZeroizeOnDrop), resilient multi-peer mesh state machine, and mobile Cloudflare Realtime TURN CGNAT traversal are 100% operational.
+
+`ticket-051` closes out the **v1.0 Production Milestone** with two release-engineering deliverables:
+1. **WASM Size & Release Profile Optimization**:
+   Configure the workspace root `Cargo.toml` with aggressive size-stripping flags (`opt-level = "z"`, `lto = true`, `codegen-units = 1`, `panic = "abort"`, `strip = true`) and integrate an automatic post-bindgen `wasm-opt -Oz` pass into `scripts/deploy_dry_run.sh` (with graceful fallback if `wasm-opt` is not present on PATH), reporting before/after byte sizes.
+2. **Production Architectural Showcase (`README.md`)**:
+   Author a staff-level, comprehensive root `README.md` documenting the v1.0 architecture, the 3-crate workspace (`crates/zero_protocol`, `zero_network`, `zero_client`), the Option B Burner Keybundle, the Blind Dead-Drop handshake (`sealed_sdp_answer`), the self-healing multi-peer mesh state machine, the 3-tier Cloudflare Realtime TURN CGNAT relay, and local development and test commands.
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-051.1: Workspace `[profile.release]` Configuration
+- In `Cargo.toml` (root workspace):
+  - Add a dedicated `[profile.release]` section:
+    ```toml
+    [profile.release]
+    opt-level = "z"
+    lto = true
+    codegen-units = 1
+    panic = "abort"
+    strip = true
+    ```
+  - Verify that `cargo test --workspace` and `cargo build -p zero_client --release --target wasm32-unknown-unknown` compile cleanly.
+
+### REQ-051.2: Post-Bindgen `wasm-opt -Oz` Pass in `scripts/deploy_dry_run.sh`
+- In `scripts/deploy_dry_run.sh`:
+  - After `wasm-bindgen` generates `dist/pkg/zero_client_bg.wasm`:
+    - Check if `dist/pkg/zero_client_bg.wasm` exists and record its size before optimization.
+    - Check `if command -v wasm-opt >/dev/null 2>&1; then`:
+      - Execute `wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int dist/pkg/zero_client_bg.wasm -o dist/pkg/zero_client_bg.wasm`.
+      - Log the before and after byte sizes and percentage reduction.
+    - If `wasm-opt` is not found, print a notice that `wasm-opt` was not found on PATH and continue with Cargo LTO/strip output.
+
+### REQ-051.3: Root `README.md` Production Architectural Showcase
+- Create/update `README.md` with:
+  1. **Header & Badges**: ZeroChat (v1.0) — Ephemeral, Zero-Knowledge Peer-to-Peer Mesh Chat in Rust & WebAssembly.
+  2. **System Architecture Overview (3-Crate Monorepo)**:
+     - `crates/zero_protocol`: Wire envelopes, pairwise ChaCha20-Poly1305 AEAD, Ed25519 signatures, X25519 shared secret derivation, HMAC-SHA256 tokens.
+     - `zero_network`: Cloudflare Worker & Hibernating SQLite Durable Objects (`DeadDropRoom`), single-use HMAC-authenticated dead-drops, and 3-tier Cloudflare Realtime TURN provisioning (`/ice`).
+     - `zero_client`: Rust WebAssembly (`WasmCryptoSession`) + Vanilla JS WebRTC/DOM host, zero-persistence volatile memory wipe, mobile visualViewport layout.
+  3. **Cryptographic Design (Option B Modernized Burner Keybundle)**:
+     - In-memory `BurnerKeybundle` (`X25519Keypair` + `Ed25519Keypair`) protected by `Zeroize` and `ZeroizeOnDrop`.
+     - Out-of-band `#payload=` URL fragment (Host public keys and HMAC token never travel over HTTP).
+     - 100% Blind Dead-Drop (`sealed_sdp_answer`): Joiners seal SDP answer with host X25519 public key before POSTing; Worker relay is blind to WebRTC parameters and IP addresses.
+     - Pairwise authenticated ChaCha20-Poly1305 AEAD (96-bit nonce, 128-bit MAC tag, 64-byte Ed25519 digital signature).
+     - Deterministic memory wipe: `burn_all()` immediately scrubs secrets from WASM RAM on tab close or Leave.
+  4. **Network & Mobile Resilience Engineering**:
+     - Adaptive non-trickle ICE gathering (fast settle on broadband STUN, 350ms settle on TURN relay).
+     - Mobile background freeze grace period (12s) distinguishing explicit departures from background tab suspension.
+     - 3-tier Cloudflare Realtime TURN CGNAT traversal (`/ice`) resolving 4G/5G symmetric NAT and same-device cellular multi-tab hairpinning.
+  5. **Local Development, Testing & Verification Guide**:
+     - Exact commands for 117+ Rust tests (`cargo test --workspace`), clippy (`cargo clippy --workspace --all-targets -- -D warnings`), code format (`cargo fmt -- --check`), dry-run build (`./scripts/deploy_dry_run.sh`), and 23 browser E2E headless scenarios (`bash zero_client/tests/browser/run_test.sh`).
+
+### REQ-051.4: Update Canonical System Specification
+- Update `openspec/specs/overview.md` to reflect `v1.0.0` milestone completion, recording the release profile optimizations and v1.0.0 production status.
+
+### REQ-051.5: Quality Gates & Verification
+- `cargo test --workspace` (117+ tests pass, 0 fail).
+- `cargo clippy --workspace --all-targets -- -D warnings` (0 warnings).
+- `cargo fmt -- --check` (clean).
+- `./scripts/deploy_dry_run.sh` (assembles static bundle in `dist/`, runs wasm-opt if available, and prints byte sizes).
+- `bash zero_client/tests/browser/run_test.sh` (all 23 headless browser tests pass).
+
+---
+
+## 3. Architecture & Affected Modules
+
+- `Cargo.toml`: Root workspace release profile optimization flags.
+- `scripts/deploy_dry_run.sh`: Post-bindgen `wasm-opt -Oz` pass with size reporting.
+- `README.md`: Root architectural showcase.
+- `openspec/specs/overview.md`: Version and canonical spec update.
+
+```
+
+## FILE: openspec/changes/archive/ticket-052/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-052"
+title: "Fix Durable Object Dead-Drop Immutable Header Crash & Joiner Failure Re-Entrancy"
+state: "COMPLETED"
+created_at: "2026-10-28T17:10:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-052/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+Live production console traces when a Joiner opens an invite link revealed a critical CORS failure and duplicate error notice:
+```text
+Access to fetch at 'https://<worker-host>/drop/<do_id>/<invite_uuid>' from origin 'https://<pages-host>' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+Failed to load resource: net::ERR_FAILED
+Joiner failed: Error: Connection closed before opening
+Joiner failed: TypeError: Failed to fetch
+```
+
+### Root Cause 1: Immutable Headers on Durable Object Subrequest Responses (`zero_network/src/lib.rs`)
+In Cloudflare Workers (`worker-rs`), responses returned across an RPC / subrequest boundary from `stub.fetch_with_request(req).await` have immutable headers in V8 (`guard: "immutable"`). In `zero_network/src/lib.rs`, the router called `handlers::with_cors(resp)` directly on the response returned from `stub.fetch_with_request(req).await`. Calling `resp.headers_mut().set(...)` on an immutable response threw an unhandled JavaScript `TypeError: Can't modify immutable headers` exception inside the Worker.
+Because the Durable Object had already verified the HMAC, burned the UUID, and piped the `DropPayload` to the Host's WebSocket before the exception occurred, the Host progressed to `"Establishing secure connection..."`, while Cloudflare killed the Joiner's HTTP response with a bare 500 without CORS headers (`net::ERR_FAILED`).
+
+### Root Cause 2: Re-Entrant `handleJoinFailure()` in `zero_client/index.html`
+When the Joiner's `fetch()` threw `TypeError: Failed to fetch`, `joinRoomFromHash` called `handleJoinFailure(err)`. Inside `handleJoinFailure(err)`, `engine.close()` was invoked before `isJoining` was reset to `false`. `engine.close()` synchronously fired the `onStateChangeCb("closed")` callback, which observed `if (isJoining)` as still `true` and invoked `handleJoinFailure(new Error("Connection closed before opening"))` re-entrantly. This resulted in duplicate system messages and console error spam.
+
+### Root Cause 3: `window.crypto` Shadowing
+In `createRoomAsHost()` in `zero_client/index.html`, `const crypto = await ensureCryptoReady();` shadowed `window.crypto`.
+
+`ticket-052` addresses these issues across `zero_network` and `zero_client`.
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-052.1: Reconstruct Fresh Mutable Response in `zero_network/src/lib.rs`
+- In `zero_network/src/lib.rs`, for `/drop/:do_id/:invite_uuid`:
+  - When `stub.fetch_with_request(req).await` returns:
+    - If `status == 101` (WebSocket upgrade), return `Ok(resp)` directly without invoking `with_cors`.
+    - If `status != 101`:
+      - Extract `status` and `body_text = resp.text().await.unwrap_or_default()`.
+      - Construct a brand-new mutable `Response` in the outer isolate:
+        - If `(200..300).contains(&status)`: `Response::ok(body_text)` (with status adjusted if != 200).
+        - Else: `Response::error(body_text, status)`.
+      - Pass the fresh mutable response to `handlers::with_cors(...)`.
+    - If `stub.fetch_with_request` returns `Err(e)`:
+      - Construct `Response::error(format!("Durable Object error: {e}"), 500)` and pass to `with_cors`.
+
+### REQ-052.2: Defensive 101 Guard & CORS Headers in `handlers::with_cors`
+- In `zero_network/src/handlers.rs`:
+  - In `with_cors(mut resp: Response)`:
+    - If `resp.status_code() == 101`, return `Ok(resp)` immediately.
+    - Set `Access-Control-Allow-Origin: *`.
+    - Set `Access-Control-Allow-Methods: GET, POST, OPTIONS`.
+    - Set `Access-Control-Allow-Headers: Content-Type, Authorization, X-Host-Secret`.
+    - Set `Access-Control-Max-Age: 86400`.
+    - If status is `200` or `201` and `Content-Type` is not already present, set `Content-Type: application/json`.
+
+### REQ-052.3: Prevent Re-Entrant Execution in `handleJoinFailure()`
+- In `zero_client/index.html`:
+  - At the very top of `handleJoinFailure(err)`:
+    ```javascript
+    if (!isJoining) return;
+    isJoining = false;
+    ```
+  - Clean up timers, close engine, update status, and restore UI cleanly without double-execution.
+
+### REQ-052.4: Eliminate `const crypto` Shadowing
+- In `zero_client/index.html`:
+  - Rename `const crypto = await ensureCryptoReady();` in `createRoomAsHost()` to `const wasmCrypto = await ensureCryptoReady();`.
+
+### REQ-052.5: Browser E2E Headless Verification
+- In `zero_client/tests/browser/test_mesh_scenario.js`:
+  - Add Test 24: Assert that when a join failure occurs, `handleJoinFailure` executes exactly once, `isJoining` is cleared before `engine.close()`, and only a single `"Failed to establish connection"` notice is rendered.
+  - Verify all 24 browser scenarios pass.
+
+### REQ-052.6: Quality Gates & Zero Regressions
+- Pass `cargo test --workspace` (117+ tests).
+- Pass `cargo clippy --workspace --all-targets -- -D warnings`.
+- Pass `cargo fmt -- --check`.
+- Pass `./scripts/deploy_dry_run.sh`.
+- Pass `bash zero_client/tests/browser/run_test.sh`.
+
+---
+
+## 3. Architecture & Affected Modules
+
+- `zero_network/src/lib.rs`: Fresh response construction after DO subrequest.
+- `zero_network/src/handlers.rs`: Guard against 101 status and add `Max-Age` / `Content-Type` headers.
+- `zero_client/index.html`: Re-entrancy guard in `handleJoinFailure` and variable de-shadowing.
+- `zero_client/tests/browser/test_mesh_scenario.js`: Test 24 verifying join failure non-re-entrancy.
+
+```
+
+## FILE: openspec/changes/archive/ticket-053/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-053"
+title: "Migrate Cloudflare Workers Subdomain from zero-chat to zero-network"
+state: "COMPLETED"
+created_at: "2026-11-01T10:27:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-053/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+The user is migrating their Cloudflare Workers subdomain from `zero-chat` to `zero-network`.
+Cloudflare Pages remains untouched (`zero-chat.pages.dev` and project name `zero-chat` in `.github/workflows/deploy.yml` remain unchanged).
+
+In the client codebase, default Worker endpoints point to the current `workers.dev` subdomain:
+- `WORKER_ORIGIN`: `"https://network.zero-chat.workers.dev"`
+- `WORKER_WS_ORIGIN`: `"wss://network.zero-chat.workers.dev"`
+
+When the Cloudflare `workers.dev` subdomain is updated to `zero-network`, the worker named `network` will resolve at:
+- `https://network.zero-network.workers.dev`
+- `wss://network.zero-network.workers.dev`
+
+Without updating these origins, the client will fail to connect to signaling or obtain TURN credentials (`net::ERR_NAME_NOT_RESOLVED`).
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-053.1: Update Default Worker Endpoints in Client
+- In `zero_client/index.html`:
+  - `const WORKER_ORIGIN = "https://network.zero-network.workers.dev";`
+  - `const WORKER_WS_ORIGIN = "wss://network.zero-network.workers.dev";`
+- Maintain fallback support for `window.WORKER_HTTP_ORIGIN` for local or staging overrides.
+
+### REQ-053.2: Update Headless Browser Test Scenarios
+- In `zero_client/tests/browser/test_mesh_scenario.js`:
+  - Replace occurrences of `https://network.zero-chat.workers.dev` with `https://network.zero-network.workers.dev` across test scenarios (Scenarios 12, 16, 22).
+
+### REQ-053.3: Update Deployment Documentation
+- In `docs/deployment.md`:
+  - Update Worker routes documentation to `https://network.zero-network.workers.dev`.
+
+### REQ-053.4: Cloudflare Pages Boundaries (Strict Non-Modification)
+- Cloudflare Pages project name `zero-chat` in `.github/workflows/deploy.yml` and branding title `zero-chat.pages.dev` in `zero_client/index.html` are strictly preserved and unchanged.
+
+### REQ-053.5: Quality Gates & Verification
+- Execute `cargo test --workspace` (all 122+ tests pass).
+- Execute `cargo clippy --workspace --all-targets -- -D warnings` (clean).
+- Execute `cargo fmt -- --check` (clean).
+- Execute `./scripts/deploy_dry_run.sh` (clean).
+- Execute `bash zero_client/tests/browser/run_test.sh` (all 24 browser tests pass).
+
+---
+
+## 3. Blast Radius & Affected Files
+
+- `zero_client/index.html` (Lines 201, 203)
+- `zero_client/tests/browser/test_mesh_scenario.js` (Lines 799, 1294, 1439, 2520)
+- `docs/deployment.md` (Line 77)
+
+---
+
+## 4. Work Breakdown (Brief Decomposition)
+
+- **Brief 1 (Implementer)**:
+  - Update `zero_client/index.html` lines 201 & 203 to `https://network.zero-network.workers.dev` and `wss://network.zero-network.workers.dev`.
+  - Update `zero_client/tests/browser/test_mesh_scenario.js` test drop URLs to `https://network.zero-network.workers.dev`.
+  - Update `docs/deployment.md` to reference `https://network.zero-network.workers.dev`.
+- **Brief 2 (Validator)**:
+  - Run all quality gates: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt -- --check`, `./scripts/deploy_dry_run.sh`, and `bash zero_client/tests/browser/run_test.sh`.
+- **Brief 3 (Reviewer)**:
+  - Conduct independent review verifying strict boundary enforcement (Pages unchanged) and correct worker origin routing.
+
+---
+
+## 5. Verification Plan
+
+1. Verify string references:
+   `grep -rn "zero-chat.workers.dev" zero_client docs` returns 0 results.
+2. Full quality gate execution:
+   `cargo test --workspace`
+   `cargo clippy --workspace --all-targets -- -D warnings`
+   `cargo fmt -- --check`
+   `./scripts/deploy_dry_run.sh`
+   `bash zero_client/tests/browser/run_test.sh`
+
+```
+
+## FILE: openspec/changes/archive/unification-001/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "unification-001"
+title: "Bootstrap Sibling Repositories (zero_protocol & zero_network) and Re-Wire zero_chat Baseline"
+state: "COMPLETED"
+created_at: "2026-11-01T15:27:00Z"
+base_branch: "main"
+ticket_branch: "factory/unification-001/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+Currently, `zero_chat` hosts the entire codebase as a single monolithic repository containing:
+1. `crates/zero_protocol`: Wire types, envelopes, and cryptographic primitives.
+2. `zero_network`: Ephemeral Cloudflare signaling worker and hibernating Durable Object.
+3. `zero_client`: Headless Wasm P2P mesh engine, cryptographic session bridge, and HTML/CSS UI application.
+
+To enable multi-application peer-to-peer interoperability across future projects (such as `virtual_dog_walker`), the core protocol engine and signaling worker must be factored out into independent sibling repositories at the exact same parent directory level (`../` relative to `zero_chat`).
+
+Additionally, the existing sibling directory `../virtual-dog-walker` must be normalized to snake_case (`../virtual_dog_walker`).
+
+### Target Directory Topology (Relative to Parent Directory `../`)
+```text
+<parent_dir>/
+├── zero_protocol/          # NEW REPO: Cargo workspace containing `zero_protocol` + `zero_mesh`
+│   ├── Cargo.toml
+│   └── crates/
+│       ├── zero_protocol/  # Pure Rust wire types & crypto (X25519, Ed25519, ChaCha20-Poly1305, HMAC)
+│       └── zero_mesh/      # Headless Wasm P2P client (WebRTC, ICE, Signaling, MeshTopology, WasmCryptoSession)
+├── zero_network/           # NEW REPO: Standalone Cloudflare Signaling Worker & Hibernating Durable Object
+│   ├── Cargo.toml
+│   ├── wrangler.toml
+│   └── src/
+│       ├── lib.rs
+│       ├── durable_object.rs
+│       ├── auth.rs
+│       ├── handlers.rs
+│       └── validation.rs
+├── zero_chat/              # EXISTING REPO: Slimmed down to Chat Frontend + UI bindings consuming sibling crates
+│   ├── Cargo.toml
+│   ├── zero_client/        # Consumes zero_protocol & zero_mesh, compiles wasm bundle for zero-chat.pages.dev
+│   └── dist/
+└── virtual_dog_walker/     # RENAMED from `virtual-dog-walker`
+```
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-UNI.1: Resolve Parent Directory & Bootstrap Sibling Repositories
+- Detect parent directory of `zero_chat`.
+- Create `../zero_protocol` and `../zero_network` directories and initialize each as a git repository (`git init`).
+- If `../virtual-dog-walker` exists and `../virtual_dog_walker` does not exist, rename `../virtual-dog-walker` to `../virtual_dog_walker`.
+
+### REQ-UNI.2: Populate `../zero_protocol` Cargo Workspace (`zero_protocol` + `zero_mesh`)
+- Create workspace `../zero_protocol/Cargo.toml` containing members `["crates/zero_protocol", "crates/zero_mesh"]` with `resolver = "2"`.
+- Migrate `zero_chat/crates/zero_protocol` into `../zero_protocol/crates/zero_protocol`:
+  - Ensure zero `web-sys` or `worker` dependencies so it compiles across native, Wasm, and workerd.
+  - Verify all unit and cryptographic tests pass 100% via `cargo test -p zero_protocol`.
+- Extract headless `crates/zero_mesh` from `zero_chat/zero_client`:
+  - Create `../zero_protocol/crates/zero_mesh` (`Cargo.toml`, `src/lib.rs`, `src/crypto.rs`, `src/invite.rs`, `src/mesh.rs`, `src/webrtc.rs`).
+  - Decouple from any DOM/UI concerns: ensure zero references to HTML DOM IDs or CSS classes.
+  - Expose headless event hooks/callbacks (e.g. `MeshEventHandler` or callback closures) for state changes and message handling.
+  - Verify `cargo test -p zero_mesh` and `cargo check -p zero_mesh --target wasm32-unknown-unknown` pass.
+- Commit initial baseline in `../zero_protocol`.
+
+### REQ-UNI.3: Populate `../zero_network` Standalone Worker Repository
+- Copy `zero_chat/zero_network/` files (`Cargo.toml`, `wrangler.toml`, `src/lib.rs`, `src/durable_object.rs`, `src/handlers.rs`) into `../zero_network/`.
+- Update `../zero_network/Cargo.toml` to depend on sibling `zero_protocol`:
+  ```toml
+  [dependencies]
+  zero_protocol = { path = "../zero_protocol/crates/zero_protocol" }
+  ```
+- Run `cargo test` and `cargo check --target wasm32-unknown-unknown` in `../zero_network` to confirm all tests and worker compilation pass.
+- Commit initial baseline in `../zero_network`.
+
+### REQ-UNI.4: Slim Down `zero_chat` & Re-Wire Baseline
+- Update `zero_chat/Cargo.toml` workspace members: remove `crates/zero_protocol` and `zero_network`.
+- Delete extracted directories `crates/zero_protocol` and `zero_network` from `zero_chat`.
+- Update `zero_chat/zero_client/Cargo.toml` to depend on sibling crates:
+  ```toml
+  [dependencies]
+  zero_protocol = { path = "../../zero_protocol/crates/zero_protocol" }
+  zero_mesh = { path = "../../zero_protocol/crates/zero_mesh" }
+  ```
+- Re-export `WasmCryptoSession` and required types from `zero_mesh` in `zero_chat/zero_client/src/lib.rs`, preserving exact `#[wasm_bindgen]` entrypoints expected by `zero_client/index.html` (`dist/pkg/zero_client.js`).
+- Update `scripts/deploy_dry_run.sh` to remove obsolete `zero_network` check.
+- Verify `cargo test --workspace` passes in `zero_chat`.
+- Verify `bash zero_client/tests/browser/run_test.sh` passes all 24 browser test scenarios.
+- Verify `./scripts/deploy_dry_run.sh` produces verified release WASM and web assets.
+
+---
+
+## 3. Blast Radius & Affected Modules
+
+- `../zero_protocol/` (New workspace repository)
+- `../zero_network/` (New worker repository)
+- `../virtual_dog_walker/` (Renamed from `virtual-dog-walker`)
+- `zero_chat/Cargo.toml` (Workspace definition)
+- `zero_chat/crates/zero_protocol/` (Deleted / moved)
+- `zero_chat/zero_network/` (Deleted / moved)
+- `zero_chat/zero_client/Cargo.toml` (Dependency paths)
+- `zero_chat/zero_client/src/lib.rs` (Re-exports from `zero_mesh`)
+- `zero_chat/scripts/deploy_dry_run.sh` (Removal of local `zero_network` check)
+
+---
+
+## 4. Work Breakdown (Brief Decomposition)
+
+- **Brief 1 (Sibling Bootstrap & Extraction)**:
+  - Initialize `../zero_protocol` workspace with `crates/zero_protocol` and `crates/zero_mesh`.
+  - Initialize `../zero_network` with updated sibling dependency.
+  - Rename `../virtual-dog-walker` to `../virtual_dog_walker`.
+- **Brief 2 (zero_chat Re-wiring & Pruning)**:
+  - Remove extracted crates from `zero_chat/Cargo.toml` and filesystem.
+  - Wire `zero_chat/zero_client` to `../zero_protocol/crates/*`.
+  - Update `scripts/deploy_dry_run.sh`.
+- **Brief 3 (Validation)**:
+  - Run `cargo test` across `../zero_protocol`, `../zero_network`, and `zero_chat`.
+  - Run all 24 browser headless test scenarios in `zero_chat`.
+- **Brief 4 (Review)**:
+  - Independent architectural review of sibling repository topologies, boundary decoupling, and zero regressions.
+
+---
+
+## 5. Verification Plan
+
+1. In `../zero_protocol`:
+   - `cargo test --workspace` (All protocol and mesh tests pass).
+   - `cargo check --target wasm32-unknown-unknown` passes.
+2. In `../zero_network`:
+   - `cargo test` passes against sibling `zero_protocol`.
+   - `cargo check --target wasm32-unknown-unknown` passes.
+3. In `zero_chat`:
+   - `cargo test --workspace` passes cleanly.
+   - `cargo clippy --workspace --all-targets -- -D warnings` passes with 0 warnings.
+   - `cargo fmt -- --check` passes.
+   - `bash zero_client/tests/browser/run_test.sh` passes all 24 headless browser tests.
+   - `./scripts/deploy_dry_run.sh` builds release WASM and verifies bundle.
+
+
+```
+
+## FILE: openspec/changes/archive/unification-002/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "unification-002"
+title: "Add Random-Peer Dead-Drop Matchmaking in zero_network and Binary/State Mesh Framing in zero_protocol"
+state: "COMPLETED"
+created_at: "2026-11-01T16:40:00Z"
+base_branch: "main"
+ticket_branch: "factory/unification-002/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+Following Step 1 (`unification-001`), the foundational protocol, mesh engine, signaling worker, and chat client are partitioned into independent sibling repositories (`zero_protocol`, `zero_network`, `zero_chat`, and `virtual_dog_walker`).
+
+Before migrating `virtual_dog_walker` onto Cloudflare Pages and `zero_mesh` in Step 3, two critical capabilities must be implemented in `zero_protocol` and `zero_network`:
+
+1. **Invite-Free Public Dead-Drop Matchmaking (`zero_network` + `zero_protocol`)**:
+   - In `zero_chat`, a joiner obtains an `InvitePayload` out-of-band via `#payload=...`.
+   - In `virtual_dog_walker`, a player opening `play.zero-network` joins the `clifton-commons` mesh automatically without an invite link, while still utilizing the exact same `InvitePayload -> DropPayload` ChaCha20-Poly1305 encrypted WebRTC dead-drop handshake.
+   - Connected hosts stage pre-generated single-use `InvitePayload`s on their hibernating WebSocket's `HostAttachment` (via `POST /stage/:do_id` or WebSocket message).
+   - When a newcomer calls `GET /match/:do_id`, `DeadDropRoom` selects an active host socket with an unburned `staged_invite: Some(InvitePayload)` using pseudo-random / round-robin selection, atomically clears/claims that staged invite (preventing collision), and returns the `InvitePayload`.
+   - If no staged invite exists (`status: "empty"`), the newcomer becomes a seed host on `GET /host/:do_id` and stages an invite. Once connected to a single peer, `MeshTopology`'s existing `PeerJoined` + `RelaySdpOffer`/`RelaySdpAnswer` snaps them into the full mesh with zero further Worker hits.
+   - Additionally, `process_dead_drop` must route joiner `DropPayload`s to the specific matching host socket in multi-host rooms, rather than only inspecting the first host socket.
+
+2. **Authenticated Application State / Binary Broadcast in `zero_mesh` & `zero_protocol`**:
+   - `MeshRelaySignal` in `crates/zero_protocol/src/envelope.rs` currently only supports `BroadcastChat`.
+   - Applications like `virtual_dog_walker` require high-frequency encrypted state/event payloads (player movement, dog leash physics, ball throws, barks, proximity chat invites) over `MeshTopology` using pairwise X25519 + ChaCha20-Poly1305 session keys (`seal_raw` / `open_raw`).
+
+---
+
+## 2. Scope Boundaries
+
+### In Scope
+- **`zero_protocol` (`crates/zero_protocol`)**:
+  - Add `BroadcastState` variant to `MeshRelaySignal` with `packet_uuid`, `origin_peer_id`, `topic`, `ttl`, `sealed_payload`.
+  - Add `StageInviteRequest` (`pub invite: InvitePayload`) and `MatchResponse` (`Matched { invite: InvitePayload }`, `Empty`).
+  - Unit tests verifying JSON serialization/deserialization.
+- **`zero_mesh` (`crates/zero_mesh`)**:
+  - Add state broadcast and direct transmission APIs to `MeshTopology`: `on_state`, `broadcast_state`, `send_direct_state`.
+  - Handle incoming `BroadcastState` in `handle_incoming_message`: deduplication, hop decryption (`open_raw`), callback invocation, downstream relay with `ttl - 1`.
+  - Expose JS/Wasm bindings for `broadcast_state`, `send_direct_state`, and `on_state`.
+  - Unit & multi-node tests verifying broadcast and direct transmission.
+- **`zero_network`**:
+  - Update `HostAttachment` with `#[serde(default)] pub staged_invite: Option<InvitePayload>`.
+  - Implement `process_stage_invite` supporting `POST /stage/:do_id` and WebSocket message staging.
+  - Implement `GET /match/:do_id` (`process_match_request`) returning `MatchResponse` and atomically consuming the staged invite.
+  - Fix multi-host routing in `process_dead_drop` to inspect all host sockets and deliver to the token-matching host socket.
+  - Comprehensive unit tests covering staging, matching, atomic consumption, and multi-host dead-drop routing.
+- **Regression Verification**:
+  - Verify that `zero_chat` tests pass without regression.
+
+### Out of Scope
+- Modifying `virtual_dog_walker` codebase (scheduled for Step 3).
+- Deploying Cloudflare Workers to production.
+
+---
+
+## 3. Affected Components & Target Architecture
+
+```text
+zero_protocol/
+  crates/zero_protocol/src/envelope.rs  -> Add MeshRelaySignal::BroadcastState, StageInviteRequest, MatchResponse
+  crates/zero_protocol/src/lib.rs       -> Re-export new wire types
+  crates/zero_mesh/src/mesh.rs          -> Add broadcast_state, send_direct_state, on_state, handle BroadcastState
+  crates/zero_mesh/src/wasm.rs / lib.rs -> Expose JS/Wasm bindings
+zero_network/
+  src/durable_object.rs                 -> HostAttachment.staged_invite, process_stage_invite, process_match_request
+  src/handlers.rs                       -> HTTP routes /stage/:do_id, /match/:do_id, targeted process_dead_drop
+  src/lib.rs                            -> Route dispatching
+zero_chat/
+  Regression checks only
+```
+
+---
+
+## 4. Verification & Acceptance Criteria
+
+- **AC-002.1 (`zero_protocol` & `zero_mesh` State Broadcast)**:
+  `cargo test` in `../zero_protocol` passes all tests including `MeshRelaySignal::BroadcastState`, `StageInviteRequest`, `MatchResponse`, `MeshTopology::broadcast_state`, and `MeshTopology::send_direct_state`.
+- **AC-002.2 (`zero_network` Random-Peer Dead-Drop Matchmaking)**:
+  `cargo test` in `../zero_network` passes all tests including `/stage/:do_id`, `/match/:do_id`, and multi-host targeted `DropPayload` routing.
+- **AC-002.3 (`zero_chat` Regression Check)**:
+  `cargo test` in `../zero_chat` continues to pass 100% with zero regressions.
+
+---
+
+## 5. Execution Plan & Cognitive Sizing
+
+- **Brief 1 [M] (`zero_protocol` Wire Types & `zero_mesh` State Broadcast)**:
+  - Add wire types to `zero_protocol/src/envelope.rs`.
+  - Add state broadcast, direct state send, incoming handler, and wasm bindings in `zero_mesh`.
+  - Add 3-node simulation tests.
+- **Brief 2 [M] (`zero_network` Staging, Matchmaking & Multi-Host Dead-Drop)**:
+  - Update `HostAttachment` and `process_stage_invite` (HTTP & WS).
+  - Implement `process_match_request` with atomic consumption.
+  - Fix multi-host socket targeting in `process_dead_drop`.
+  - Add unit tests for matching, staging, and multi-host routing.
+- **Brief 3 [L] (Integration & Regression Testing)**:
+  - Verify multi-crate build and `cargo test` across `zero_protocol`, `zero_network`, and `zero_chat`.
+
+
+```
+
+## FILE: openspec/changes/archive/unification-003/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "unification-003"
+title: "Migrate virtual_dog_walker to zero_mesh P2P State Replication, Random Dead-Drop Matchmaking, Dual-Mesh E2EE Proximity Chat, and Cloudflare Pages"
+state: "IN_PROGRESS"
+created_at: "2026-11-01T17:48:00Z"
+base_branch: "main"
+ticket_branch: "factory/unification-003/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+Following Steps 1 (`unification-001`) and 2 (`unification-002`):
+- `zero_protocol` and `zero_mesh` expose wire types (`BroadcastState`, `StageInviteRequest`, `MatchResponse`), state streaming APIs (`broadcast_state`, `send_direct_state`, `on_state`), `WasmCryptoSession`, and `WasmMeshTopology`.
+- `zero_network` exposes endpoints for invite staging (`POST /stage/:do_id` and WebSocket message staging), random-peer dead-drop matchmaking (`GET /match/:do_id`), and token-targeted routing in multi-host rooms (`POST /drop/:do_id/:invite_uuid`).
+
+In Step 3 (`unification-003` — Stage 1 of the `virtual_dog_walker` migration), the existing JavaScript simulation and canvas rendering engine remains intact while migrating `virtual_dog_walker`'s networking, matchmaking, NPC authority, and proximity chat onto `zero_protocol` / `zero_mesh` and configuring a static Wasm build pipeline for Cloudflare Pages.
+
+---
+
+## 2. Core Architectural Design
+
+### 2.1 Invite-Free Public Dead-Drop Matchmaking (`clifton-commons`)
+- **ICE / TURN Discovery**: Client fetches `GET /ice` from `zero_network` (`window.WORKER_HTTP_ORIGIN || "https://network.zero-network.workers.dev"`) and caches ICE servers for 15 minutes.
+- **Match Request (`GET /match/:do_id`, default `clifton-commons`)**:
+  - **Matched (`MatchResponse::Matched { invite }`)**:
+    - Adopts `invite.assigned_peer_id` (if present), verifies HMAC token.
+    - Derives pairwise X25519 shared secret with `invite.host_public_key` via `WasmCryptoSession`.
+    - Generates WebRTC SDP answer, seals it into `sealed_sdp_answer`, and submits to `POST /drop/:do_id/:invite_uuid`.
+    - Upon DataChannel opening, `WasmMeshTopology` automatically exchanges `PeerJoined` + `RelaySdpOffer` / `RelaySdpAnswer` over the bridge to snap direct P2P connections to all other walkers in the park with zero further Worker hits.
+    - Also connects as a host socket to `GET /host/:do_id` and stages a fresh `InvitePayload` to contribute to matchmaking for future joiners.
+  - **Empty (`MatchResponse::Empty`)**:
+    - Acts as seed host: generates a 32-byte `host_secret`, connects WebSocket to `GET /host/:do_id`, creates a pre-staged `InvitePayload`, and stages it via `StageInviteRequest`.
+    - Upon receiving an incoming `DropPayload` from a joiner, decrypts via `open_drop_sdp`, completes connection, and replenishes its staged invite.
+
+### 2.2 Game Mesh State Replication & Deterministic P2P NPC Authority
+- **Encrypted Game Mesh (`topic: "game_packet"`)**:
+  - All game packets (`HELLO`, `WELCOME`, `SYNC_STATE`, `BALL_THROWN`, `BALL_SYNC`, `BARK`, `PET`, `WHISTLE`, `EMOTE`, `CHAT_MESSAGE`, `NPC_SPAWN`, `NPC_DESPAWN`, `NPC_SNAPSHOT`) are serialized to UTF-8 JSON bytes and broadcasted via `gameMesh.broadcast_state("game_packet", bytes, 3)` (sealed per-peer with ChaCha20-Poly1305 AEAD).
+- **Deterministic P2P NPC Coordinator & Reseed**:
+  - The connected peer with the lexicographically lowest `peerId` (or the seed peer when alone) coordinates ambient park NPCs: initializes 5 pre-warmed NPCs, sends `NPC_SNAPSHOT` to joining peers, and broadcasts `NPC_SPAWN` / `NPC_DESPAWN`.
+  - When all peers depart, the room empties; the next incoming seed peer re-seeds a fresh pool of 5 pre-warmed NPCs.
+
+### 2.3 Dual-Mesh Ephemeral Proximity Chat
+- **Strict Separation**:
+  - `gameMesh` (`WasmMeshTopology`): Park-wide coordinate & entity synchronization.
+  - `proximityChatMesh` (`WasmMeshTopology`): Dedicated instance isolated strictly to walkers within the conversation circle.
+- **Hysteresis Thresholds**:
+  - Join Radius: `160px` (`PROXIMITY_JOIN_RADIUS = 160`).
+  - Leave Radius: `200px` (`PROXIMITY_LEAVE_RADIUS = 200`), with 5-minute message retention (`RETENTION_DURATION_MS = 300_000`).
+- **In-Band Proximity Handshake**:
+  - When two walkers enter within `160px`, the deterministic initiator (`localPeerId < remotePeerId`) creates an offer on `proximityChatMesh` and sends a `proximity_invite` payload directly via `gameMesh.send_direct_state(remotePeerId, "proximity_invite", bytes)`.
+  - Recipient accepts, seals SDP answer, and returns it via `gameMesh.send_direct_state(initiatorPeerId, "proximity_drop", bytes)`.
+  - Proximity chat messages use `proximityChatMesh.broadcast_chat(text)` (E2EE `BroadcastChat` frames). Walkers outside the circle never receive chat frames.
+  - When a walker exceeds `200px`, their `proximityChatMesh` connection is closed, while `gameMesh` remains connected.
+
+---
+
+## 3. Scope Boundaries & Affected Repositories
+
+### In Scope
+- **`zero_protocol` (`crates/zero_mesh`)**:
+  - Verify and export required `wasm_bindgen` functions and helpers for browser ES module consumption.
+- **`virtual_dog_walker`**:
+  - `scripts/build_wasm.sh` and `scripts/build_pages.sh` to compile `zero_mesh` to `src/wasm/` and package `dist/` for Cloudflare Pages.
+  - `package.json` scripts: `build:wasm`, `build`, `test`.
+  - `src/net/zero_mesh_network.js`: `ZeroMeshNetworkManager` implementing matchmaking, Game Mesh broadcast, NPC coordinator, and dual-mesh proximity chat with in-memory test fallback.
+  - `src/net/network.js`: Integrate `ZeroMeshNetworkManager` as the default P2P/Pages adapter, preserving `WebSocketNetworkManager` (`?server=`) and `PeerNetworkManager` (`?p2p=1`).
+  - `src/ui/proximity_chat.js`: Support hysteresis radii (`joinRadius: 160`, `leaveRadius: 200`) while maintaining default `radius = 200` backward compatibility for existing tests.
+  - `src/main.js`: Wire `onClusterChanged` and proximity chat messaging through `ZeroMeshNetworkManager`.
+  - `test/test_zero_mesh_integration.py` and `test/run_tests.py`: Unit and integration test suite.
+
+### Out of Scope
+- Rust rewrite of virtual dog walker simulation (scheduled for Stage 2).
+
+---
+
+## 4. Verification & Acceptance Criteria
+
+- **AC-003.1 (Wasm & Cloudflare Pages Build Pipeline)**:
+  `scripts/build_wasm.sh` and `scripts/build_pages.sh` build the `zero_mesh` Wasm bundle into `src/wasm/` and assemble `dist/` cleanly.
+- **AC-003.2 (Public Dead-Drop Matchmaking & P2P Game Mesh)**:
+  `ZeroMeshNetworkManager` connects to `zero_network`, replicates game state over `WasmMeshTopology::broadcast_state`, and deterministically coordinates/reseeds ambient NPCs across peers.
+- **AC-003.3 (Dual-Mesh Proximity Chat with Hysteresis)**:
+  Proximity chat forms at 160px and disconnects at 200px in `CliftonDownGame`, bootstrapping a separate `WasmMeshTopology` in-band over `gameMesh.send_direct_state` and encrypting chat strictly among cluster peers.
+- **AC-003.4 (100% Test Suite Green Across All 4 Repos)**:
+  `python3 test/run_tests.py` in `../virtual_dog_walker` (including `test_zero_mesh_integration.py`) and `cargo test` in `../zero_protocol`, `../zero_network`, and `../zero_chat` pass with zero regressions.
+
+---
+
+## 5. Execution Plan & Cognitive Sizing
+
+- **Brief 1 [M] (`zero_mesh` Wasm Bindings & Build Pipeline)**:
+  - Inspect and update `crates/zero_mesh` Wasm exports if needed.
+  - Author `scripts/build_wasm.sh` and `scripts/build_pages.sh` in `virtual_dog_walker`.
+  - Update `package.json`.
+- **Brief 2 [H] (`ZeroMeshNetworkManager` & Deterministic NPC Coordination)**:
+  - Implement `src/net/zero_mesh_network.js` (dead-drop client, game mesh state broadcast, deterministic NPC coordinator).
+  - Update `src/net/network.js` with fallback preservation.
+- **Brief 3 [M] (Dual-Mesh Proximity Chat Hysteresis & Wiring)**:
+  - Update `src/ui/proximity_chat.js` with 160px/200px hysteresis logic.
+  - Wire proximity cluster changes in `src/main.js`.
+- **Brief 4 [M] (Integration Tests & Multi-Repo Verification)**:
+  - Author `test/test_zero_mesh_integration.py` covering matchmaking, game state replication, NPC reseed, and dual-mesh proximity chat.
+  - Register in `test/run_tests.py`.
+  - Run full test suites across all 4 repos.
+
+
+```
+
+## FILE: openspec/changes/archive/unification-004/spec.md
+```markdown
+# Change Proposal: unification-004
+
+```yaml
+---
+ticket_id: "unification-004"
+title: "Stage 2 Migration: Extract Core Spatial Physics, Leash Spring-Damper, Ball Ballistics, and Deterministic NPC Interpolation into Rust/Wasm (dog_walker_core)"
+state: "IN_PROGRESS"
+created_at: "2026-11-01T18:07:00Z"
+target_repos:
+  - "../virtual_dog_walker"
+max_review_cycles: 3
+current_review_cycle: 0
+---
+```
+
+## 1. Problem Statement & Motivation
+In Step 3 (`unification-003`), `virtual_dog_walker` migrated its networking and signaling layer onto `zero_protocol` and `zero_mesh` WebAssembly primitives, enabling invite-free dead-drop matchmaking on `zero_network`, P2P game state replication, and dual-mesh proximity chat with hysteresis.
+
+In Step 4 (`unification-004` — Stage 2), we execute the Strangler-Fig simulation port by migrating the performance-critical, deterministic core simulation logic out of JavaScript and into zero-allocation, memory-safe Rust compiled to WebAssembly (`crates/dog_walker_core`).
+
+The existing HTML5 Canvas 2D renderer and Web Audio synthesis remain as a thin presentation layer that steps the Rust `WasmWorldSim` on each frame, falling back cleanly to pure JS math in headless test runners.
+
+---
+
+## 2. Architecture & Scope of Changes
+
+### 2.1 New Rust Crate: `crates/dog_walker_core`
+Scaffolded inside `virtual_dog_walker`:
+- `Cargo.toml` (workspace root and crate level)
+- `src/lib.rs`: `#[wasm_bindgen]` export of `WasmWorldSim` and zero-overhead snapshot transfer structures.
+- `src/math.rs`: 2D/3D vector routines, shortest-arc angle interpolation (`lerp_angle`), and deterministic `mulberry32` PRNG.
+- `src/collision.rs`: World boundary clamping (margin = 36, inner wall = 56) and static circle collider resolution (`resolve_entity_collisions`).
+- `src/dog_physics.rs`: Spring-damper leash constraint (`step_leash_constraint`: length 110.0–180.0, spring stiffness $k$, velocity damping, obstacle avoidance, and steering).
+- `src/ball_physics.rs`: 3D projectile trajectory (`BallSim`: gravity $-580.0\text{ px/s}^2$, ground bounce damping $0.55$, rolling friction $0.92$, and obstacle collision deflection).
+- `src/npc_sim.rs`: Deterministic polyline path sampling (`sample_npc_state`: walker $22\text{ px/s}$, jogger $48\text{ px/s}$, `to_seconds` timestamp normalization, waypoint corner turning smoothing within 28px, and entry/exit opacity fade).
+
+### 2.2 Dual WebAssembly Build Pipeline
+- Update `scripts/build_wasm.sh` and `scripts/build_pages.sh`:
+  - Build `zero_mesh` from `../zero_protocol/crates/zero_mesh` into `src/wasm/`.
+  - Build `dog_walker_core` from `./crates/dog_walker_core` into `src/wasm_core/` via `wasm-bindgen --target web`.
+  - Package both Wasm bundles into `dist/` for Cloudflare Pages.
+
+### 2.3 JavaScript Bridge & Non-Regression Entity Integration
+- `src/engine/wasm_sim_bridge.js`:
+  - Dynamically loads `./wasm_core/dog_walker_core.js` in browser environments.
+  - Exposes synchronous helper methods (`stepBallPhysics`, `stepLeashConstraint`, `resolveWorldCollision`, `computeNpcState`).
+  - Automatically falls back to existing pure JS simulation math when Wasm is not yet initialized (ensuring headless Python/Node unit tests remain 100% green without modification).
+- Wire bridge into:
+  - `src/main.js` (`CliftonDownGame`)
+  - `src/entities/toy.js` (`TennisBall.update`)
+  - `src/entities/companion_dog.js` (`CompanionDog.update`)
+  - `src/entities/npc.js` (`ParkNPC.setClock`)
+
+---
+
+## 3. Acceptance Criteria
+
+- **AC-004.1 (dog_walker_core Rust Crate & Native Tests)**:
+  - `crates/dog_walker_core` compiles cleanly with zero warnings (`cargo test`).
+  - Passes at least 15 native Rust unit tests covering collision resolution, 3D ball ballistics, spring-damper leash physics, and deterministic NPC polyline interpolation.
+- **AC-004.2 (Dual Wasm Build Pipeline)**:
+  - `bash scripts/build_wasm.sh` and `bash scripts/build_pages.sh` compile both `zero_mesh` (into `src/wasm/`) and `dog_walker_core` (into `src/wasm_core/`) with `wasm-bindgen --target web`.
+  - `dist/` contains all static assets, Wasm binaries, and JS wrappers.
+- **AC-004.3 (Zero Regression Bridge Integration)**:
+  - `src/engine/wasm_sim_bridge.js` delegates simulation ticks to `WasmWorldSim` when initialized while maintaining full backward-compatible fallback for JS entities.
+  - `python3 test/run_tests.py` in `virtual_dog_walker` passes all existing test suites plus `test/test_wasm_core_sim.py`.
+- **AC-004.4 (Multi-Repository Non-Regression)**:
+  - `cargo test --manifest-path ../zero_protocol/Cargo.toml` (109 passed).
+  - `cargo test --manifest-path ../zero_network/Cargo.toml` (17 passed).
+  - `cargo test --manifest-path ../zero_chat/Cargo.toml` (36 passed).
+
+---
+
+## 4. Verification Plan
+
+1. **Rust Unit Tests**: `cargo test --manifest-path ../virtual_dog_walker/Cargo.toml`
+2. **Build Scripts**:
+   - `cd ../virtual_dog_walker && bash scripts/build_wasm.sh`
+   - `cd ../virtual_dog_walker && bash scripts/build_pages.sh`
+3. **Python Integration Suite**:
+   - `cd ../virtual_dog_walker && python3 test/test_wasm_core_sim.py`
+   - `cd ../virtual_dog_walker && python3 test/run_tests.py`
+4. **Multi-Repo Regression**:
+   - `cargo test --manifest-path ../zero_protocol/Cargo.toml`
+   - `cargo test --manifest-path ../zero_network/Cargo.toml`
+   - `cargo test --manifest-path ../zero_chat/Cargo.toml`
+
+
+```
+
+## FILE: openspec/changes/archive/unification-005/spec.md
+```markdown
+# Change Proposal: unification-005
+
+```yaml
+---
+ticket_id: "unification-005"
+title: "Execute dog_walker_core Rust/Wasm Simulation Port and Fix Live ZeroMeshNetworkManager WebRTC & SYNC_STATE Schema Bugs"
+state: "IN_PROGRESS"
+created_at: "2026-11-01T18:20:00Z"
+target_repos:
+  - "../virtual_dog_walker"
+max_review_cycles: 3
+current_review_cycle: 0
+---
+```
+
+## 1. Problem Statement & Motivation
+While the preliminary scaffolding of `dog_walker_core` and the Python mock tests in `test_zero_mesh_integration.py` pass, a thorough inspection of the live browser networking layer in `src/net/zero_mesh_network.js` against `src/main.js` (`CliftonDownGame`) reveals 4 critical issues preventing real-world multiplayer play on Cloudflare Pages:
+
+1. **Incompatible `remotePeers` & `SYNC_STATE` Schema**:
+   - `CliftonDownGame.update()` expects each entry in `this.net.remotePeers` to contain `{ ownerInterpolator, dogInterpolator, meta }`.
+   - `ZeroMeshNetworkManager` instead stored `{ id, name, jacketColor, coatName, interpolator }` and parsed flat coordinates, whereas `Protocol.createSyncState` transmits nested `{ owner: { x, y, vx, vy, angle, isMoving, isLeashed }, dog: { x, y, vx, vy, angle, state } }`.
+   - `this.onPeerJoin` was invoked as `(senderId, name, peerObj)` instead of `(senderId, meta)` where `meta` is `{ name, jacketColor, coatName, ... }`.
+   - `Protocol.createWelcome` was called missing `this.localMeta` as the 2nd argument.
+2. **Missing `startSyncLoop()` and `stop()` Methods**:
+   - `CliftonDownGame.initNetworking()` calls `this.net.startSyncLoop(...)`, throwing `TypeError: this.net.startSyncLoop is not a function`.
+3. **Dummy Hardcoded SDP & Missing `WasmCryptoSession.seal_drop_sdp`**:
+   - `_connectLiveMesh()` called a non-existent method `create_drop_payload_json` with a hardcoded `"v=0..."` placeholder instead of real `WasmWebRtcEngine.accept_offer_and_create_answer` and `WasmCryptoSession.seal_drop_sdp`.
+4. **Empty `_setupHostSocket()` Stubs**:
+   - Seed hosts never authenticated via `?secret=${secretHex}`, never staged an `InvitePayload` to `DeadDropRoom` (`POST /stage/:do_id` or WebSocket), and had empty `onmessage` handlers that never decrypted incoming `DropPayload` answers.
+
+Additionally, we will refine `crates/dog_walker_core` to include floppy ear spring-damper physics (`step_ears`), off-leash roaming clamping bounds (105px on-leash, 230px off-leash), and ensure dual Wasm build artifacts are tracked and packaged cleanly.
+
+---
+
+## 2. Architecture & Scope of Changes
+
+### 2.1 Live WebRTC & Handshake Fixes in `src/net/zero_mesh_network.js`
+- Implement `ensureRemotePeer(peerId, meta = {})`:
+  - Instantiates `ownerInterpolator: new EntityInterpolator()` and `dogInterpolator: new EntityInterpolator()`.
+  - Maintains `meta: { name, jacketColor, coatName, hairStyle, hairColor, pantsColor, skinTone, collarColor, personality }`.
+- Fix packet handling in `handlePacket`:
+  - `PacketType.HELLO`: Call `this.ensureRemotePeer(senderId, meta)` and `this.onPeerJoin(senderId, meta)`. Reply with `Protocol.createWelcome(this.peerId, this.localMeta, peersList)`.
+  - `PacketType.WELCOME`: Register host and peers with `ensureRemotePeer` and trigger `this.onPeerJoin(p.id, meta)`.
+  - `PacketType.SYNC_STATE`: Decode both nested `packet.owner` / `packet.dog` and flat properties, setting target on `ownerInterpolator` and `dogInterpolator`.
+- Implement `startSyncLoop(getLocalStateFn)` running at 16 Hz and `stop()`.
+- Real Wasm Dead-Drop Handshake:
+  - Joiner: `engine.accept_offer_and_create_answer(invite.sdp_offer)` $\rightarrow$ `cryptoSession.seal_drop_sdp(...)` $\rightarrow$ `POST /drop/:roomId/:invite_uuid`.
+  - Host: Connects WebSocket to `/host/:roomId?secret=${secretHex}`, creates offer via `engine.create_offer()`, signs `token = compute_hmac_hex`, stages `InvitePayload`, decrypts joiner drop in `onmessage` via `cryptoSession.open_drop_sdp`, applies answer, and stages fresh invite.
+
+### 2.2 Ear Springs & Leash Physics in `crates/dog_walker_core`
+- Add `step_ears` spring-damper routine to `dog_physics.rs` (stiffness $180.0$, damping $14.0$).
+- Extend `step_leash` to support 105px on-leash clamp and 230px off-leash roam clamp (exempting `FETCHING` and `LOST`).
+
+---
+
+## 3. Acceptance Criteria
+
+- **AC-005.1 (Live ZeroMesh Network Compatibility)**:
+  - `ZeroMeshNetworkManager` implements `startSyncLoop`, `stop`, `ensureRemotePeer` with `{ ownerInterpolator, dogInterpolator, meta }`.
+  - Accurately parses nested `Protocol.createSyncState` packets.
+  - Invokes `onPeerJoin(senderId, meta)` and `Protocol.createWelcome(this.peerId, this.localMeta, peers)`.
+  - Uses real `WasmWebRtcEngine` and `WasmCryptoSession` methods (`seal_drop_sdp`, `open_drop_sdp`, `compute_hmac_hex`).
+- **AC-005.2 (dog_walker_core Enhancements)**:
+  - `crates/dog_walker_core` passes $\ge 15$ native Rust tests, adding ear spring physics.
+- **AC-005.3 (100% Green Verification Across All Repositories)**:
+  - All test suites in `virtual_dog_walker`, `zero_protocol`, `zero_network`, and `zero_chat` pass.
+
+---
+
+## 4. Verification Plan
+
+1. **Rust Tests**: `cargo test --manifest-path ../virtual_dog_walker/crates/dog_walker_core/Cargo.toml`
+2. **Build Scripts**: `cd ../virtual_dog_walker && bash scripts/build_wasm.sh && bash scripts/build_pages.sh`
+3. **Python Suite**: `cd ../virtual_dog_walker && python3 test/run_tests.py`
+4. **Sibling Repos**: `cargo test` on `zero_protocol`, `zero_network`, and `zero_chat`.
+
+
+```
+
+## FILE: openspec/changes/archive/unification-006/spec.md
+```markdown
+# Change Proposal: unification-006
+
+```yaml
+---
+ticket_id: "unification-006"
+title: "Fix Cloudflare Worker/Pages Static Asset Serving, Retire Legacy PartyServer Worker Config, and Harden Zero-Network End-to-End Integration"
+state: "COMPLETED"
+created_at: "2026-11-02T21:03:00Z"
+target_repos:
+  - "../virtual_dog_walker"
+  - "../zero_network"
+max_review_cycles: 3
+current_review_cycle: 0
+---
+```
+
+## 1. Problem Statement & Motivation
+When loading `play.zero-network.workers.dev` in a standard browser, users observe a blank dark green screen (`#2b4920` background from `src/style.css:44`) without canvas rendering or HUD elements. Root cause analysis reveals multiple critical issues spanning asset packaging, ES module imports, and backend API routing:
+
+1. **Fatal Unbundled Browser ES Module JSON Import**:
+   - `src/net/zero_mesh_network.js:7` executes `import npcManifest from '../world/npc_path_manifest.json';`.
+   - In unbundled browser ES module contexts (`<script type="module" src="src/main.js">`), bare JSON imports without `with { type: 'json' }` fail evaluation immediately with `TypeError: Failed to load module script: Expected a JavaScript module script but the server responded with a MIME type of "application/json"`.
+   - Because ES module imports are evaluated before `src/main.js` executes, this single statement halts the entire application bootstrap before `CliftonDownGame` can mount the canvas or HUD.
+
+2. **Cloudflare Worker Static Asset Bloat & Missing `.assetsignore`**:
+   - `virtual_dog_walker/wrangler.jsonc` points assets to `./`, which attempts to upload massive Rust build directories (`target/`), Git history, factory logs, and tests.
+   - Missing `.assetsignore` risks upload failures, excessive bundle size, and improper MIME handling.
+
+3. **Missing Static Obstacle Collider Registration in `src/main.js`**:
+   - `dog_walker_core` collision simulation requires static colliders registered via `WasmWorldSim.set_colliders(...)` once `initWasmSim()` resolves.
+
+4. **Missing Browser WebSocket Query-Param Secret Authentication & CORS Support in `zero_network`**:
+   - Browser `new WebSocket(url)` cannot supply custom HTTP headers (`X-Host-Secret` or `Authorization`). `ZeroMeshNetworkManager._setupHostSocket` passes `?secret=${secretHex}` in the query string.
+   - `zero_network` must authenticate hosts via query parameter `?secret=<hex>` in addition to headers, and must respond with full CORS headers (`Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: GET, POST, OPTIONS`, `Access-Control-Allow-Headers: Content-Type, Authorization, X-Host-Secret`) and handle `OPTIONS` preflight requests on `/ice`, `/match/*`, `/stage/*`, and `/drop/*`.
+
+---
+
+## 2. Architecture & Scope of Changes
+
+### 2.1 Browser Module Fixes & Static Obstacle Registration (`../virtual_dog_walker`)
+- Remove bare `import npcManifest from '../world/npc_path_manifest.json'` in `src/net/zero_mesh_network.js`.
+- Import `NPC_PATHS` from `../world/npc_paths.js` and derive manifest metadata dynamically or use the robust `FALLBACK_MANIFEST`.
+- Audit all files in `src/` to guarantee zero bare JSON module imports.
+- In `src/main.js`, invoke `WasmWorldSim.set_colliders(...)` once `initWasmSim()` succeeds so the Rust physics engine receives static colliders from `this.field`.
+- Add `.assetsignore` to exclude `target/`, `crates/`, `.factory/`, `.git/`, `node_modules/`, `server/`, `test/`, `openspec/`, `scripts/`, `Cargo.toml`, `Cargo.lock`, `factory.yaml`, `requirements.txt`, `*.py`, and `*.md`.
+- Update `package.json` scripts to build Wasm bundles before deploy (`bash scripts/build_wasm.sh && wrangler deploy`).
+
+### 2.2 Backend Authentication & CORS Hardening (`../zero_network`)
+- In `src/auth.rs` and `src/handlers.rs`:
+  - Extend secret validation to parse `?secret=<hex>` from query strings when `X-Host-Secret` and `Authorization` headers are absent.
+  - Apply standard permissive CORS headers (`Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: GET, POST, OPTIONS`, `Access-Control-Allow-Headers: *`) across all handlers.
+  - Return `204 No Content` for all `OPTIONS` preflight requests.
+
+### 2.3 Verification & Automated Regression Suites
+- Add `test_no_bare_json_imports_in_browser_src` to `test/test_zero_mesh_integration.py` in `virtual_dog_walker`.
+- Add unit/integration tests in `zero_network` verifying query parameter secret auth on `/host/:do_id` and CORS headers across `/match/:do_id` and `/stage/:do_id`.
+- Ensure all tests pass across all repositories (`python3 test/run_tests.py` and `cargo test`).
+
+---
+
+## 3. Acceptance Criteria
+
+- **AC-006.1 (Zero Bare JSON Imports in Browser Modules)**: No `.js` files in `virtual_dog_walker/src/` contain bare `import ... from '*.json'` statements; browser module evaluation completes cleanly without MIME/syntax errors.
+- **AC-006.2 (Clean Asset Packaging & Obstacle Wiring)**: `.assetsignore` exists in `virtual_dog_walker`, excluding non-production assets; `src/main.js` registers static obstacles with `dog_walker_core`.
+- **AC-006.3 (WebSocket Query Auth & CORS in zero_network)**: `zero_network` accepts `?secret=<hex>` on `GET /host/:do_id` and serves standard CORS headers on all HTTP routes and `OPTIONS` preflights.
+- **AC-006.4 (100% Test Pass Rate)**: `python3 test/run_tests.py` passes in `virtual_dog_walker` and `cargo test` passes across `zero_protocol`, `zero_network`, `zero_chat`, and `virtual_dog_walker`.
+
+
+```
+
+## FILE: openspec/changes/archive/unification-007/spec.md
+```markdown
+# Change Proposal: unification-007
+
+```yaml
+---
+ticket_id: "unification-007"
+title: "Fix ZeroMesh Seed Host Local NPC Population, Add Nighttime NPC Lighting Cutouts, and Finalize Pages Deployment Config"
+state: "COMPLETED"
+created_at: "2026-11-02T21:33:00Z"
+target_repos:
+  - "../virtual_dog_walker"
+max_review_cycles: 3
+current_review_cycle: 0
+---
+```
+
+## 1. Problem Statement & Motivation
+Inspecting `play.zero-network.workers.dev` in a live browser shows that ambient park NPCs are completely missing. A deep dive into `src/net/zero_mesh_network.js`, `src/main.js`, and `src/world/environment.js` reveals two concrete defects:
+
+1. **Seed Host `initNpcSpawner()` Populates `this.activeNpcs` Without Local Callback Dispatch**:
+   - In `ZeroMeshNetworkManager._connectLiveMesh()`, when the client becomes the seed host (`this.isHost = true`), it invokes `this.initNpcSpawner()`.
+   - `initNpcSpawner()` generates pre-warmed NPCs into `this.activeNpcs` (an internal Map) and returns without ever invoking `this.onNpcSnapshot(...)` or `this.onNpcSpawn(...)`.
+   - In `despawnNpc()`, replacements are broadcasted over WebRTC via `this.broadcast(spawnPacket)`, but `this.onNpcSpawn` and `this.onNpcDespawn` are never invoked locally.
+   - In `src/main.js` (`CliftonDownGame`), `this.isNetworkAuthoritative()` returns `true` for the host, causing `updateLocalSpawner()` to return early and disable solo NPC generation. Because `ZeroMeshNetworkManager` fails to invoke `onNpcSnapshot` / `onNpcSpawn` locally, `game.npcs` remains permanently empty.
+
+2. **Night/Dusk Darkness Mask Obscures Ambient NPCs**:
+   - During `TimeOfDay.NIGHT` (and `DUSK`), `src/world/environment.js` draws an 82% darkness mask (`rgba(10, 16, 32, 0.82)`) over the canvas.
+   - `src/main.js` only passes `[this.owner, this.dog, ...remotePlayers]` into `this.environment.render(...)` for radial visibility cutouts (`destination-out`).
+   - Ambient NPCs in `this.npcs` are excluded from the cutout list, burying walkers and joggers under dark blue-black opacity unless standing directly beneath a streetlamp.
+
+---
+
+## 2. Architecture & Scope of Changes
+
+### 2.1 Local Callback Invocations in `ZeroMeshNetworkManager` (`src/net/zero_mesh_network.js`)
+- At the end of `initNpcSpawner()`, immediately invoke `this.onNpcSnapshot(snapshot, Date.now())` if defined, using `Array.from(this.activeNpcs.values())`.
+- In `despawnNpc(id)`:
+  - Dispatch local `this.onNpcDespawn(npc.id)` alongside `this.broadcast(despawnPacket)`.
+  - In the replacement timer callback, dispatch local `this.onNpcSpawn(spawnPacket.npc || spawnPacket)` alongside `this.broadcast(spawnPacket)`.
+- In `src/main.js` (`CliftonDownGame.initNetworking()`):
+  - Add fallback snapshot consumption: if `this.net.activeNpcs && this.net.activeNpcs.size > 0 && this.npcs.size === 0` after callback registration, immediately trigger `this.handleNpcSnapshot(Array.from(this.net.activeNpcs.values()), Date.now())` to prevent any registration race condition.
+
+### 2.2 Nighttime & Dusk Visibility Cutouts for NPCs (`src/main.js` & `src/world/environment.js`)
+- In `src/main.js` `render()`:
+  - Include all active NPCs from `this.npcs.values()` into the `players` (or visibility entities) array passed to `this.environment.render(...)`.
+  - Alternatively/additionally, configure `environment.js` with radial illumination cutouts (`pRadius = 55..60`) for active NPCs so pedestrians are visually identifiable and illuminated during nighttime hours in Bristol.
+
+### 2.3 Automated Regression Tests & Verification (`test/test_zero_mesh_integration.py`)
+- Add `test_seed_host_populates_local_game_npcs_via_on_npc_snapshot` asserting that a host client immediately populates `game.npcs` via `onNpcSnapshot` and updates via `onNpcSpawn`/`onNpcDespawn`.
+- Run full test suite in `virtual_dog_walker` (`python3 test/run_tests.py`) and across all workspace crates (`cargo test`).
+
+---
+
+## 3. Acceptance Criteria
+
+- **AC-007.1 (Seed Host Local NPCs Visible Immediately)**: `ZeroMeshNetworkManager.initNpcSpawner()` invokes `this.onNpcSnapshot` locally, and `despawnNpc()` invokes `this.onNpcDespawn` and `this.onNpcSpawn` locally so the host sees active NPCs immediately without remote peers.
+- **AC-007.2 (Nighttime NPC Visibility)**: Ambient NPCs receive radial illumination cutouts during `DUSK` and `NIGHT` in `src/main.js` and `src/world/environment.js`.
+- **AC-007.3 (All Test Suites Green)**: `python3 test/run_tests.py` and `cargo test` pass 100% across all 4 repositories.
+
+
+```
+
+## FILE: openspec/changes/archive/unification-008/spec.md
+```markdown
+# Change Proposal: unification-008
+
+```yaml
+---
+ticket_id: "unification-008"
+title: "Wire Live WebRTC Offer/Answer for Proximity Chat Mesh and Complete WasmWorldSim Entity Delegation"
+state: "COMPLETED"
+created_at: "2026-11-02T21:47:00Z"
+target_repos:
+  - "../virtual_dog_walker"
+max_review_cycles: 3
+current_review_cycle: 0
+---
+```
+
+## 1. Problem Statement & Motivation
+Inspecting the runtime code in `virtual_dog_walker` following `unification-007` reveals two remaining gaps in live WebRTC communication and physics engine integration:
+
+1. **Incomplete Proximity Mesh WebRTC Handshake & Message Wiring (`src/net/zero_mesh_network.js`)**:
+   - `syncProximityCluster()` notifies remote peers when within 160px using a placeholder `{ initiator: this.peerId, timestamp: Date.now() }` rather than creating a real `WasmWebRtcEngine` SDP offer.
+   - `_handleProximityDrop()` is a stub comment (`// Proximity channel confirmed`), so the WebRTC answer is never applied to the pending engine and peers are never registered in `this.proximityMesh`.
+   - `this.proximityMesh.set_on_message(...)` is never wired in `_connectLiveMesh()`, meaning messages received over proximity data channels are dropped instead of being routed to `this.onProximityChat`.
+   - There is no fallback delivery over `this.gameMesh` while proximity WebRTC channels are still in ICE gathering/negotiation, risking dropped messages when players first meet.
+
+2. **Uncalibrated WasmWorldSim Dimensions & Missing Entity Delegation (`src/engine/wasm_sim_bridge.js`, `src/entities/companion_dog.js`, `src/ui/social_hud.js`)**:
+   - `src/engine/wasm_sim_bridge.js` hardcodes `WasmWorldSim(2000.0, 2000.0)` instead of the actual Clifton Downs map dimensions (3200 x 2400).
+   - `CompanionDog.update()` has access to `stepLeashConstraint` from `wasm_sim_bridge.js`, but still relies entirely on JS math instead of delegating spring-damper leash physics to the Rust/Wasm engine.
+   - `SocialHUD` checks `isCommons` against `!this.net.roomId || this.net.roomId === 'the-commons' || this.net.roomId === 'clifton-field'`, excluding `clifton-commons` and showing `🔒 Meadow (clifton-commons)` instead of `Online`.
+
+---
+
+## 2. Architecture & Scope of Changes
+
+### 2.1 Live Dual-Mesh Proximity WebRTC Handshake (`src/net/zero_mesh_network.js`)
+- Wire `this.proximityMesh.set_on_message(...)` in `_connectLiveMesh()`:
+  - Normalizes sender ID (strips `prox-` prefix).
+  - Retrieves peer name from `this.remotePeers`.
+  - Dispatches to `this.onProximityChat({ senderId, name, text })`.
+- Real In-Band Offer/Answer Exchange over `gameMesh.send_direct_state`:
+  - `pendingProximityEngines`: Map tracking `remotePeerId -> WasmWebRtcEngine`.
+  - `syncProximityCluster()`: When `remoteId` is within 160px and `this.peerId < remoteId`, create `engine = new WasmWebRtcEngine()`, generate `sdpOffer`, and send `proximity_invite` via `this.gameMesh.send_direct_state`.
+  - `_handleProximityInvite()`: Creates `engine`, generates answer via `engine.accept_offer_and_create_answer(offer)`, registers peer in `proximityMesh`, and returns `proximity_drop` with `sdpAnswer`.
+  - `_handleProximityDrop()`: Calls `engine.apply_answer(sdpAnswer)`, registers peer in `proximityMesh`, and removes engine from pending map.
+  - In `sendProximityChat()`: If `proximityMesh.peer_count() === 0` while peers are nearby, provide fallback delivery over `gameMesh.send_direct_state` with `PacketType.PROXIMITY_CHAT`.
+
+### 2.2 WasmWorldSim Calibration & Entity Delegation (`src/engine/wasm_sim_bridge.js`, `src/entities/companion_dog.js`, `src/ui/social_hud.js`)
+- In `src/engine/wasm_sim_bridge.js`:
+  - Calibrate default world dimensions to `worldWidth = 3200.0, worldHeight = 2400.0`.
+  - Add `stepEarSprings(leftEar, rightEar, dogVx, dogVy, dogAngle, dt)` calling `wasmSimInstance.step_ears(...)`.
+- In `src/entities/companion_dog.js`:
+  - In `CompanionDog.update()`, invoke `stepLeashConstraint(this, this.owner, 65, 4.0, 5.0, dt)` when leashed and not fetching, smoothly cushioning leash tension prior to the 105px hard boundary clamp.
+- In `src/ui/social_hud.js`:
+  - Add `|| this.net.roomId === 'clifton-commons'` to `isCommons` so the HUD badge displays green `Online` for public sessions.
+
+### 2.3 Automated Regression Tests & Verification (`test/`)
+- In `test/test_zero_mesh_integration.py`:
+  - Add `test_live_proximity_mesh_sdp_handshake_and_chat_routing`.
+  - Add `test_social_hud_recognizes_clifton_commons_as_public_online_badge`.
+- In `test/test_wasm_core_sim.py`:
+  - Verify `initWasmSim` initializes with `3200.0, 2400.0`.
+  - Verify `stepLeashConstraint` integration in `CompanionDog`.
+- Ensure 100% test pass rate across all 4 repositories.
+
+---
+
+## 3. Acceptance Criteria
+
+- **AC-008.1 (Live Dual-Mesh Proximity WebRTC Handshake)**: `ZeroMeshNetworkManager` performs SDP offer/answer exchange over `gameMesh.send_direct_state`, registers peers in `proximityMesh`, wires `proximityMesh.set_on_message` to `onProximityChat`, and includes fallback delivery over `gameMesh` while negotiating.
+- **AC-008.2 (WasmWorldSim 3200x2400 & Entity Wiring)**: `initWasmSim` initializes with 3200x2400 world dimensions and `CompanionDog.update()` invokes `stepLeashConstraint`.
+- **AC-008.3 (SocialHUD Public Commons Badge)**: `src/ui/social_hud.js` recognizes `clifton-commons` as the public commons and displays `Online`.
+- **AC-008.4 (100% Test Suite Green)**: `python3 test/run_tests.py` and `cargo test` pass across all 4 repositories.
+
+
+```
+
+## FILE: openspec/changes/archive/unification-009/spec.md
+```markdown
+# Change Proposal: unification-009
+
+```yaml
+---
+ticket_id: "unification-009"
+title: "Extract Reusable ZeroChatWidget from zero_chat and Mount Inside virtual_dog_walker Proximity Chat"
+state: "COMPLETED"
+created_at: "2026-11-03T20:15:00Z"
+target_repos:
+  - "../zero_chat"
+  - "../virtual_dog_walker"
+max_review_cycles: 3
+current_review_cycle: 0
+---
+```
+
+## 1. Problem Statement & Motivation
+Currently, chat UI and message presentation logic are duplicated with disjoint lifecycles across the workspace:
+1. In `zero_chat`, the glassmorphic chat interface, 70s/90s ephemeral aging/dissolve lifecycle, per-message flame burn button (`BurnMessage` signal), peer-color dots (`PEER_COLOR_PALETTE`), padlock/peer-count header pill, and WebRTC/WasmCryptoSession message handling live inside an inline `<script type="module">` in `zero_client/index.html` and global rules in `zero_client/style.css`.
+2. In `virtual_dog_walker`, `src/ui/proximity_chat.js` combines two distinct concerns:
+   - Spatial proximity sensing & hysteresis (160px enter, 200px exit, 5-minute retention).
+   - A bespoke, duplicate chat DOM (`#proximity-chat-panel`, `#proximity-chat-messages`, `#proximity-chat-input`) that lacks `zero_chat`'s glassmorphic styling, per-message flame burn animation, ephemeral aging, and distributed burn mechanics.
+3. Note: `zero_client/tests/browser/run_test.py` regex-extracts the inline `<script>` from `zero_client/index.html` to run 24 headless browser tests. Any modularization must preserve `index.html`'s inline script structure so zero test regressions occur in `zero_chat`.
+
+---
+
+## 2. Architecture & Scope of Changes
+
+### 2.1 Reusable `ZeroChatWidget` in `zero_chat` (`zero_client/widget/`)
+- Create `zero_client/widget/zero_chat_widget.js`:
+  - Export `ZeroChatWidget` supporting `mode: 'standalone'` and `mode: 'embedded'`.
+  - Supports `{ container, mode, onSendMessage, onBurnMessage, onBurnSession, agingMs = 70000, dissolveMs = 90000 }`.
+  - Renders glassmorphic DOM with both `zero_chat` class names (`.message-bubble`, `.message-outgoing`, `.message-incoming`, `.peer-dot`, `.btn-message-burn`, `.peer-pill`, `.peer-lock-icon`, `.btn-send-emerald`) and backward-compatible IDs (`#proximity-chat-status`, `#proximity-chat-messages`, `#proximity-chat-form`, `#proximity-chat-input`, `#proximity-chat-send`).
+  - Implements:
+    - `appendMessage({ senderId, name, text, isSelf, messageUuid, timestamp })` with 70s/90s aging and dissolve timers.
+    - `dissolveMessageById(messageUuid)`: triggers `.message-dissolve` and removes from DOM/state.
+    - `burnPeerMessages(peerId)`: selectively purges messages by peer.
+    - `burnAllMessages()`: clears all messages.
+    - `setPeers(peerIds, peerCount)`: updates padlock pill and peer badge.
+- Create `zero_client/widget/zero_chat_widget.css`:
+  - Scoped glassmorphic styles under `.zero-chat-embed` ported from `zero_client/style.css`.
+- Update `scripts/deploy_dry_run.sh` to package `zero_client/widget/` into `dist/widget/`.
+
+### 2.2 Build Pipeline Sync & ProximityChat Mounting (`virtual_dog_walker`)
+- In `scripts/build_wasm.sh` and `scripts/build_pages.sh`:
+  - Automatically copy `../zero_chat/zero_client/widget/zero_chat_widget.js` to `src/ui/zero_chat_widget.js` and `zero_chat_widget.css` to `src/ui/zero_chat_widget.css`.
+- In `index.html`:
+  - Link `src/ui/zero_chat_widget.css`.
+- In `src/ui/proximity_chat.js`:
+  - Separate spatial proximity tracking from presentation: ProximityChat remains the spatial controller, mounting `ZeroChatWidget` inside `#proximity-chat-panel`.
+  - Preserve all existing public methods and properties (`radius`, `joinRadius`, `activeCluster`, `messages`, `update()`, `sendMessage()`, `receiveMessage()`, `getMessages()`, `getActivePeers()`, `clearMessages()`, `destroy()`).
+  - Wire distributed burns:
+    - Per-message flame click -> `onBurnMessage(messageUuid)` -> `net.burnProximityMessage(messageUuid)`.
+    - Header session burn -> `onBurnSession()` -> `net.burnProximitySession()`.
+
+### 2.3 Distributed Proximity Message Burn (`src/net/zero_mesh_network.js`)
+- Implement `burnProximityMessage(messageUuid, peers)`:
+  - Broadcasts `{ type: 'PROXIMITY_BURN_MSG', messageUuid, senderId: this.peerId }` over `proximityMesh` / `gameMesh.send_direct_state`.
+- Implement `burnProximitySession(peers)`:
+  - Broadcasts `{ type: 'PROXIMITY_BURN_ALL', senderId: this.peerId }`.
+- In `handlePacket` / `_onGameMeshState`:
+  - Handle `PROXIMITY_BURN_MSG` and `PROXIMITY_BURN_ALL`, delegating to `CliftonDownGame` -> `proximityChat.burnMessage(messageUuid)` and `proximityChat.clearMessages()`.
+
+### 2.4 Verification Suites
+- Add `test_unified_zero_chat_widget_mounted_in_proximity_chat` in `virtual_dog_walker/test/test_zero_mesh_integration.py`.
+- Run `bash zero_client/tests/browser/run_test.sh` in `zero_chat` (all 24 tests).
+- Run `cargo test` across all 4 repositories.
+- Run `python3 test/run_tests.py` in `virtual_dog_walker` (all 22 suites).
+
+---
+
+## 3. Acceptance Criteria
+
+- **AC-009.1 (Single Source of Truth in zero_chat)**: `zero_chat/zero_client/widget/zero_chat_widget.js` and `zero_chat_widget.css` encapsulate `zero_chat` glassmorphic UI, .message-bubble rendering, .peer-dot colors, .btn-message-burn per-message flame burn, and 70s/90s aging/dissolve lifecycle, synced into `virtual_dog_walker` via build scripts.
+- **AC-009.2 (Unified In-Game Chat Experience)**: Proximity chat in `virtual_dog_walker` mounts `ZeroChatWidget` inside `#proximity-chat-panel`, providing matching visual styling, padlock badge, per-message flame burn button, and session burn.
+- **AC-009.3 (Zero Test Regressions)**: All 24 browser scenarios in `zero_chat` pass, all Rust workspace tests pass, and all Python test suites in `virtual_dog_walker` pass 100%.
+
+
+```
+
+## FILE: openspec/changes/archive/unification-010/spec.md
+```markdown
+---
+ticket_id: "unification-010"
+title: "Remove Legacy PartyServer/Python Relays, Prune Redundant Chat/Network Code, and Rewrite Sanitized README.md"
+state: "COMPLETED"
+created_at: "2026-11-03T21:05:00Z"
+target_repos:
+  - "../virtual_dog_walker"
+max_review_cycles: 3
+---
+
+# Change Proposal: unification-010 — Legacy Server/Chat Cleanup & Sanitized Architecture Documentation
+
+## 1. Problem Statement & Audit Findings
+With the four-repository zero-network architecture (`zero_protocol`, `zero_network`, `zero_chat`, and `virtual_dog_walker`) 100% unified, running over blind dead-drop WebRTC matchmaking, and fully integrated with the embedded `ZeroChatWidget`, `virtual_dog_walker` still contains residual legacy server artifacts, superseded chat/network modules, obsolete test files, and an outdated README.md that exposes local machine absolute paths:
+1. **Obsolete Server Implementations**:
+   - `party/server.js` (and the `party/` directory) was superseded by the standalone `zero_network` Cloudflare Worker (`DeadDropRoom`) and client-side `ZeroMeshNetworkManager`.
+   - `server/host.py` and `server/ws_relay.py` (and the `server/` directory) were superseded by the P2P WebRTC architecture.
+   - `requirements.txt` is no longer required because the Python test suite in `test/` exclusively utilizes standard library modules.
+   - `package.json` retains an obsolete dependency on `partyserver`, and `wrangler.jsonc` contains obsolete bindings for `ParkServer` Durable Objects and migrations.
+2. **Redundant Network & Chat Code**:
+   - `src/net/ws_network.js` (`WebSocketNetworkManager`) is unused dead code from the old PartyServer/Python relay stack.
+   - `src/ui/social_hud.js` and `src/systems/social.js` retain references to old modal room connection text and superseded chat elements.
+3. **Outdated & Non-Sanitized Documentation**:
+   - `virtual_dog_walker/README.md` exposes personal macOS Google Drive file paths and documents superseded PartyServer/Python architectures.
+   - `virtual_dog_walker/factory.yaml` references superseded project metadata.
+4. **Superseded Test Files**:
+   - `test/test_partyserver.py` and `test/test_ws_microserver.py` test deleted files and should be pruned from `test/run_tests.py`. Any remaining tests referencing `party/server.js` or `ws_network.js` must be updated to inspect the canonical zero-network P2P stack.
+
+---
+
+## 2. Target Scope & Architecture
+
+### 2.1 File Deletions & Configuration Updates
+- **Delete Directories & Files**:
+  - `party/server.js` and `party/` directory.
+  - `server/host.py`, `server/ws_relay.py`, and `server/` directory.
+  - `requirements.txt`.
+  - `src/net/ws_network.js`.
+  - `test/test_partyserver.py` and `test/test_ws_microserver.py`.
+- **Update `wrangler.jsonc`**:
+  - Remove `"main": "party/server.js"`, `"durable_objects"`, and `"migrations"`.
+  - Configure as pure static assets: keep `"name"`, `"compatibility_date"`, and `"assets": { "directory": "./" }`.
+- **Update `package.json`**:
+  - Set `"name": "virtual_dog_walker"`.
+  - Remove `"partyserver"` from `"dependencies"`.
+
+### 2.2 Pruning Network & Chat Modules
+- **`src/net/network.js`**: Establish `ZeroMeshNetworkManager` as the primary network export. Maintain alias/fallback only if required by existing test suites.
+- **`src/ui/social_hud.js` & `src/systems/social.js`**: Prune legacy room modal/party text and dead chat inputs while keeping Online (`clifton-commons`) status badge, walker count, dog customization, emotes, barks, whistles, and overhead speech bubbles intact.
+
+### 2.3 Test Suite Modernization (`test/`)
+- Remove `test_partyserver.py` and `test_ws_microserver.py` from `test/run_tests.py`.
+- Audit remaining test files (`test_leash_sync.py`, `test_npc_authority.py`, `test_social_emotes.py`, `test_chat_reliability.py`, `test_zero_mesh_integration.py`) to ensure zero assertions read deleted files or paths.
+
+### 2.4 Documentation & Metadata Sanitization
+- **`factory.yaml`**: Update `project_name` to `"virtual_dog_walker"` and `tech_stack` to modern stack ("HTML5 Canvas / Vanilla ES6 JavaScript / Rust & WebAssembly (dog_walker_core + zero_mesh) / Web Audio API / Zero-Network WebRTC P2P").
+- **`README.md`**: Complete rewrite with sanitized documentation, covering polyrepo architecture (`zero_protocol`, `zero_network`, `zero_chat`, `virtual_dog_walker`), Wasm compilation, static Pages serving, local development commands, and test suites. Zero absolute user paths or personal credentials.
+
+---
+
+## 3. Acceptance Criteria
+
+- **AC-010.1 (Zero Legacy Server Files)**: `party/`, `server/`, `requirements.txt`, `src/net/ws_network.js`, `test/test_partyserver.py`, and `test/test_ws_microserver.py` are completely removed.
+- **AC-010.2 (Sanitized Documentation & Metadata)**: `grep -rn "mattcourtney\|mattadam" README.md factory.yaml src/ test/` returns 0 matches.
+- **AC-010.3 (Configuration Integrity)**: `wrangler.jsonc` has no Durable Object bindings or migrations; `package.json` has no `partyserver` dependency.
+- **AC-010.4 (Clean Build & 100% Test Pass Rate)**: `bash scripts/build_wasm.sh`, `cargo test`, and `python3 test/run_tests.py` pass 100% with zero errors or references to deleted files.
+
+
+```
+
+## FILE: openspec/changes/archive/unification-011/spec.md
+```markdown
+---
+ticket_id: "unification-011"
+title: "Repair virtual_dog_walker CI and migrate game client to Cloudflare Pages (virtual-dog-walker.pages.dev)"
+state: "COMPLETED"
+created_at: "2026-11-03T21:20:00Z"
+target_repos:
+  - "../virtual_dog_walker"
+max_review_cycles: 3
+---
+
+# Change Proposal: unification-011 — CI Repair & Cloudflare Pages Migration
+
+## 1. Problem Statement
+1. **CI regression from unification-010**: `.github/workflows/ci.yml` still runs `pip install -r requirements.txt` (file deleted). The `test` job fails, and the `deploy` job (`needs: test`) never runs. Runs `41719649773` and `41719677561` failed on `main`.
+2. **Deploy target is a legacy Worker**: the game is served at `play.zero-network.workers.dev` via `wrangler deploy`. unification-010 also changed `wrangler.jsonc` `name` from `play` to `virtual-dog-walker` and dropped `compatibility_flags`/`ASSETS` binding, so a Wrangler deploy would now create a *different* Worker.
+3. **Intended target**: Cloudflare Pages project `virtual-dog-walker` at `https://virtual-dog-walker.pages.dev`, matching the `zero-chat` Pages pattern in `zero_chat/.github/workflows/deploy.yml`.
+4. **Decision (user)**: retire `play.zero-network.workers.dev` after the Pages deployment is verified.
+
+## 2. Scope
+
+### 2.1 CI workflow (`virtual_dog_walker/.github/workflows/ci.yml`)
+- `test` job: remove `pip install` and pip cache; add Rust toolchain (`wasm32-unknown-unknown`), `wasm-bindgen-cli 0.2.129`; checkout sibling repos `zero_protocol` and `zero_chat` (`${{ github.repository_owner }}/zero-protocol`, `/zero-chat`) beside the workspace so `scripts/build_wasm.sh` resolves `../zero_protocol` and `../zero_chat`; run `cargo test` and `python3 test/run_tests.py`.
+- `deploy` job (`needs: test`, push/dispatch on `main`): `npm run build` (→ `dist/`), ensure Pages project exists (`wrangler pages project create virtual-dog-walker --production-branch=main || true`), then `wrangler pages deploy dist --project-name=virtual-dog-walker --branch=main`. Keep the existing skip-with-warning when `CLOUDFLARE_API_TOKEN` is absent.
+
+### 2.2 Build & config
+- `scripts/build_pages.sh`: dist must contain only runtime assets (`index.html`, `src/`), exclude `*.py`/`*.md`/tests, and not rely on `.assetsignore`; no `wrangler.jsonc`/`package.json` required in `dist/`.
+- `wrangler.jsonc`: convert to Pages config (`name: "virtual-dog-walker"`, `pages_build_output_dir: "./dist"`); remove Workers-assets `assets` block. `package.json` scripts: `deploy` → `npm run build && wrangler pages deploy dist --project-name=virtual-dog-walker`; `dev` → `wrangler pages dev dist` after build.
+- `src/net/network.js`: verify `*.pages.dev` hosts select `ZeroMeshNetworkManager` with `clifton-commons` (already true via `pages.dev` check); drop remaining dead PartyKit/dedicated-server branches only if no test depends on them.
+- `README.md`: document the Pages URL and CI/deploy flow.
+
+### 2.3 Retirement of `play.zero-network.workers.dev` (post-verification, manual/operator step)
+- After `https://virtual-dog-walker.pages.dev` serves the game and two clients connect via `network.zero-network.workers.dev`, delete the `play` Worker (`wrangler delete play` or dashboard). This step requires the user's Cloudflare credentials and is **not** automated by workers; the spec records it as an operator checklist item.
+- Update any references to `play.zero-network.workers.dev` in docs/CORS allow-lists (grep `zero_network` and `zero_chat` for the hostname) to the new Pages origin.
+
+## 3. Acceptance Criteria
+- **AC-011.1**: CI `test` job passes on GitHub for `virtual_dog_walker` `main` (no `requirements.txt` dependency).
+- **AC-011.2**: `npm run build` produces `dist/` containing `index.html`, `src/` (incl. both Wasm bundles and `zero_chat_widget.*`) and no `*.py`, `*.md`, `test/`, `openspec/`, `.factory/`.
+- **AC-011.3**: CI `deploy` job publishes to Pages project `virtual-dog-walker` (`https://virtual-dog-walker.pages.dev` returns 200 and loads the game).
+- **AC-011.4**: Two browser clients on the Pages URL see each other and NPCs (seed-host + peer path) via `network.zero-network.workers.dev`.
+- **AC-011.5**: `grep -rn "play.zero-network.workers.dev"` across the four repos returns no live references (historical archives excluded).
+- **AC-011.6**: `play` Worker deleted by operator after AC-011.3/4 are confirmed.
+- **AC-011.7**: `cargo test` and `python3 test/run_tests.py` remain 100% green locally and in CI.
+
+## 4. Risks
+- `zero-protocol`/`zero-chat` repos must be readable by the default `GITHUB_TOKEN` (same-owner private repos may need a PAT secret; `zero_chat`'s workflow already relies on this for `zero-protocol`).
+- Pages project creation and deployment need `CLOUDFLARE_API_TOKEN` with Pages:Edit and `CLOUDFLARE_ACCOUNT_ID` set in the `virtual-dog-walker` GitHub repo.
+- `zero_network` CORS/origin checks may need the new `pages.dev` origin (verify; universal CORS is currently enabled).
+
+## 5. Proposed Brief Decomposition (for implement-task)
+1. `brief-ci-workflow` [M]: `ci.yml` (test + Pages deploy).
+2. `brief-pages-build-config` [M]: `build_pages.sh`, `wrangler.jsonc`, `package.json`, README.
+3. `brief-origin-references` [L]: grep/replace `play.zero-network.workers.dev` across repos; verify `network.js` host detection.
+4. Validation + review; operator checklist for Worker retirement.
+
+
+```
+
+## FILE: openspec/changes/archive/unification-012/spec.md
+```markdown
+---
+ticket_id: "unification-012"
+title: "Align wasm-bindgen-cli Version to 0.2.130 in CI Workflow"
+state: "COMPLETED"
+created_at: "2026-11-03T21:46:00Z"
+target_repos:
+  - "../virtual_dog_walker"
+max_review_cycles: 3
+---
+
+# Change Proposal: unification-012 — Align wasm-bindgen-cli in CI Workflow
+
+## 1. Problem Statement & Root Cause
+In GitHub Actions run `41723946290` (and `41723871426`), the `test` job passed cleanly, but the `deploy` job failed during `npm run build`:
+```text
+=== Building zero_mesh WebAssembly Package ===
+Building crate from .../zero_protocol/crates/zero_mesh...
+Running wasm-bindgen for zero_mesh...
+error: failed to read wasm-bindgen data from '.../zero_mesh.wasm'
+Caused by:
+    it looks like the Rust project used to create this Wasm file was linked against
+    version of wasm-bindgen that uses a different bindgen format than this binary:
+      rust Wasm file schema version: 0.2.130
+         this binary schema version: 0.2.129
+                   this binary path: /home/runner/.cargo/bin/wasm-bindgen
+```
+
+`zero_protocol/Cargo.lock` has resolved `wasm-bindgen` to `0.2.130`. However, `.github/workflows/ci.yml` in both the `test` and `deploy` jobs pins:
+`cargo install -q wasm-bindgen-cli --version 0.2.129`.
+Because `wasm-bindgen` schema versions between the compiled Wasm library (`0.2.130`) and the CLI binary (`0.2.129`) must match exactly, `wasm-bindgen` fails.
+
+## 2. Proposed Changes
+Update `.github/workflows/ci.yml` in `virtual_dog_walker`:
+- In the `test` job, update `wasm-bindgen-cli` version from `0.2.129` to `0.2.130`.
+- In the `deploy` job, update `wasm-bindgen-cli` version from `0.2.129` to `0.2.130`.
+
+## 3. Acceptance Criteria
+- **AC-012.1**: Both `wasm-bindgen-cli` install steps in `.github/workflows/ci.yml` specify `--version 0.2.130`.
+- **AC-012.2**: Local test suites (`cargo test`, `python3 test/run_tests.py`, `bash scripts/build_pages.sh`) pass 100%.
+- **AC-012.3**: Pushing to `origin/main` triggers the GitHub Actions CI pipeline and both `test` and `deploy` jobs complete successfully.
+
+
+```
+
+## FILE: openspec/changes/archive/unification-013/spec.md
+```markdown
+---
+ticket_id: "unification-013"
+title: "Phase 1: Complete dog_walker_core Wasm sim wiring and polish embedded ZeroChatWidget"
+state: "COMPLETED"
+created_at: "2026-11-06T21:52:00Z"
+target_repos:
+  - "../virtual_dog_walker"
+  - "../zero_chat"
+max_review_cycles: 3
+---
+
+# Change Proposal: unification-013 — Phase 1: Wasm Simulation Wiring & ZeroChatWidget Polish
+
+## 1. Audit Findings (verified against current `main`)
+
+### 1.1 Wasm simulation is only partially authoritative
+`src/engine/wasm_sim_bridge.js` already exports `stepEarSprings`, `stepLeashConstraint`, `resolveWorldCollision`, `sampleNpcState` (all with JS fallback) and `getWasmSim()`. Call-site audit:
+
+| Wasm function | Bridge helper | Current gameplay call site | Status |
+| :--- | :--- | :--- | :--- |
+| `step_leash` | `stepLeashConstraint` | `companion_dog.js:471` | WIRED |
+| `resolve_collision` | `resolveWorldCollision` | `owner.js:88`, `companion_dog.js:516` still call `field.resolveCircleCollision(...)` (JS) | NOT WIRED |
+| `step_ears` | `stepEarSprings` | `companion_dog.js` ~L525-540 inline JS spring (`springK`, `springDamp`) | NOT WIRED |
+| `step_ball` | (none; `toy.js` imports `getWasmSim` but `update()` runs inline gravity/bounce) | `toy.js:75-120` | NOT WIRED |
+| `sample_npc` | `sampleNpcState` | `npc.js` imports it but `ParkNPC.setClock()` (L150+) runs inline polyline math | NOT WIRED |
+
+### 1.2 Design risks that must be resolved in the implementation
+1. **`step_ball` is stateful and single-ball**: `WasmWorldSim` holds one `self.ball` and `throw_ball(start, target, power)` uses a *target/power* API while JS `TennisBall.throw(from, dir, speed, launchZ)` uses direction/speed/launchZ and the game has per-player balls (remote players' balls are also simulated). Delegating naively would make all balls share one state. Required: add a **stateless** Rust entry point (e.g. `step_ball_state(x,y,z,vx,vy,vz,dt) -> [..]`, parameterised with gravity 720 / restitution 0.62 / friction 0.94 matching `toy.js`) or per-ball handles, plus native Rust tests. Gameplay behaviour must be unchanged (fetch mechanics tests must still pass).
+2. **Parity**: JS fallback must remain bit-for-bit identical in behaviour when Wasm is unavailable (headless tests, load failure).
+3. **Collision data**: `resolve_collision` relies on `set_colliders` having been called (`main.js:205/241`). Entities must fall back to `field.resolveCircleCollision` when Wasm colliders are not yet loaded.
+4. **NPC determinism**: P2P NPC coordination relies on all peers computing the same position from `spawnTime`/`now`. `sample_npc` (f64) must produce results equal to the JS path within 1e-6 px, and `opacity`/`finished` semantics (0.5 s fade after finish, `done` flag) must be preserved.
+
+### 1.3 ZeroChatWidget polish gaps
+- `src/style.css` (1131 lines) still holds legacy chat rules superseded by `zero_chat_widget.css`: `.proximity-message*` (L701–~800), `#proximity-chat-input-container`, `.proximity-emoji-bar`, `.proximity-emoji-btn*` (L805–~845) and related. Existing tests couple to part of this (`test_proximity_chat.py:1008-1010` asserts `.proximity-message-sender`/`.proximity-message-text` in style.css; `test_ticket_023_refinements.py` asserts `#proximity-chat-input { width: 100% }` and absence of emoji bar in JS). These tests must be re-pointed to `zero_chat_widget.css` / widget classes, not weakened.
+- `ZeroChatWidget.setPeers()` (`zero_chat_widget.js:402`) only updates the text `"N nearby"`; no participant names/colored dots in the header.
+- `#chat-toggle-btn` (built in `proximity_chat.js:151`) has no unread indicator when the drawer is collapsed.
+
+## 2. Scope
+
+### 2.1 Track A — Wasm simulation wiring (`virtual_dog_walker`, `crates/dog_walker_core`)
+- A1 [HIGH] **Rust**: add stateless ball step API to `crates/dog_walker_core` (+ native `cargo test` cases for gravity, bounce restitution, rolling friction, obstacle deflection parity); rebuild bundle via `scripts/build_wasm.sh`. Files: `crates/dog_walker_core/src/lib.rs` (+ `ball_physics.rs`).
+- A2 [MEDIUM] **Bridge + entities**: add `stepBallState` helper (with exact JS fallback) to `wasm_sim_bridge.js`; switch `TennisBall.update` to it; switch `Owner.update` and `CompanionDog.update` obstacle resolution to `resolveWorldCollision` (fallback to `field.resolveCircleCollision` when colliders absent); switch ear springs to `stepEarSprings`. Files: `wasm_sim_bridge.js`, `toy.js`, `owner.js`, `companion_dog.js`.
+- A3 [MEDIUM] **NPC**: make `ParkNPC.setClock` delegate to `sampleNpcState` while preserving fade/done/walkPhase/angle semantics. Files: `npc.js`.
+- A4 [LOW] **Tests**: extend `test/test_wasm_core_sim.py` with source-contract assertions that each of the five entity call sites uses the bridge, and JS-vs-Wasm parity checks where runnable headless (JSC/node harness if available).
+
+### 2.2 Track B — ZeroChatWidget polish (`zero_chat` widget is canonical → synced to `virtual_dog_walker/src/ui/`)
+- B1 [MEDIUM] **Widget**: in `zero_chat/zero_client/widget/zero_chat_widget.{js,css}` extend `setPeers(peerIds, count, peerMeta?)` to render a participant strip in the header (colored `.peer-dot` + truncated name pills using `PEER_COLOR_PALETTE`, max 4 + "+N"), keep existing `#peer-count` text and IDs; add `setUnreadCount(n)`/`clearUnread()` hooks. Update `zero_client/tests/test_zero_chat_widget.js` (+ `.py` runner). Must not alter `zero_client/index.html` inline script contract (`run_test.py` regex) or the 24 browser tests.
+- B2 [MEDIUM] **Host**: in `virtual_dog_walker/src/ui/proximity_chat.js`, pass peer metadata (name/color from `remotePlayers`) into `setPeers`; add unread badge element to `#chat-toggle-btn` (increment on incoming remote message while drawer is collapsed, clear on open; not for own/system messages). Styles for the badge live in `zero_chat_widget.css` or `style.css` under a `.chat-toggle-badge` class.
+- B3 [LOW] **CSS cleanup**: delete the superseded `.proximity-message*`, `#proximity-chat-input-container`, `.proximity-emoji-*` rules from `src/style.css`; re-point the coupled tests to widget classes/CSS. Retain `#chat-toggle-btn`, `#proximity-chat-panel`, `#proximity-chat-messages`, `#proximity-chat-input` rules still in use.
+
+## 3. Acceptance Criteria
+- **AC-013.1**: `TennisBall.update`, `Owner.update`, `CompanionDog.update` (collision + ears) and `ParkNPC.setClock` each call a `wasm_sim_bridge.js` helper; no inline duplicate physics remains except inside the bridge's JS fallback.
+- **AC-013.2**: New stateless ball API exists in `dog_walker_core` with ≥4 new native tests; `cargo test` green; rebuilt `src/wasm_core/*` committed/served via `build_wasm.sh`.
+- **AC-013.3**: With Wasm unavailable (headless), all existing gameplay tests (`test_ball_physics`, `test_fetching_mechanics`, `test_npcs`, `test_npc_client`, `test_dog_behavior`, `test_leash_sync`) still pass unchanged in behaviour.
+- **AC-013.4**: NPC parity: for sampled `(t)` over several manifest paths, Wasm and JS positions differ < 1e-6 px; fade/finish semantics preserved.
+- **AC-013.5**: `src/style.css` no longer contains `.proximity-message`, `.proximity-emoji-*`, or `#proximity-chat-input-container`; coupled tests updated to the widget CSS and still assert the same behaviours (no test deleted without equivalent replacement).
+- **AC-013.6**: Header shows participant dots/name pills for 2+ walkers (max 4 + "+N"), consistent colors with message bubbles; `#peer-count` text retained.
+- **AC-013.7**: `#chat-toggle-btn` shows an unread badge (count, capped "9+") for remote messages while collapsed; cleared on open; never counts own/system messages; covered by widget/host tests.
+- **AC-013.8**: `zero_chat`: `cargo test`, `bash zero_client/tests/browser/run_test.sh` (24/24), `test_zero_chat_widget.py`, `deploy_dry_run.sh` green; `virtual_dog_walker`: `cargo test`, `bash scripts/build_pages.sh`, `python3 test/run_tests.py` green; GitHub Actions CI green on both repos after push.
+
+## 4. Proposed Brief Decomposition (parallel, disjoint file sets)
+| Brief | Size | Repo | Files |
+| :--- | :--- | :--- | :--- |
+| `brief-rust-ball-api` | HIGH | virtual_dog_walker | `crates/dog_walker_core/src/*` |
+| `brief-entity-wasm-wiring` (depends on rust-ball-api for ball only; collision/ears/NPC can start immediately → split ball into stage 2) | MEDIUM | virtual_dog_walker | `wasm_sim_bridge.js`, `owner.js`, `companion_dog.js`, `npc.js` (then `toy.js` in stage 2) |
+| `brief-widget-peers-unread` | MEDIUM | zero_chat | `widget/zero_chat_widget.{js,css}`, widget tests |
+| `brief-host-chat-integration` (after widget brief) | MEDIUM | virtual_dog_walker | `src/ui/proximity_chat.js`, synced widget copy |
+| `brief-css-cleanup` | LOW | virtual_dog_walker | `src/style.css`, `test/test_proximity_chat.py`, `test/test_ticket_023_refinements.py` |
+Stage 1 (parallel): rust-ball-api, entity-wasm-wiring (collision/ears/NPC), widget-peers-unread, css-cleanup. Stage 2: toy.js ball wiring, host-chat-integration. Then validation (all 4 repos) and review.
+
+## 5. Risks / Notes
+- Rebuilding Wasm needs `wasm-bindgen-cli 0.2.130` locally (the local CLI currently warns about a schema mismatch for `zero_chat`'s `deploy_dry_run.sh`; it falls back to copying raw wasm — unrelated to this ticket).
+- Multi-repo change: `zero_chat` push must precede `virtual_dog_walker` CI so the build script's widget sync picks up the new widget.
+- Gameplay feel must not change; if any parity test fails the Wasm path must be fixed, not the JS tolerance loosened.
+
+
+```
+
+## FILE: openspec/changes/unification-001/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "unification-001"
+title: "Bootstrap Sibling Repositories (zero_protocol & zero_network) and Re-Wire zero_chat Baseline"
+state: "IN_PROGRESS"
+state: "COMPLETED"
+created_at: "2026-11-01T15:27:00Z"
+base_branch: "main"
+ticket_branch: "factory/unification-001/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & User Intent
+
+Currently, `zero_chat` hosts the entire codebase as a single monolithic repository containing:
+1. `crates/zero_protocol`: Wire types, envelopes, and cryptographic primitives.
+2. `zero_network`: Ephemeral Cloudflare signaling worker and hibernating Durable Object.
+3. `zero_client`: Headless Wasm P2P mesh engine, cryptographic session bridge, and HTML/CSS UI application.
+
+To enable multi-application peer-to-peer interoperability across future projects (such as `virtual_dog_walker`), the core protocol engine and signaling worker must be factored out into independent sibling repositories at the exact same parent directory level (`../` relative to `zero_chat`).
+
+Additionally, the existing sibling directory `../virtual-dog-walker` must be normalized to snake_case (`../virtual_dog_walker`).
+
+### Target Directory Topology (Relative to Parent Directory `../`)
+```text
+<parent_dir>/
+├── zero_protocol/          # NEW REPO: Cargo workspace containing `zero_protocol` + `zero_mesh`
+│   ├── Cargo.toml
+│   └── crates/
+│       ├── zero_protocol/  # Pure Rust wire types & crypto (X25519, Ed25519, ChaCha20-Poly1305, HMAC)
+│       └── zero_mesh/      # Headless Wasm P2P client (WebRTC, ICE, Signaling, MeshTopology, WasmCryptoSession)
+├── zero_network/           # NEW REPO: Standalone Cloudflare Signaling Worker & Hibernating Durable Object
+│   ├── Cargo.toml
+│   ├── wrangler.toml
+│   └── src/
+│       ├── lib.rs
+│       ├── durable_object.rs
+│       ├── auth.rs
+│       ├── handlers.rs
+│       └── validation.rs
+├── zero_chat/              # EXISTING REPO: Slimmed down to Chat Frontend + UI bindings consuming sibling crates
+│   ├── Cargo.toml
+│   ├── zero_client/        # Consumes zero_protocol & zero_mesh, compiles wasm bundle for zero-chat.pages.dev
+│   └── dist/
+└── virtual_dog_walker/     # RENAMED from `virtual-dog-walker`
+```
+
+---
+
+## 2. Requirements & Acceptance Criteria
+
+### REQ-UNI.1: Resolve Parent Directory & Bootstrap Sibling Repositories
+- Detect parent directory of `zero_chat`.
+- Create `../zero_protocol` and `../zero_network` directories and initialize each as a git repository (`git init`).
+- If `../virtual-dog-walker` exists and `../virtual_dog_walker` does not exist, rename `../virtual-dog-walker` to `../virtual_dog_walker`.
+
+### REQ-UNI.2: Populate `../zero_protocol` Cargo Workspace (`zero_protocol` + `zero_mesh`)
+- Create workspace `../zero_protocol/Cargo.toml` containing members `["crates/zero_protocol", "crates/zero_mesh"]` with `resolver = "2"`.
+- Migrate `zero_chat/crates/zero_protocol` into `../zero_protocol/crates/zero_protocol`:
+  - Ensure zero `web-sys` or `worker` dependencies so it compiles across native, Wasm, and workerd.
+  - Verify all unit and cryptographic tests pass 100% via `cargo test -p zero_protocol`.
+- Extract headless `crates/zero_mesh` from `zero_chat/zero_client`:
+  - Create `../zero_protocol/crates/zero_mesh` (`Cargo.toml`, `src/lib.rs`, `src/crypto.rs`, `src/invite.rs`, `src/mesh.rs`, `src/webrtc.rs`).
+  - Decouple from any DOM/UI concerns: ensure zero references to HTML DOM IDs or CSS classes.
+  - Expose headless event hooks/callbacks (e.g. `MeshEventHandler` or callback closures) for state changes and message handling.
+  - Verify `cargo test -p zero_mesh` and `cargo check -p zero_mesh --target wasm32-unknown-unknown` pass.
+- Commit initial baseline in `../zero_protocol`.
+
+### REQ-UNI.3: Populate `../zero_network` Standalone Worker Repository
+- Copy `zero_chat/zero_network/` files (`Cargo.toml`, `wrangler.toml`, `src/lib.rs`, `src/durable_object.rs`, `src/handlers.rs`) into `../zero_network/`.
+- Update `../zero_network/Cargo.toml` to depend on sibling `zero_protocol`:
+  ```toml
+  [dependencies]
+  zero_protocol = { path = "../zero_protocol/crates/zero_protocol" }
+  ```
+- Run `cargo test` and `cargo check --target wasm32-unknown-unknown` in `../zero_network` to confirm all tests and worker compilation pass.
+- Commit initial baseline in `../zero_network`.
+
+### REQ-UNI.4: Slim Down `zero_chat` & Re-Wire Baseline
+- Update `zero_chat/Cargo.toml` workspace members: remove `crates/zero_protocol` and `zero_network`.
+- Delete extracted directories `crates/zero_protocol` and `zero_network` from `zero_chat`.
+- Update `zero_chat/zero_client/Cargo.toml` to depend on sibling crates:
+  ```toml
+  [dependencies]
+  zero_protocol = { path = "../../zero_protocol/crates/zero_protocol" }
+  zero_mesh = { path = "../../zero_protocol/crates/zero_mesh" }
+  ```
+- Re-export `WasmCryptoSession` and required types from `zero_mesh` in `zero_chat/zero_client/src/lib.rs`, preserving exact `#[wasm_bindgen]` entrypoints expected by `zero_client/index.html` (`dist/pkg/zero_client.js`).
+- Update `scripts/deploy_dry_run.sh` to remove obsolete `zero_network` check.
+- Verify `cargo test --workspace` passes in `zero_chat`.
+- Verify `bash zero_client/tests/browser/run_test.sh` passes all 24 browser test scenarios.
+- Verify `./scripts/deploy_dry_run.sh` produces verified release WASM and web assets.
+
+---
+
+## 3. Blast Radius & Affected Modules
+
+- `../zero_protocol/` (New workspace repository)
+- `../zero_network/` (New worker repository)
+- `../virtual_dog_walker/` (Renamed from `virtual-dog-walker`)
+- `zero_chat/Cargo.toml` (Workspace definition)
+- `zero_chat/crates/zero_protocol/` (Deleted / moved)
+- `zero_chat/zero_network/` (Deleted / moved)
+- `zero_chat/zero_client/Cargo.toml` (Dependency paths)
+- `zero_chat/zero_client/src/lib.rs` (Re-exports from `zero_mesh`)
+- `zero_chat/scripts/deploy_dry_run.sh` (Removal of local `zero_network` check)
+
+---
+
+## 4. Work Breakdown (Brief Decomposition)
+
+- **Brief 1 (Sibling Bootstrap & Extraction)**:
+  - Initialize `../zero_protocol` workspace with `crates/zero_protocol` and `crates/zero_mesh`.
+  - Initialize `../zero_network` with updated sibling dependency.
+  - Rename `../virtual-dog-walker` to `../virtual_dog_walker`.
+- **Brief 2 (zero_chat Re-wiring & Pruning)**:
+  - Remove extracted crates from `zero_chat/Cargo.toml` and filesystem.
+  - Wire `zero_chat/zero_client` to `../zero_protocol/crates/*`.
+  - Update `scripts/deploy_dry_run.sh`.
+- **Brief 3 (Validation)**:
+  - Run `cargo test` across `../zero_protocol`, `../zero_network`, and `zero_chat`.
+  - Run all 24 browser headless test scenarios in `zero_chat`.
+- **Brief 4 (Review)**:
+  - Independent architectural review of sibling repository topologies, boundary decoupling, and zero regressions.
+
+---
+
+## 5. Verification Plan
+
+1. In `../zero_protocol`:
+   - `cargo test --workspace` (All protocol and mesh tests pass).
+   - `cargo check --target wasm32-unknown-unknown` passes.
+2. In `../zero_network`:
+   - `cargo test` passes against sibling `zero_protocol`.
+   - `cargo check --target wasm32-unknown-unknown` passes.
+3. In `zero_chat`:
+   - `cargo test --workspace` passes cleanly.
+   - `cargo clippy --workspace --all-targets -- -D warnings` passes with 0 warnings.
+   - `cargo fmt -- --check` passes.
+   - `bash zero_client/tests/browser/run_test.sh` passes all 24 headless browser tests.
+   - `./scripts/deploy_dry_run.sh` builds release WASM and verifies bundle.
+
+
+```
+
+## FILE: openspec/config.yaml
+```yaml
+schema: "spec-driven"
+version: "1.0.0"
+paths:
+  specs: "openspec/specs"
+  changes: "openspec/changes"
+  archive: "openspec/changes/archive"
+  roadmaps: "openspec/roadmaps"
+
+```
+
+## FILE: openspec/roadmaps/archive/improved-leave-burn-lifecycle.md
+```markdown
+---
+roadmap_id: "improved-leave-burn-lifecycle"
+milestone: "improved-leave-burn-lifecycle"
+title: "Improved Leave and Burn Lifecycle: Selective Message Purging and Global Room Annihilation"
+version: "1.0.0"
+created_at: "2026-10-18T17:05:00Z"
+completed_at: "2026-10-18T20:13:00Z"
+status: "COMPLETED"
+---
+
+# Milestone Roadmap: Improved Leave and Burn Lifecycle
+
+## 1. Milestone Objective & Scope
+
+Currently, the Leave Chat button (`#header-leave-btn`) and Burn Chat button (`#destroy-session-button`) share identical behavior: both unilaterally execute local-only session resets (`resetToHome()`), tearing down local WebRTC peer connections and clearing local DOM without coordinating with or notifying remote peers. Furthermore, when a peer leaves, their previously sent messages linger indefinitely in the other participants' feeds.
+
+This roadmap upgrades the Leave and Burn lifecycle into two distinct, cryptographically authenticated, mesh-coordinated operations:
+1. **Leave Chat (`leave_and_burn`)**:
+   - The leaving user wipes their local session and returns to the home view.
+   - A `PeerLeftAndBurn` signal is broadcast across the P2P mesh before connection severance.
+   - Upon receiving this signal, all remaining peer clients immediately purge from their local DOM and memory all messages authored by the departed peer (`data-peer-id`).
+   - The remaining peers continue their conversation uninterrupted.
+2. **Burn Chat (`global_burn`)**:
+   - Any participant can trigger an irreversible global room burn.
+   - A `GlobalBurnSession` signal is broadcast across all active DataChannels and flooded through the gossip mesh.
+   - Every participant receiving this signal instantly wipes their feed, zeroizes in-memory cryptographic keys, tears down all peer connections, and transitions back to the home view simultaneously.
+3. **Dirty Disconnect & Window Unload Purge**:
+   - When a peer disconnects dirty (closes window, refreshes tab, or loses connection abruptly), peer clients automatically purge that departed user's messages and advance chat seamlessly.
+
+---
+
+## 2. Ticket Dependency Matrix
+
+| Ticket ID | Title | Thinking Level | Depends On | Concurrency Track | State |
+| :--- | :--- | :---: | :--- | :--- | :--- |
+| `ticket-020` | Protocol Envelopes & Mesh Routing for Selective Message Purging and Global Burn | `MEDIUM` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-021` | Client UI & WebRTC Integration: Distinct Leave (Selective Purge) vs Burn (Global Annihilation) | `MEDIUM` | `["ticket-020"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-022` | Multi-Peer Mesh Integration & E2E Handshake Validation for Leave and Burn Lifecycle | `MEDIUM` | `["ticket-021"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-023` | Automatic Message Purge on Dirty Peer Disconnect & Window Unload | `MEDIUM` | `["ticket-022"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+
+---
+
+## 3. Blast Radius & Scope Collision Matrix
+
+| Ticket ID | Declared File Scope | Overlap Detection & Blast Radius Rationale |
+| :--- | :--- | :--- |
+| `ticket-020` | `crates/zero_protocol/src/envelope.rs`, `zero_client/src/mesh.rs` | Protocol signaling extensions (`PeerLeftAndBurn`, `GlobalBurnSession`) and mesh broadcast/routing callback infrastructure. Disjoint from UI templates and tests. |
+| `ticket-021` | `zero_client/index.html`, `zero_client/src/ui.rs`, `zero_client/style.css` | Client DOM integration, message sender tracking (`data-peer-id`), distinct button event handlers, and incoming signal dispatching. Dependent on `ticket-020` signal definitions. |
+| `ticket-022` | `tests/mesh_simulation_test.rs`, `tests/e2e_handshake.rs` | Comprehensive integration tests validating selective message purge across 3+ peers and global burn room annihilation. Dependent on `ticket-021` client integration. |
+| `ticket-023` | `zero_client/index.html`, `zero_client/src/mesh.rs`, `tests/mesh_simulation_test.rs` | Automatic message purge on channel closure/disconnect, opportunistic `beforeunload` broadcast, and multi-peer dirty disconnect integration tests. |
+
+---
+
+## 4. Execution DAG Diagram
+
+```mermaid
+flowchart TD
+    T020["ticket-020: Protocol Envelopes & Mesh Routing<br/>[crates/zero_protocol, zero_client/mesh]<br/>(COMPLETED)"]
+    T021["ticket-021: Client UI & WebRTC Integration<br/>[zero_client/index.html, zero_client/ui]<br/>(COMPLETED)"]
+    T022["ticket-022: Multi-Peer Mesh & E2E Handshake Tests<br/>[tests/mesh_simulation_test, tests/e2e_handshake]<br/>(COMPLETED)"]
+    T023["ticket-023: Automatic Message Purge on Dirty Peer Disconnect<br/>[zero_client/index.html, zero_client/mesh, tests]<br/>(COMPLETED)"]
+
+    T020 --> T021
+    T021 --> T022
+    T022 --> T023
+
+    classDef completed fill:#10b981,stroke:#059669,color:#ffffff,stroke-width:2px;
+    classDef unblocked fill:#0284c7,stroke:#0369a1,color:#ffffff,stroke-width:2px;
+    classDef blocked fill:#1e293b,stroke:#475569,color:#94a3b8,stroke-width:1px;
+
+    class T020 completed;
+    class T021 completed;
+    class T022 completed;
+    class T023 completed;
+```
+
+---
+
+## 5. Milestone Progress & Completion Criteria
+
+- [x] **Track 1 (`ticket-020`)**: `MeshRelaySignal::PeerLeftAndBurn` and `MeshRelaySignal::GlobalBurnSession` signals specified, tested, and routed in `zero_protocol` and `zero_client::mesh`.
+- [x] **Track 2 (`ticket-021`)**: Web client stamps messages with `data-peer-id`, connects `#header-leave-btn` to selective peer burn + local reset, connects `#destroy-session-button` to global session burn, and handles remote burn signals.
+- [x] **Track 3 (`ticket-022`)**: Automated multi-peer tests confirm selective message burning upon peer departure and global room wipe upon burn invocation. Zero regressions across existing 91 workspace tests.
+- [x] **Track 4 (`ticket-023`)**: Automatic message purge on dirty disconnect (abrupt channel close) & opportunistic window unload in client UI and mesh topology. Zero regressions across full workspace.
+
+```
+
+## FILE: openspec/roadmaps/archive/multi-user-mesh-chat.md
+```markdown
+---
+roadmap_id: "multi-user-mesh-chat"
+milestone: "multi-user-mesh-chat"
+title: "Multi-User P2P Mesh Chat: Multi-Peer Engine, In-Band Relay Snapping & Header Add-Peer Controls"
+version: "1.0.0"
+created_at: "2026-10-18T21:02:00Z"
+status: "COMPLETED"
+completed_at: "2026-10-18T22:38:00Z"
+---
+
+# Milestone Roadmap: Multi-User P2P Mesh Chat
+
+## 1. Milestone Objective & Scope
+
+While the Rust core (`zero_client::mesh`, `zero_protocol`) already implements multi-peer gossip routing, TTL flooding, and in-band relay signaling in simulation tests, the browser application (`zero_client/index.html`) is currently constrained to 1-to-1 chats via a single-peer `RTCPeerConnection`.
+
+This milestone expands Zero-Chat into a full-featured, zero-knowledge, multi-participant decentralized mesh room:
+1. **Multi-Peer WebRTC Engine**: Refactor the browser client from a single connection to a multi-peer connection pool supporting concurrent WebRTC DataChannels with broadcast flooding.
+2. **In-Band Signaling Relay & Direct Mesh Snapping**: When a 3rd peer joins the host, the host uses in-band DataChannel relay messages (`RelaySdpOffer` / `RelaySdpAnswer`) to introduce the new peer to existing peers, enabling them to establish direct P2P connections without hitting Cloudflare servers.
+3. **Header Add-Peer Button & Single-Invite Lifecycle**:
+   - Place an Add-Peer (`+`) button directly to the **left** of the `#peer-count` badge in the header.
+   - Enforce a strictly non-wasteful, single active invite lifecycle: only one pending invite is active at a time; subsequent clicks re-copy the existing link; pending invite clears when peer connects.
+   - Strictly **no tooltip messages**; silent clipboard copy.
+4. **Dynamic Multi-Peer UI & Lifecycle**:
+   - Dynamic peer count badge (`0`, `1`, `2`, `3`...).
+   - Per-peer color attribution and distinct sender display.
+   - Graceful multi-peer departure: when 1 of N peers leaves, the room remains active for surviving peers and only drops to disconnected state when all peers depart.
+
+---
+
+## 2. Ticket Dependency Matrix
+
+| Ticket ID | Title | Thinking Level | Depends On | Concurrency Track | State |
+| :--- | :--- | :---: | :--- | :--- | :--- |
+| `ticket-025` | Multi-Peer Browser WebRTC Engine & Connection Pool | `MEDIUM` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-026` | In-Band SDP Signaling Relay & Mesh Snapping in Browser Client | `HIGH` | `["ticket-025"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-027` | Header Add-Peer Button, Single-Invite Lifecycle & Multi-User Room UI | `MEDIUM` | `["ticket-026"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-028` | Multi-Peer E2E Simulation & Mesh Snapping Validation Suite | `MEDIUM` | `["ticket-027"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+
+---
+
+## 3. Blast Radius & Scope Collision Matrix
+
+| Ticket ID | Declared File Scope | Overlap Detection & Blast Radius Rationale |
+| :--- | :--- | :--- |
+| `ticket-025` | `zero_client/index.html` (WebRTC Engine core) | Refactors `ZeroWebRtcEngine` to manage `Map<peerId, { pc, dc }>` and broadcast sending. Pre-requisite for relay and UI layers. |
+| `ticket-026` | `zero_client/index.html` (In-Band Relay module) | Implements in-band relay SDP offer/answer exchange across open DataChannels for direct mesh snapping. Builds on multi-peer engine from `ticket-025`. |
+| `ticket-027` | `zero_client/index.html` (DOM header & invite controls), `zero_client/src/ui.rs` | Header Add-Peer button (left of `#peer-count`), single-invite lifecycle logic, dynamic peer counter, multi-peer departure tracking. |
+| `ticket-028` | `zero_client/tests/mesh_simulation_test.rs`, `zero_client/src/ui.rs` | Comprehensive automated test suite verifying multi-peer connections, in-band relay snapping, selective message purge across multiple nodes, and workspace integrity. |
+
+---
+
+## 4. Execution DAG Diagram
+
+```mermaid
+flowchart TD
+    T025["ticket-025: Multi-Peer Browser WebRTC Engine<br/>[zero_client/index.html]<br/>(PARALLEL_ELIGIBLE)"]
+    T026["ticket-026: In-Band Relay Snapping in Browser<br/>[zero_client/index.html]<br/>(BLOCKED_ON_ticket-025)"]
+    T027["ticket-027: Header Add-Peer & Multi-User UI<br/>[zero_client/index.html, zero_client/ui]<br/>(BLOCKED_ON_ticket-026)"]
+    T028["ticket-028: Multi-Peer E2E Simulation Tests<br/>[zero_client/tests, zero_client/ui]<br/>(BLOCKED_ON_ticket-027)"]
+
+    T025 --> T026
+    T026 --> T027
+    T027 --> T028
+
+    classDef unblocked fill:#0284c7,stroke:#0369a1,color:#ffffff,stroke-width:2px;
+    classDef blocked fill:#1e293b,stroke:#475569,color:#94a3b8,stroke-width:1px;
+
+    class T025 unblocked;
+    class T026 blocked;
+    class T027 blocked;
+    class T028 blocked;
+```
+
+---
+
+## 5. Milestone Progress & Completion Criteria
+
+- [x] **Track 1 (`ticket-025`)**: Browser client holds multiple `RTCPeerConnection` instances in a pool and broadcasts messages to all open channels.
+- [x] **Track 2 (`ticket-026`)**: Secondary peers snap direct WebRTC DataChannels via in-band SDP relay through the host with 0 cloud server requests.
+- [x] **Track 3 (`ticket-027`)**: Header Add-Peer button located to the left of `#peer-count`, enforces single active invite lifecycle, copies quietly without tooltips, and supports dynamic N-peer counter.
+- [x] **Track 4 (`ticket-028`)**: Automated multi-node integration test suite validates full multi-user mesh lifecycle and workspace test suite passes with 100% success.
+
+```
+
+## FILE: openspec/roadmaps/archive/serverless-p2p-chat.md
+```markdown
+---
+roadmap_id: "serverless-p2p-chat"
+milestone: "serverless-p2p-chat"
+title: "Serverless P2P Ephemeral Communication Tool (Weekend MVP)"
+version: "1.1.0"
+created_at: "2026-10-16T21:28:00Z"
+completed_at: "2026-10-17T08:48:00Z"
+status: "COMPLETED"
+---
+
+# Milestone Roadmap: Serverless P2P Ephemeral Communication Tool (Weekend MVP)
+
+## 1. Milestone Objective & Scope
+
+Build an entirely serverless, zero-footprint, real-time peer-to-peer (P2P) communication tool operating entirely inside modern web browsers using pure Rust compiled to WebAssembly (`wasm32-unknown-unknown`), coupled with a stateless Cloudflare Worker / Durable Object signaling bootstrap utilizing WebSocket Hibernation, with automated CI/CD via GitHub Actions and Cloudflare.
+
+### Core Invariants & Architectural Boundaries
+- **Zero Forensic Footprint**: No account registrations, no cookies, no local storage or IndexedDB persistence. Closing the browser tab destroys all ephemeral keys, sessions, and message logs.
+- **Stateless HMAC-Sealed Handshake (Pattern B)**: Signaling dead-drop HTTP `POST` requests and hibernating WebSockets ($0 idle duration billing). Offline invites are sealed with `HMAC_SHA256(host_secret, Invite_UUID)` embedded in URL `#fragment`s, which never hit any cloud edge.
+- **Pure Rust Cryptographic Engine**: Synchronous, memory-safe cryptographic primitives (`x25519-dalek`, `chacha20poly1305`, `hmac-sha256` with `getrandom/js`) shared between WASM and Cloudflare Worker, bypassing asynchronous JS WebCrypto bridging overhead.
+- **Direct P2P DataChannels**: Once the initial WebRTC SDP offer/answer exchange completes, the cloud edge drops out permanently. All communication flows directly over browser-to-browser UDP DataChannels.
+- **In-Band Gossip Mesh**: Multi-peer scaling without edge requests. The room host bridges encrypted signaling messages between existing WebRTC DataChannels so joining peers snap direct connections (`Channel_BC`) with zero edge hits.
+- **Continuous Integration & Delivery**: Automated dual-target test validation, clippy auditing, and automated Cloudflare Worker + Cloudflare Pages deployment via GitHub Actions.
+
+---
+
+## 2. Ticket Dependency Matrix
+
+| Ticket ID | Title | Thinking Level | Depends On | Concurrency Track | State |
+| :--- | :--- | :---: | :--- | :--- | :--- |
+| `ticket-001` | Workspace Architecture, Protocol Envelope & Crypto Primitives | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-002` | WebRTC PeerConnection & DataChannel WASM Engine | `HIGH` | `["ticket-001"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-003` | Cloudflare Worker Hibernating Durable Object Dead-Drop | `HIGH` | `["ticket-001"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-004` | Stateless HMAC Invite Generator & URL Fragment Auto-Drop Joiner | `MEDIUM` | `["ticket-002", "ticket-003"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-005` | Ephemeral Chat UI, Cryptographic Payload Sealing & E2E Validation | `MEDIUM` | `["ticket-004"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-006` | In-Band Gossip Signaling Relay & Multi-Peer Mesh Topology | `HIGH` | `["ticket-005"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-007` | CI/CD Automation: GitHub Actions & Cloudflare Deployment Pipeline | `LOW` | `["ticket-003", "ticket-005"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+
+---
+
+## 3. Blast Radius & Scope Collision Matrix
+
+| Ticket ID | Declared File Scope | Overlap Detection & Blast Radius Rationale |
+| :--- | :--- | :--- |
+| `ticket-001` | `Cargo.toml`, `crates/zero_protocol/*`, `.gitignore`, `factory.yaml` | Establishes top-level cargo workspace and shared message schemas (`zero_protocol`). Clean foundational contracts; zero file overlap with downstream tasks. |
+| `ticket-002` | `zero_client/Cargo.toml`, `zero_client/src/webrtc.rs`, `zero_client/src/lib.rs`, `zero_client/test_harness.html` | Pure client-side WebRTC WASM lifecycle and manual SDP exchange verification harness. Fully isolated within `zero_client/`; disjoint from `ticket-003`. Can execute concurrently with `ticket-003`. |
+| `ticket-003` | `zero_network/Cargo.toml`, `zero_network/wrangler.toml`, `zero_network/src/*` | Cloudflare Worker & Durable Object dead-drop implementation. Fully isolated within `zero_network/`; zero overlap with `zero_client/`. Parallel execution safe alongside `ticket-002`. |
+| `ticket-004` | `zero_client/src/invite.rs`, `zero_client/src/bootstrap.rs`, `zero_client/src/lib.rs` | Wires client URL `#fragment` parsing and automated HTTP `POST /drop/{DO_ID}/{UUID}` dispatch. Integrates the contracts established in `ticket-002` and `ticket-003`. |
+| `ticket-005` | `zero_client/src/ui.rs`, `zero_client/src/crypto.rs`, `zero_client/index.html`, `zero_client/style.css`, `tests/e2e_handshake.rs` | Ephemeral chat UI, end-to-end symmetric payload sealing (`chacha20poly1305`), and automated integration test harness. Serialized after `ticket-004`. |
+| `ticket-006` | `zero_client/src/mesh.rs`, `zero_client/src/webrtc.rs`, `zero_client/src/protocol.rs` | Multi-peer mesh relay over established DataChannels. Extends the 1:1 transport to an arbitrary N-peer fully connected mesh. Serialized after `ticket-005`. |
+| `ticket-007` | `.github/workflows/*`, `docs/deployment.md`, `scripts/deploy_dry_run.sh` | Continuous integration and deployment configuration. Disjoint from application source code; can execute in parallel with `ticket-006` once `ticket-003` and `ticket-005` are completed. |
+
+---
+
+## 4. Execution DAG Diagram
+
+```mermaid
+flowchart TD
+    T001["ticket-001: Workspace Root, Protocol & Crypto [PARALLEL_ELIGIBLE]"]
+    T002["ticket-002: WebRTC WASM Engine (zero_client) [BLOCKED_ON_001]"]
+    T003["ticket-003: Worker DO Dead-Drop (zero_network) [BLOCKED_ON_001]"]
+    T004["ticket-004: Stateless Invites & Auto-Drop [BLOCKED_ON_002_003]"]
+    T005["ticket-005: Ephemeral Chat UI & Sealing [BLOCKED_ON_004]"]
+    T006["ticket-006: In-Band Gossip Mesh Topology [BLOCKED_ON_005]"]
+    T007["ticket-007: GitHub Actions & Cloudflare CI/CD [BLOCKED_ON_003_005]"]
+
+    T001 --> T002
+    T001 --> T003
+    T002 --> T004
+    T003 --> T004
+    T004 --> T005
+    T005 --> T006
+    T003 --> T007
+    T005 --> T007
+
+    classDef parallel fill:#059669,stroke:#047857,stroke-width:2px,color:#ffffff;
+    classDef blocked fill:#1e293b,stroke:#475569,stroke-width:1px,color:#94a3b8;
+    class T001,T002,T003,T004,T005,T006,T007 parallel;
+```
+
+> **Concurrency Highlights**:
+> 1. Once `ticket-001` is completed, **`ticket-002`** (`zero_client`) and **`ticket-003`** (`zero_network`) execute in **parallel**.
+> 2. Once `ticket-005` is completed, **`ticket-006`** (mesh topology) and **`ticket-007`** (CI/CD pipeline) execute in **parallel** without any file overlap.
+
+---
+
+## 5. Progress & Milestone Completion Criteria
+- [x] Ticket-001 completed and merged to `main`.
+- [x] Ticket-002 completed and merged to `main`.
+- [x] Ticket-003 completed and merged to `main`.
+- [x] Ticket-004 completed and merged to `main`.
+- [x] Ticket-005 completed and merged to `main`.
+- [x] Ticket-006 completed and merged to `main`.
+- [x] Ticket-007 completed and merged to `main`.
+- [x] End-to-end integration tests pass across combined deliverables (`cargo test --workspace`).
+- [x] Zero persistent storage verified (no IndexedDB, localStorage, or cookies created).
+- [x] Tab closure forensic cleanliness verified.
+- [x] Automated GitHub Actions CI workflow passes on all branches.
+- [x] Cloudflare deployment pipeline successfully deploys Worker and Pages bundle.
+- [x] Canonical specifications reconciled in `openspec/specs/overview.md`.
+- [x] Change proposals archived to `openspec/changes/archive/`.
+
+```
+
+## FILE: openspec/roadmaps/multi-user-mesh-chat.md
+```markdown
+---
+roadmap_id: "multi-user-mesh-chat"
+milestone: "multi-user-mesh-chat"
+title: "Multi-User P2P Mesh Chat: Multi-Peer Engine, In-Band Relay Snapping & Header Add-Peer Controls"
+version: "1.0.0"
+created_at: "2026-10-18T21:02:00Z"
+status: "COMPLETED"
+completed_at: "2026-10-18T22:38:00Z"
+---
+
+# Milestone Roadmap: Multi-User P2P Mesh Chat
+
+## 1. Milestone Objective & Scope
+
+While the Rust core (`zero_client::mesh`, `zero_protocol`) already implements multi-peer gossip routing, TTL flooding, and in-band relay signaling in simulation tests, the browser application (`zero_client/index.html`) is currently constrained to 1-to-1 chats via a single-peer `RTCPeerConnection`.
+
+This milestone expands Zero-Chat into a full-featured, zero-knowledge, multi-participant decentralized mesh room:
+1. **Multi-Peer WebRTC Engine**: Refactor the browser client from a single connection to a multi-peer connection pool supporting concurrent WebRTC DataChannels with broadcast flooding.
+2. **In-Band Signaling Relay & Direct Mesh Snapping**: When a 3rd peer joins the host, the host uses in-band DataChannel relay messages (`RelaySdpOffer` / `RelaySdpAnswer`) to introduce the new peer to existing peers, enabling them to establish direct P2P connections without hitting Cloudflare servers.
+3. **Header Add-Peer Button & Single-Invite Lifecycle**:
+   - Place an Add-Peer (`+`) button directly to the **left** of the `#peer-count` badge in the header.
+   - Enforce a strictly non-wasteful, single active invite lifecycle: only one pending invite is active at a time; subsequent clicks re-copy the existing link; pending invite clears when peer connects.
+   - Strictly **no tooltip messages**; silent clipboard copy.
+4. **Dynamic Multi-Peer UI & Lifecycle**:
+   - Dynamic peer count badge (`0`, `1`, `2`, `3`...).
+   - Per-peer color attribution and distinct sender display.
+   - Graceful multi-peer departure: when 1 of N peers leaves, the room remains active for surviving peers and only drops to disconnected state when all peers depart.
+
+---
+
+## 2. Ticket Dependency Matrix
+
+| Ticket ID | Title | Thinking Level | Depends On | Concurrency Track | State |
+| :--- | :--- | :---: | :--- | :--- | :--- |
+| `ticket-025` | Multi-Peer Browser WebRTC Engine & Connection Pool | `MEDIUM` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-026` | In-Band SDP Signaling Relay & Mesh Snapping in Browser Client | `HIGH` | `["ticket-025"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-027` | Header Add-Peer Button, Single-Invite Lifecycle & Multi-User Room UI | `MEDIUM` | `["ticket-026"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-028` | Multi-Peer E2E Simulation & Mesh Snapping Validation Suite | `MEDIUM` | `["ticket-027"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+
+---
+
+## 3. Blast Radius & Scope Collision Matrix
+
+| Ticket ID | Declared File Scope | Overlap Detection & Blast Radius Rationale |
+| :--- | :--- | :--- |
+| `ticket-025` | `zero_client/index.html` (WebRTC Engine core) | Refactors `ZeroWebRtcEngine` to manage `Map<peerId, { pc, dc }>` and broadcast sending. Pre-requisite for relay and UI layers. |
+| `ticket-026` | `zero_client/index.html` (In-Band Relay module) | Implements in-band relay SDP offer/answer exchange across open DataChannels for direct mesh snapping. Builds on multi-peer engine from `ticket-025`. |
+| `ticket-027` | `zero_client/index.html` (DOM header & invite controls), `zero_client/src/ui.rs` | Header Add-Peer button (left of `#peer-count`), single-invite lifecycle logic, dynamic peer counter, multi-peer departure tracking. |
+| `ticket-028` | `zero_client/tests/mesh_simulation_test.rs`, `zero_client/src/ui.rs` | Comprehensive automated test suite verifying multi-peer connections, in-band relay snapping, selective message purge across multiple nodes, and workspace integrity. |
+
+---
+
+## 4. Execution DAG Diagram
+
+```mermaid
+flowchart TD
+    T025["ticket-025: Multi-Peer Browser WebRTC Engine<br/>[zero_client/index.html]<br/>(PARALLEL_ELIGIBLE)"]
+    T026["ticket-026: In-Band Relay Snapping in Browser<br/>[zero_client/index.html]<br/>(BLOCKED_ON_ticket-025)"]
+    T027["ticket-027: Header Add-Peer & Multi-User UI<br/>[zero_client/index.html, zero_client/ui]<br/>(BLOCKED_ON_ticket-026)"]
+    T028["ticket-028: Multi-Peer E2E Simulation Tests<br/>[zero_client/tests, zero_client/ui]<br/>(BLOCKED_ON_ticket-027)"]
+
+    T025 --> T026
+    T026 --> T027
+    T027 --> T028
+
+    classDef unblocked fill:#0284c7,stroke:#0369a1,color:#ffffff,stroke-width:2px;
+    classDef blocked fill:#1e293b,stroke:#475569,color:#94a3b8,stroke-width:1px;
+
+    class T025 unblocked;
+    class T026 blocked;
+    class T027 blocked;
+    class T028 blocked;
+```
+
+---
+
+## 5. Milestone Progress & Completion Criteria
+
+- [x] **Track 1 (`ticket-025`)**: Browser client holds multiple `RTCPeerConnection` instances in a pool and broadcasts messages to all open channels.
+- [x] **Track 2 (`ticket-026`)**: Secondary peers snap direct WebRTC DataChannels via in-band SDP relay through the host with 0 cloud server requests.
+- [x] **Track 3 (`ticket-027`)**: Header Add-Peer button located to the left of `#peer-count`, enforces single active invite lifecycle, copies quietly without tooltips, and supports dynamic N-peer counter.
+- [x] **Track 4 (`ticket-028`)**: Automated multi-node integration test suite validates full multi-user mesh lifecycle and workspace test suite passes with 100% success.
+
+```
+
+## FILE: openspec/roadmaps/serverless-p2p-chat.md
+```markdown
+---
+roadmap_id: "serverless-p2p-chat"
+milestone: "serverless-p2p-chat"
+title: "Serverless P2P Ephemeral Communication Tool (Weekend MVP)"
+version: "1.1.0"
+created_at: "2026-10-16T21:28:00Z"
+completed_at: "2026-10-17T08:48:00Z"
+status: "COMPLETED"
+---
+
+# Milestone Roadmap: Serverless P2P Ephemeral Communication Tool (Weekend MVP)
+
+## 1. Milestone Objective & Scope
+
+Build an entirely serverless, zero-footprint, real-time peer-to-peer (P2P) communication tool operating entirely inside modern web browsers using pure Rust compiled to WebAssembly (`wasm32-unknown-unknown`), coupled with a stateless Cloudflare Worker / Durable Object signaling bootstrap utilizing WebSocket Hibernation, with automated CI/CD via GitHub Actions and Cloudflare.
+
+### Core Invariants & Architectural Boundaries
+- **Zero Forensic Footprint**: No account registrations, no cookies, no local storage or IndexedDB persistence. Closing the browser tab destroys all ephemeral keys, sessions, and message logs.
+- **Stateless HMAC-Sealed Handshake (Pattern B)**: Signaling dead-drop HTTP `POST` requests and hibernating WebSockets ($0 idle duration billing). Offline invites are sealed with `HMAC_SHA256(host_secret, Invite_UUID)` embedded in URL `#fragment`s, which never hit any cloud edge.
+- **Pure Rust Cryptographic Engine**: Synchronous, memory-safe cryptographic primitives (`x25519-dalek`, `chacha20poly1305`, `hmac-sha256` with `getrandom/js`) shared between WASM and Cloudflare Worker, bypassing asynchronous JS WebCrypto bridging overhead.
+- **Direct P2P DataChannels**: Once the initial WebRTC SDP offer/answer exchange completes, the cloud edge drops out permanently. All communication flows directly over browser-to-browser UDP DataChannels.
+- **In-Band Gossip Mesh**: Multi-peer scaling without edge requests. The room host bridges encrypted signaling messages between existing WebRTC DataChannels so joining peers snap direct connections (`Channel_BC`) with zero edge hits.
+- **Continuous Integration & Delivery**: Automated dual-target test validation, clippy auditing, and automated Cloudflare Worker + Cloudflare Pages deployment via GitHub Actions.
+
+---
+
+## 2. Ticket Dependency Matrix
+
+| Ticket ID | Title | Thinking Level | Depends On | Concurrency Track | State |
+| :--- | :--- | :---: | :--- | :--- | :--- |
+| `ticket-001` | Workspace Architecture, Protocol Envelope & Crypto Primitives | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-002` | WebRTC PeerConnection & DataChannel WASM Engine | `HIGH` | `["ticket-001"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-003` | Cloudflare Worker Hibernating Durable Object Dead-Drop | `HIGH` | `["ticket-001"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-004` | Stateless HMAC Invite Generator & URL Fragment Auto-Drop Joiner | `MEDIUM` | `["ticket-002", "ticket-003"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-005` | Ephemeral Chat UI, Cryptographic Payload Sealing & E2E Validation | `MEDIUM` | `["ticket-004"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-006` | In-Band Gossip Signaling Relay & Multi-Peer Mesh Topology | `HIGH` | `["ticket-005"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-007` | CI/CD Automation: GitHub Actions & Cloudflare Deployment Pipeline | `LOW` | `["ticket-003", "ticket-005"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+
+---
+
+## 3. Blast Radius & Scope Collision Matrix
+
+| Ticket ID | Declared File Scope | Overlap Detection & Blast Radius Rationale |
+| :--- | :--- | :--- |
+| `ticket-001` | `Cargo.toml`, `crates/zero_protocol/*`, `.gitignore`, `factory.yaml` | Establishes top-level cargo workspace and shared message schemas (`zero_protocol`). Clean foundational contracts; zero file overlap with downstream tasks. |
+| `ticket-002` | `zero_client/Cargo.toml`, `zero_client/src/webrtc.rs`, `zero_client/src/lib.rs`, `zero_client/test_harness.html` | Pure client-side WebRTC WASM lifecycle and manual SDP exchange verification harness. Fully isolated within `zero_client/`; disjoint from `ticket-003`. Can execute concurrently with `ticket-003`. |
+| `ticket-003` | `zero_network/Cargo.toml`, `zero_network/wrangler.toml`, `zero_network/src/*` | Cloudflare Worker & Durable Object dead-drop implementation. Fully isolated within `zero_network/`; zero overlap with `zero_client/`. Parallel execution safe alongside `ticket-002`. |
+| `ticket-004` | `zero_client/src/invite.rs`, `zero_client/src/bootstrap.rs`, `zero_client/src/lib.rs` | Wires client URL `#fragment` parsing and automated HTTP `POST /drop/{DO_ID}/{UUID}` dispatch. Integrates the contracts established in `ticket-002` and `ticket-003`. |
+| `ticket-005` | `zero_client/src/ui.rs`, `zero_client/src/crypto.rs`, `zero_client/index.html`, `zero_client/style.css`, `tests/e2e_handshake.rs` | Ephemeral chat UI, end-to-end symmetric payload sealing (`chacha20poly1305`), and automated integration test harness. Serialized after `ticket-004`. |
+| `ticket-006` | `zero_client/src/mesh.rs`, `zero_client/src/webrtc.rs`, `zero_client/src/protocol.rs` | Multi-peer mesh relay over established DataChannels. Extends the 1:1 transport to an arbitrary N-peer fully connected mesh. Serialized after `ticket-005`. |
+| `ticket-007` | `.github/workflows/*`, `docs/deployment.md`, `scripts/deploy_dry_run.sh` | Continuous integration and deployment configuration. Disjoint from application source code; can execute in parallel with `ticket-006` once `ticket-003` and `ticket-005` are completed. |
+
+---
+
+## 4. Execution DAG Diagram
+
+```mermaid
+flowchart TD
+    T001["ticket-001: Workspace Root, Protocol & Crypto [PARALLEL_ELIGIBLE]"]
+    T002["ticket-002: WebRTC WASM Engine (zero_client) [BLOCKED_ON_001]"]
+    T003["ticket-003: Worker DO Dead-Drop (zero_network) [BLOCKED_ON_001]"]
+    T004["ticket-004: Stateless Invites & Auto-Drop [BLOCKED_ON_002_003]"]
+    T005["ticket-005: Ephemeral Chat UI & Sealing [BLOCKED_ON_004]"]
+    T006["ticket-006: In-Band Gossip Mesh Topology [BLOCKED_ON_005]"]
+    T007["ticket-007: GitHub Actions & Cloudflare CI/CD [BLOCKED_ON_003_005]"]
+
+    T001 --> T002
+    T001 --> T003
+    T002 --> T004
+    T003 --> T004
+    T004 --> T005
+    T005 --> T006
+    T003 --> T007
+    T005 --> T007
+
+    classDef parallel fill:#059669,stroke:#047857,stroke-width:2px,color:#ffffff;
+    classDef blocked fill:#1e293b,stroke:#475569,stroke-width:1px,color:#94a3b8;
+    class T001,T002,T003,T004,T005,T006,T007 parallel;
+```
+
+> **Concurrency Highlights**:
+> 1. Once `ticket-001` is completed, **`ticket-002`** (`zero_client`) and **`ticket-003`** (`zero_network`) execute in **parallel**.
+> 2. Once `ticket-005` is completed, **`ticket-006`** (mesh topology) and **`ticket-007`** (CI/CD pipeline) execute in **parallel** without any file overlap.
+
+---
+
+## 5. Progress & Milestone Completion Criteria
+- [x] Ticket-001 completed and merged to `main`.
+- [x] Ticket-002 completed and merged to `main`.
+- [x] Ticket-003 completed and merged to `main`.
+- [x] Ticket-004 completed and merged to `main`.
+- [x] Ticket-005 completed and merged to `main`.
+- [x] Ticket-006 completed and merged to `main`.
+- [x] Ticket-007 completed and merged to `main`.
+- [x] End-to-end integration tests pass across combined deliverables (`cargo test --workspace`).
+- [x] Zero persistent storage verified (no IndexedDB, localStorage, or cookies created).
+- [x] Tab closure forensic cleanliness verified.
+- [x] Automated GitHub Actions CI workflow passes on all branches.
+- [x] Cloudflare deployment pipeline successfully deploys Worker and Pages bundle.
+- [x] Canonical specifications reconciled in `openspec/specs/overview.md`.
+- [x] Change proposals archived to `openspec/changes/archive/`.
+
+```
+
+## FILE: openspec/specs/overview.md
+```markdown
+# Canonical System Architecture: zero_chat
+
+```yaml
+---
+system: "zero_chat"
+version: "1.4.0"
+milestone: "v1.4-live-zeromesh-p2p-handshake-alignment"
+status: "PRODUCTION_CANONICAL"
+updated_at: "2026-11-01T18:28:00Z"
+---
+```
+
+## 1. Project Overview & Vision
+`zero_chat` is an entirely serverless, zero-footprint, real-time peer-to-peer (P2P) communication platform operating inside web browsers using pure Rust compiled to WebAssembly (`wasm32-unknown-unknown`), coupled with an ephemeral Cloudflare Worker / Hibernating Durable Object signaling bootstrap utilizing WebSocket Hibernation, and automated dual-target CI/CD delivery.
+
+### Core Architectural Invariants
+1. **Zero Forensic Footprint**: No account registrations, no cookies, no `localStorage`, `sessionStorage`, or `indexedDB` persistence. Closing or reloading the browser tab immediately incinerates all in-memory keys, sessions, and chat feeds.
+2. **Stateless HMAC-Sealed Handshake (Pattern B)**: Signaling dead-drop HTTP `POST` requests and hibernating WebSockets ($0 idle duration billing). Offline invites are sealed with `HMAC_SHA256(host_secret, Invite_UUID)` embedded in URL `#fragment`s, which never touch any cloud edge.
+3. **Pure Rust Cryptographic Engine**: Synchronous, memory-safe cryptographic primitives (`x25519-dalek`, `chacha20poly1305`, `hmac-sha256` with `getrandom/js`) shared across WASM and Cloudflare Worker, bypassing asynchronous JS WebCrypto bridging overhead.
+4. **Direct P2P DataChannels**: Once the initial WebRTC SDP offer/answer exchange completes, the cloud edge drops out permanently (`is_edge_severed() == true`). All communication flows directly over browser-to-browser UDP DataChannels.
+5. **Resilient In-Band Mesh, Secondary Snapping & Glare Avoidance**: Multi-peer scaling without cloud edge requests. Any connected participant (host or invitee) can invite additional peers. The inviter serves as an opaque in-band relay bridge for secondary SDP exchange (`RelaySdpOffer`, `RelaySdpAnswer`), ensuring full triangle ($K_3$) or complete mesh snapping ($K_N$). Glare collisions during crossed offers are resolved deterministically via polite/impolite roles (`myPeerId < remotePeerId` impolite winner ignores incoming offer, polite loser yields and answers). A periodic reconciliation loop (2s interval, max 5 retries with backoff) ensures any missing links between discovered members are autonomously retried and established.
+6. **Canonical Pre-Assigned Peer IDs in URL Hash Fragments**:
+   - When creating a room or generating an in-room invite, the inviter generates a unique canonical `assigned_peer_id` (`peer-[a-z0-9]{6}`), creates the WebRTC offer directly under that assigned ID, and embeds both `host_peer_id` and `assigned_peer_id` into the `#payload=` URL fragment.
+   - Because hash fragments never travel over HTTP headers to cloud edge proxies, they are immune to edge serialization stripping.
+   - Joiners adopt `assigned_peer_id` as their canonical `localPeerId` before generating SDP answers. This guarantees 100% ID consensus across all participants before WebRTC handshakes begin, permanently eliminating `rename_peer` drift, identity races, and unroutable relay traffic.
+   - `InvitePayload` and `DropPayload` declare `host_peer_id`, `assigned_peer_id`, and `joiner_peer_id` as optional default-deserialized fields, preventing edge deserialization stripping.
+7. **Scoped Invite Lifecycle & Cancellation**:
+   - Enforces a strictly non-wasteful single-invite lifecycle: only one invite can be active at a time; subsequent clicks while pending re-copy the existing valid link without spawning redundant cloud signaling sessions.
+   - `clearPendingInvite(peerId)` only closes the in-flight invite socket when `peerId === pendingInvitePeerId`, preventing secondary peer channel openings from killing active invite sockets.
+8. **Clean Departure Deduplication & Host Departure Survivability**:
+   - Clean departures broadcast `PeerLeftAndBurn` across the mesh before severance.
+   - Calling `handlePeerDeparture(leavingPeerId)` first records the peer in `departedPeers` before `_teardownPeerQuietly` disconnects the peer, completely preventing duplicate `"Peer left chat"` system messages.
+   - When the host departs, surviving participants retain direct pairwise DataChannels with `#peer-count = 1`.
+   - `openPeerCount` filter excludes any peer in `departedPeers`.
+9. **Zero-Text Minimalist UI, Slashed Person Icon & Staggered Temporary Notices**:
+   - The bottom `#btn-create-room` operates with zero text labels, featuring an icon-only 2-stage visual flow: Stage 1 (unclicked, `.btn-emerald` with create chat icon) and Stage 2 (clicked, `.btn-waiting` with copy icon). Re-clicking in Stage 2 stays in Stage 2 and re-copies the link.
+   - `#message-input` maintains an empty placeholder (`placeholder=""`) permanently across all lifecycle states, eliminating residual text artifacts upon peer departure.
+   - Clicking create room dispatches staggered temporary notices: notice 1 (`"Invite link copied to clipboard"`) renders immediately, followed by notice 2 (`"Waiting for peer"`) after ~450ms. Re-clicking restarts the stagger cleanly and cancels in-flight timers.
+   - Notice 2 contains strictly `"Waiting for peer"` without literal dots, animated dynamically by `.ticking-dots` (`::after`) without punctuation duplication.
+   - Temporary system messages omit timestamps and are automatically purged upon permanent system message arrival.
+   - In Home View, `#peer-count` renders an SVG slashed person icon (`var(--accent-cyan)`), transitions to numeric `"0"` upon room entry (and mirrors open DataChannels), and cleanly restores the slashed person icon on `resetToHome()`.
+   - The header `[+]` button displays a temporary `"Invite link copied to clipboard"` message with a pulse micro-animation (`.notice-pulse`) that auto-clears after 5 seconds, re-triggering the pulse and restarting the 5s timer on repeated clicks without mutating the `[+]` button itself.
+10. **Truthful Dynamic Peer Counter & Send Reliability**: `#peer-count` inside rooms evaluates strictly `engine.openPeerCount` (actual active WebRTC DataChannels in open state). Attempting to send messages when 0 peers are open is halted, preserving input text and rendering `"Message not sent: no connected peers"`.
+11. **Hermetic CI/CD Pipelines**: Automated dual-target test validation, strict clippy auditing, and automated Cloudflare Worker + Cloudflare Pages deployment via GitHub Actions.
+12. **90-Second Ephemeral Lifecycle, Aging Fade, Per-Message Distributed Burn & Quiet Room Invariant**:
+    - Every message (chat bubbles and system notices) registers a client-side 90-second self-destruct lifecycle: full contrast for 70s, gentle transition to 0.80 opacity between 70s and 90s (`.message-aging`, preserving >9:1 contrast), and a 200ms minimal soft fade (`.message-dissolve`: opacity 0, scale 0.98, height/margin collapse) before DOM removal.
+    - Quiet Room Invariant: when all messages dissolve in an active room session (`isInRoomSession`), the chat remains an open, serene, quiet space without re-popping the welcome splash screen.
+    - Each chat bubble features a dedicated top-right flame burn button (`.btn-message-burn`, min-size `135px × 44px`, flame-red hover accent, default text cursor preserved).
+    - Clicking the flame button dissolves the message locally and broadcasts an in-band `{ type: "signal", signal: { BurnMessage: { message_id, ttl: 3 } } }` frame across the mesh; receiving peers deduplicate via `seenMessageIds`, dissolve matching bubble with the 200ms animation, and gossip forward.
+13. **Limbo State Recovery, In-Room Plus Invite Button, Staggered Notice Flow & Ticking Ellipsis Alignment**:
+14. **Unified Reusable ZeroChatWidget (`unification-009`)**:
+    - Extracted modular `ZeroChatWidget` (`zero_chat/zero_client/widget/zero_chat_widget.js` & `zero_chat_widget.css`) supporting both `standalone` (full-screen `chat.zero-network`) and `embedded` (in-game HUD / drawer) modes.
+    - Seamlessly mounted inside `virtual_dog_walker`'s `ProximityChat` component, replacing duplicated DOM rendering while preserving 2D spatial clustering, hysteresis (160px join, 200px leave), and retention duration timers.
+    - Distributed `PROXIMITY_BURN_MSG` and `PROXIMITY_BURN_ALL` packets propagate across WebRTC proximity meshes and direct state fallbacks, ensuring synchronized message dissolution and global session incinerations across nearby walkers.
+15. **Serverless P2P Game Architecture & Sanitization (`unification-010`)**:
+    - Legacy server artifacts (`party/server.js`, `server/`, `requirements.txt`, and `ws_network.js`) completely decommissioned.
+    - `virtual_dog_walker` operates purely as a static browser frontend backed by Wasm (`dog_walker_core` and `zero_mesh`), with all matchmaking facilitated by `zero_network`'s `DeadDropRoom` Durable Object.
+    - Documentation, package configs, and tests sanitized to remove obsolete server references and developer local machine paths.
+16. **Cloudflare Pages Migration & Multi-Repo CI/CD (`unification-011`)**:
+    - Migrated `virtual_dog_walker` distribution from a legacy Cloudflare Worker to Cloudflare Pages (`https://virtual-dog-walker.pages.dev`).
+    - CI/CD workflow `.github/workflows/ci.yml` provisions sibling repositories (`zero_protocol`, `zero_chat`) to build Wasm bundles, executes Rust + Python test suites with zero external pip dependencies, builds hermetic `dist/` bundles, and deploys directly to Cloudflare Pages.
+    - When all peers depart from an active room session (`!anyConnecting` / `openPeerCount === 0`), the disabled message form (`#message-form`) is hidden and replaced by `#create-room-bar`.
+    - `#btn-create-room` renders in Stage 1 Plus mode: `.btn-action.btn-action-full.btn-emerald` with a 20x20 plus (`+`) icon matching the top-bar invite button geometry (`<svg width="20" height="20" viewBox="0 0 24 24" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`) and `aria-label="Add peer"`. Top bar `#header-add-btn` is hidden.
+    - Clicking the button in this disconnected in-room state generates an in-room WebRTC peer offer on the active engine, connects the signaling dead-drop socket (`pendingInviteWs`), copies the invite URL to clipboard, transforms into Stage 2 (`.btn-waiting`, `COPY_ICON_SVG`, `aria-label="Copy invite link"`), and emits immediate Notice 1 (`"Invite link copied to clipboard"`) followed by staggered Notice 2 (`"Waiting for peer"` with animated `.ticking-dots`) after 450ms.
+    - Re-clicks while waiting re-copy the URL and restart the staggered notices cleanly.
+    - Peer reconnection restores `#message-form` enabled for messaging, restores `#header-add-btn`, hides `#create-room-bar`, and clears temporary notices.
+    - Leaving or destroying the chat (`resetToHome()`) restores `#btn-create-room` to the default chat-bubble-plus icon (`CREATE_CHAT_ICON_SVG`).
+    - Temporary system messages (`.system-temporary`, which omit timestamps) are exempt from 90s TTL and do not age-fade or dissolve.
+    - Zero whitespace gap on all ticking ellipsis messages: `.system-temporary`, `.transient-status`, and `.system-message:has(.ticking-dots)` define `gap: 0; margin-left: 0;` eliminating any gap before `.ticking-dots`.
+14. **Unified Header & Footer State Machine, Minimalist Badges, Clean Burn Button & Zero-Delay Recovery**:
+    - **Rule 1 (Leave Button Presence)**: Whenever the peer counter is visible in any room session (`inRoom` is true, displaying `"0"`, `"1"`, `"2"`...), `#header-leave-btn` MUST be visible. In Home view (`resetToHome()`), `#peer-count` displays the slashed-person icon and `#header-leave-btn` is hidden.
+    - **Rule 2 (0-Peers Bottom Plus Bar)**: If the peer counter is `0` (waiting for peer, limbo disconnect, or join failure), `#create-room-bar` MUST be visible in the Plus icon variant (`setCreateRoomStage1Plus()`, 20x20 `+` icon), `#message-form` is hidden, and `#header-add-btn` is hidden.
+    - **Rule 3 (>0 Peers Top Add Button)**: If the peer counter is `> 0`, `#header-add-btn` MUST be visible in the top bar, `#message-form` is visible and enabled, and `#create-room-bar` is hidden.
+    - **Rule 4 (Home Button Scope)**: `setCreateRoomStage1()` (chat bubble with plus) is strictly restricted to the Home view (`resetToHome()`). All 0-peer room states use `setCreateRoomStage1Plus()`.
+    - **Minimalist Top-Bar Badges & Brand Icon**: Background fills and borders (`background: transparent; border: none;`) are removed from `.brand-icon` (leaving only the cyan `0` glyph), `.peer-count-badge`, `#peer-count`, `.status-capsule-disconnected`, `#idle-status-capsule`, and `.peer-pill`. Interactive top-bar buttons (`#header-add-btn`, `#header-leave-btn`) retain dedicated interactive button styling.
+    - **Streamlined Welcome Splash & Default Blue Vector Icons**: Heading `"Zero accounts. Zero servers. Zero history."` is removed, subtitle is updated to `"Create -> Share -> Chat"`, and platform emojis (⚡, 🔒, 🛡️) are replaced with inline SVG vector icons styled uniformly in default blue (`color: var(--accent-blue); stroke: var(--accent-blue);`).
+    - **Clean Message Burn Button**: Circular radial-gradient background and glowing red box shadow are removed from `.btn-message-burn` (`background: transparent; box-shadow: none;`), rendering only the SVG flame icon against the bubble background color, shifting to `#fca5a5` with `scale(1.1)` on hover.
+    - **Immediate Connection Failure Recovery**: Zero 15–30s delay on dead-drop failure; `joinRoomFromHash` immediately closes the engine (`engine.close()`), displays `"Failed to establish connection"`, unhides `#header-leave-btn`, and immediately shows `#create-room-bar` in Stage 1 Plus mode.
+    - **Display Timestamp Removal Across All Messages**: Timestamps are completely removed from display across all system messages (`.system-timestamp`) and chat message bubbles (`.message-timestamp`) in both HTML and Rust WASM UI client.
+    - **"Joined chat" Message Integrity**: `"Joined chat"` is emitted strictly once upon joiner initial connection (`isJoining === true`), immediately toggling `isJoining = false`. Hosts never emit `"Joined chat"`. Subsequent connections emit `"Peer joined chat"` with duplicate suppression via `announcedJoinPeers`.
+15. **Symmetrical Flex Chat Bubble Header & Centerline Icon Alignment**:
+    - `.message-header` serves as the unified top-row flex container (`display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 22px;`) within `.message-bubble`.
+    - Houses the left-aligned identity dot (`.peer-dot` / `.self-dot`) and the right-aligned flame burn button (`.btn-message-burn`, `position: relative; margin-left: auto; width: 22px; height: 22px;`).
+    - Eliminates arbitrary absolute offsets; both the 7px circular dot and the 22px flame button (13px SVG) are anchored along the exact same horizontal centerline (`11px`), providing pixel-perfect vertical alignment and symmetry across both outgoing and incoming messages.
+16. **Top-Bar Cleanliness, Zero-Peer Slashed Badge & Inlined Bottom-Left Invite Button**:
+    - **Clean Home View Top Bar**: In Home view (`!inRoom` / `resetToHome()`), the top bar renders strictly the brand logo (`<span class="brand-icon">0</span>`) and domain name on the left. All right-side controls and status badges (`#peer-count`, `#idle-status-capsule`, `#peer-list`, and `#header-leave-btn`) are completely hidden.
+    - **Zero-Peer Slashed Badge Invariant**: When in an active room session with 0 connected peers (`inRoom && openPeerCount === 0`, e.g. host waiting, limbo disconnect, or join failure), `#peer-count` renders `SLASHED_PERSON_ICON_SVG` (`[no_peers_badge]`) instead of numeric `"0"`. When peers > 0, `#peer-count` renders numeric count strings (`"1"`, `"2"`...).
+    - **Zero-Peer Blue Dot & Padlock Unification**: In all 0-peer room states (both host waiting and limbo disconnect), the top bar right controls strictly display `[no_peers_badge] [blue dot] [leave]`. The padlock icon (`#peer-list`) is strictly hidden when peer count is 0 and is displayed only during active encrypted sessions with >0 peers (where the blue dot is hidden).
+    - **Bottom-Left Inlined Add Peer Button (`#input-add-peer-btn`) & 2-Stage Blue/Cyan Styling**: The top-bar `+` button (`#header-add-btn`) is permanently omitted. Inside `#message-form`, `#input-add-peer-btn` is placed on the left side of `#message-input` with the `+[person_icon]` vector icon, styled symmetrically with `#send-button` (44px × 42px). Amber/orange styling is completely eliminated from the active chat view.
+      - **Stage 1 (Default / Idle)**: Translucent cyan (`background: rgba(56, 189, 248, 0.12); border-color: rgba(56, 189, 248, 0.3); color: var(--accent-cyan);`) displaying `ADD_PEER_ICON_SVG`.
+      - **Stage 2 (Active / Copied / Shared)**: Deeper blue/cyan accent (`background: rgba(56, 189, 248, 0.28); border-color: rgba(56, 189, 248, 0.65); color: #38bdf8;`) displaying `SHARE_ICON_SVG` (when Web Share API is available) or `COPY_ICON_SVG` (desktop/fallback).
+    - **5-Second Notice Timeout & Elimination of "Waiting for peer..." in Chat View**:
+      - Clicking `#input-add-peer-btn` triggers `triggerInChatInviteFeedback()`, copying the invite URL to clipboard, pulsing `.notice-pulse`, and displaying a single temporary notice `"Invite link ready to share"` (or `"Invite link copied to clipboard"`).
+      - Distracting `"Waiting for peer..."` notices are completely suppressed in active chat.
+      - The notice auto-dismisses and removes itself from the DOM after exactly 5000ms (`setTimeout(..., 5000)`).
+      - Re-clicking within 5000ms re-copies the URL / re-triggers share, re-pulses the notice, and resets the 5000ms timer.
+    - **Synchronized Button State Reversion**:
+      - When the 5000ms timeout expires, `#input-add-peer-btn` cleanly reverts from Stage 2 (share/copy icon) back to Stage 1 (`+[person_icon]`).
+      - Peer connections or room teardowns cancel active timers, remove feedback elements, and reset the button to Stage 1.
+      - Message draft text in `#message-input` is never modified or cleared during invite actions.
+17. **Mobile Browser Support & Resilience (Viewport, Safe Areas, Focus & Reconnection)**:
+    - **Fixed Scroll Lock & Visual Viewport Synchronization**: `html, body` enforces `position: fixed; inset: 0; width: 100%; height: var(--app-height, 100dvh); overflow: hidden; overscroll-behavior: none; -webkit-text-size-adjust: 100%;`. `#app` dynamically synchronizes with `window.visualViewport` via `--app-height` and `--app-offset-top`, locking elastic scroll drift and maintaining feed scroll pinned to the bottom during virtual keyboard animation.
+    - **Safe-Area Inset Handling**: `.chat-header` integrates `calc(12px + env(safe-area-inset-top, 0px))` to prevent collision with the iOS status bar. Dock padding adapts to `env(safe-area-inset-bottom)`, collapsing to `8px` when `.keyboard-open` is active.
+    - **16px Font Size Invariant & Overflow Protection**: `#message-input` and `.message-input` enforce `font-size: 16px; min-width: 0; flex: 1 1 auto;`, permanently preventing iOS Safari's mandatory ~114% focus zoom. Containers enforce `box-sizing: border-box; overflow-x: hidden;` preventing horizontal clipping on narrow viewports (375px–390px).
+    - **Touch Focus Retention on Send**: `#send-button` binds `pointerdown` with `e.preventDefault()`, and `doSendMessage()` explicitly retains focus on `#message-input`, allowing continuous mobile typing without keyboard dismissal.
+    - **Mobile Clipboard User-Gesture Compliance & Honest Fallback**: Uses `ClipboardItem` with deferred `Promise` in the user click stack. On permission failure (`NotAllowedError`), false copy claims are eliminated; the button morphs to Stage 2 (`.btn-waiting`, `COPY_ICON_SVG`) and displays honest notice `"Invite ready — tap Copy to copy link"`, copying synchronously upon subsequent tap with 100% reliability.
+    - **Host WebSocket Suspension & Auto-Reconnection**: Active signaling context (`activeHostSignaling`, `activeInviteSignaling`) is retained in memory. `visibilitychange` listener (`visibilityState === "visible"`) auto-reconnects closed host WebSockets while peer channels are pending open.
+    - **Joiner 404 Retry Loop**: In `joinRoomFromHash`, if `POST /drop/...` receives HTTP 404 (host backgrounded in messaging app), it retries every 1500ms up to 10 attempts (~15s) while displaying transient status `"Waiting for host"`.
+    - **ICE Gathering Latency & Bfcache Safety**: `_waitForIceGatheringComplete` timeout extended to 4500ms for cellular STUN latency. `pagehide` listener guarded with `!event.persisted`, preventing app switching into bfcache from falsely incinerating active room sessions.
+18. **Atmospheric Transparency, Relocated Header Burn Button & Rounded Glass Controls**:
+    - **Atmospheric Transparency**: `.chat-header`, `.welcome-splash`, and `.chat-footer` / `#create-room-bar` strip opaque panel backgrounds, hard borders, box-shadows, and backdrop filters (`background: transparent !important; border: none !important; box-shadow: none !important; backdrop-filter: none !important;`), allowing the dark ambient gradient to flow seamlessly through the application layout.
+    - **Header Brand Minimalism**: In Home View (`!inRoom`), `.brand-text` (`zero-chat.pages.dev` and `SECURE P2P CHAT`) is displayed alongside the cyan `0` brand glyph. In active room sessions (`inRoom`), `.brand-text` is hidden (`classList.add("hidden")`), preserving only the `0` glyph on the top-left and freeing up horizontal header width. Full brand text is restored upon `resetToHome()`.
+    - **Relocated Header Burn Button (Leftmost in Header Controls)**: The obsolete full-width `#burn-room-bar` underneath the header is completely excised, reclaiming vertical screen space for the message feed. `#destroy-session-button` is integrated into `.header-controls` as the leftmost/first child element, styled as a wide oval pill (`border-radius: 9999px; min-width: 80px; height: 26px; padding: 0 14px;`) with rose-500 styling matching `#header-leave-btn` (`background: rgba(244, 63, 94, 0.12); border: 1px solid rgba(244, 63, 94, 0.32); color: #fda4af;`), smooth rose micro-glow hover transitions (`box-shadow: 0 0 10px rgba(244, 63, 94, 0.35)`), and clean 16x16 flame icon. Managed by `updatePeerCountDisplay()`: hidden in Home view, and visible in all in-room sessions (both active chat and 0-peer limbo) alongside `#header-leave-btn`.
+    - **Rounded Bottom Bar Buttons**: `#input-add-peer-btn` and `#send-button` enforce fully rounded pill geometry (`border-radius: 9999px; width: 42px; height: 42px;`), adopting the top-bar translucent glass aesthetic with micro-glow hover states and disabled opacity.
+    - **Inverted Dock & Input Styling**: Bottom bar dock container is completely transparent; `#message-input` adopts the previous panel background (`rgba(18, 24, 38, 0.7)`), `backdrop-filter: blur(16px)`, `border: 1px solid rgba(255, 255, 255, 0.12)`, `border-radius: 9999px`, and `padding: 10px 18px`.
+19. **UI Glow Clearance, Bubble Flex Containment, Web Share API & Rounded Favicon Badge**:
+    - **Bottom Button Hover Glow Clearance**: `.message-form` and `.input-dock` define `overflow: visible;` and `padding-top: 4px;` providing vertical headroom so `#send-button:hover` and `#input-add-peer-btn:hover` box-shadows bloom uniformly in 360° without clipping against dock boundaries.
+    - **Mobile Bubble Flex Containment**: `.message-bubble` specifies `flex-shrink: 0; flex: 0 0 auto; height: auto;`. When `.messages-container` compresses vertically on mobile virtual keyboard deployment, bubbles retain their intrinsic content height, preventing message text from spilling outside the bubble container.
+    - **Ellipsis De-duplication**: Transient status and temporary system messages defensively strip trailing literal dots before appending `.ticking-dots`, ensuring zero static/animated dot duplication.
+    - **Mobile Browser Web Share API Integration**: On mobile browsers supporting `navigator.share`, clicking `#btn-create-room` or `#input-add-peer-btn` invokes the native OS share sheet with the invite link, dynamically transforming Stage 2 buttons to `SHARE_ICON_SVG` with `aria-label="Share invite link"`, with subsequent clicks re-opening the share sheet. Gracefully falls back to clipboard copying (`COPY_ICON_SVG`) on unsupported platforms.
+    - **Favicon Outer Border Rounding**: `<link rel="icon">` uses circular geometry (`circle cx='16' cy='16' r='15'`) matching the app-wide pill/circular design language (`border-radius: 9999px`).
+20. **Platform-Scored Desktop Share Bypass, Clean Mobile Share URL, Burn Icon Optical Alignment, Vertical Space Reclamation & Pill Action Button Modernization**:
+    - **Desktop Web Share Bypass**: The Web Share API (`navigator.share`) is strictly scoped to mobile devices (`isMobileBrowser()`). On all desktop platforms (macOS, Windows, Linux), invite triggers directly copy the invite URL to clipboard via `navigator.clipboard.writeText`, completely bypassing desktop OS share popovers (AirDrop/Mail/Notes), displaying `COPY_ICON_SVG` with `aria-label="Copy invite link"` and temporary notice `"Invite link copied to clipboard"`.
+    - **Clean Mobile Share URL**: When invoking `navigator.share` on mobile devices, the payload strictly omits the `text` attribute (`{ title: "zero-chat", url: inviteUrl }`). This guarantees that native mobile OS share sheets ("Copy" action on iOS/Android) place strictly the bare URL onto the clipboard without prepended text (`"Join my encrypted zero-chat session:"`), enabling immediate navigation in browser address bars.
+    - **Burn Icon Optical Balance**: `.btn-message-burn` defines `top: -2px;`, elevating the bottom-heavy teardrop flame icon to align its visual center of mass with the left sender identity dot (`.peer-dot` / `.self-dot`).
+    - **Vertical Space Reclamation**: Eliminates ~50–60px of dead space at the top and bottom of the viewport by tightening `.chat-layout` (`padding: 0 16px; gap: 6px;`), `.chat-header` (`padding: 4px 4px; padding-top: calc(8px + env(safe-area-inset-top, 0px));`), `.messages-container` (`padding: 4px 6px;`), `.chat-footer` (`padding: 4px 0;`), and `.message-form` / `.create-room-bar` (`padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));`).
+    - **Full-Width Action Button Pill Modernization**: `#btn-create-room` and `.btn-action-full` transition from an outdated 8px opaque rectangle to a sleek glassmorphic pill (`border-radius: 9999px; height: 44px; padding: 0 24px;`) with translucent emerald glass styling, soft glow, and `backdrop-filter: blur(16px)`, harmonizing with `#send-button`, `#input-add-peer-btn`, and `#destroy-session-button`.
+21. **Unified Mobile & Desktop Connectivity Resilience, Per-Peer Roles, Background Disconnect Grace Period & Smart ICE Gathering**:
+    - **Deterministic Per-Peer Role Tracking & System Notice Invariant**: `peerRoles = new Map()` maps remote peer IDs to `"inviter" | "joiner" | "mesh"`. System notice `"Joined chat"` emits strictly when the local client is a joiner entering the room for the first time (`role === "joiner" && !hasAnnouncedInitialSelfJoin`); all subsequent peer connections emit `"Peer joined chat"` without repetition or role reversal. Guarded initial signaling: mesh reconciliation and incoming offer glare handling skip any `peerId` currently awaiting initial dead-drop response (`activeHostSignaling` / `activeInviteSignaling`).
+    - **Transient Background Freeze Grace Period & Self-Healing `departedPeers`**: Unannounced channel closures (`closed` / `disconnected`) wait for a 12-second grace period (`pendingDisconnectTimers`, extended to 20s if tab is hidden) before executing departure teardown. Tab returns (`visibilitychange` to `"visible"`) extend pending disconnect timers to `visible + 8s` and kick off non-destructive mesh reconciliation. Reconnection within the grace window cancels the timer, self-heals `departedPeers.delete(peerId)`, preserves existing message bubbles, updates `#peer-count`, and suppresses duplicate join notices. Explicit `PeerLeftAndBurn` signals immediately bypass the grace period, purging messages and emitting `"Peer left chat"` with zero delay.
+    - **Smart Non-Trickle ICE Gathering & Multi-Port STUN / TURN Configuration**: In `_waitForIceGatheringComplete(pc)`, candidate strings are inspected for `"typ srflx"` and `"typ relay"`. Detection of public/relay candidates starts an adaptive 400ms settle timer, resolving immediately to minimize invite creation latency while maintaining non-trickle candidate completeness. Includes a 5000ms fallback ceiling if public candidates are delayed. Default STUN endpoints span Google and Cloudflare across ports 19302 and 3478, and merges dynamic `window.ZERO_TURN_SERVERS` for symmetric cellular NAT / CGNAT relay fallback.
+22. **Option B Burner Keybundle (Ed25519 + X25519 + ChaCha20-Poly1305), Blind Dead-Drop Signaling & WASM Crypto Bridge**:
+    - **Dual Cryptographic Burner Identity**: Each client generates an in-memory `BurnerKeybundle` containing an `X25519Keypair` (for pairwise ChaCha20-Poly1305 AEAD) and an `Ed25519Keypair` (for authenticating envelopes and mesh introductions). All secret key material derives `Zeroize` and `ZeroizeOnDrop`, with explicit volatile memory scrubbing via `burn_all()`.
+    - **Blind Dead-Drop Signaling**: The Joiner uses the pre-distributed `host_public_key` from `#payload=` and its own ephemeral `joiner_private_key` to derive the pairwise X25519 shared secret. `sdp_answer.sdp` is sealed into `sealed_sdp_answer: Option<SealedFrame>` prior to POSTing to `/drop/:do_id/:invite_uuid`. The Cloudflare Worker (`zero_network`) is 100% blind to SDP parameters and internal ICE candidates.
+    - **Signed Envelopes & Backward Compatibility**: `InvitePayload`, `DropPayload`, `SealedFrame`, and `PeerJoined` carry backward-compatible `#[serde(default)]` Ed25519 public keys and signatures, preventing mesh relay nodes from tampering with introduced peer identities or forging frames.
+    - **WASM Crypto Bridge (`WasmCryptoSession`)**: Exposes an ergonomic, high-performance `#[wasm_bindgen]` API from `zero_client`, providing browser JavaScript with peer session management, authenticated frame sealing/opening, blind SDP encryption/decryption, and CSPRNG UUID generation without Curve25519 point multiplication.
+23. **Browser WASM Cryptographic Runtime Integration, Blind Dead-Drop Sealing & Tamper Rejection**:
+    - **WASM Bridge & 100% Stub Elimination**: Browser client (`zero_client/index.html`) directly binds to `WasmCryptoSession` (`./pkg/zero_client.js`) via `ensureCryptoReady()`, eliminating 100% of legacy JavaScript dummy keys (`crypto.getRandomValues`), fill-zero stubs, and cleartext byte buffers. Volatile memory is zeroized via `cryptoSession.burn_all()` on `resetToHome()` and `cryptoSession.remove_peer(peerId)` on peer departure.
+    - **Blind Dead-Drop Handshake**: Joiners seal WebRTC SDP answers into `sealed_sdp_answer: Option<SealedFrame>` using the Host's pre-distributed X25519 public key before POSTing `DropPayload` with dummy `sdp_answer: { sdp: "SEALED" }`. The Cloudflare Worker signaling relay is 100% blind to WebRTC SDP parameters, codecs, internal IP addresses, and ICE candidates. Hosts verify and decrypt incoming dead-drops via `cryptoSession.open_drop_sdp(...)`.
+    - **Signed Multi-Peer Mesh Introductions**: `PeerJoined` introduces existing participants to newly joined peers using real X25519 and Ed25519 public keys. Receiving nodes register pairwise sessions prior to in-band relay handshakes, preventing glare or unregistered peer exceptions.
+    - **End-to-End Encrypted Relay & Per-Peer Sealed Chat**: `RelaySdpOffer` and `RelaySdpAnswer` are sealed end-to-end; intermediate mesh nodes forward frames without decryption. `BroadcastChat` is uniquely sealed per connected peer with ChaCha20-Poly1305 AEAD ciphertext and 64-byte Ed25519 signatures. Corrupted MAC tags or forged signatures fail closed and are discarded without mutating the DOM.
+24. **Consolidated High-Assurance Pure-Rust Core & Lean WASM Footprint**:
+    - **Clean Separation of Concerns**: The Rust client (`zero_client`) operates strictly as a pure-Rust/WASM Cryptography, Protocol & Pure-State library without legacy DOM templates, unconfigured `web-sys` browser RTC closures, or heavy web-sys dependencies.
+    - **Optimized Binary Size**: Stripping 45+ unused DOM feature flags reduces the compiled release WASM binary (`dist/pkg/zero_client_bg.wasm`) to ~844KB (a 35% reduction from 1.3MB) for rapid cold-start loading.
+    - **Pure-State Mesh Topology**: `MeshTopology` implements per-peer role tracking (`PeerRole::{Inviter, Joiner, Mesh}`) and two-stage transient disconnect grace periods (`mark_peer_disconnected_grace`, `recover_peer`, `expire_peer_grace`), preventing premature message burning during cellular handoffs and background tab freezes while ensuring explicit `PeerLeftAndBurn` signals immediately purge without delay.
+25. **Ephemeral Cloudflare Realtime TURN Relay, 4G/5G CGNAT Traversal & Non-Trickle Relay Bundling**:
+    - **Three-Tier ICE Endpoint (`/ice`)**:
+      - **Mode 1 (Cloudflare Realtime TURN API)**: Worker queries `CF_TURN_KEY_ID` and `CF_TURN_API_TOKEN` from secrets. If present, it mints credentials via `POST https://rtc.live.cloudflare.com/v1/turn/keys/${CF_TURN_KEY_ID}/credentials/generate-ice-servers` (accepting any 2xx response, including `201 Created`) and normalizes `{ "iceServers": [...] }` directly.
+      - **Mode 2 (Static / Custom JSON Override)**: Evaluates `TURN_SERVERS_JSON` in `env` via `parse_custom_ice_servers` (supporting `{ "iceServers": [...] }`, arrays, and flat credential objects with `urls`).
+      - **Mode 3 (Graceful Default STUN Fallback)**: Returns default STUN servers (`stun.cloudflare.com:3478`, `stun.l.google.com:19302`) with `200 OK` on missing secrets or upstream API errors.
+      - CORS headers (`Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: GET, POST, OPTIONS`, `Access-Control-Allow-Headers: Content-Type`) and `Content-Type: application/json` are strictly preserved on all responses.
+    - **Operator Secret Activation**:
+      - Operators activate Cloudflare TURN by running:
+        `npx wrangler secret put CF_TURN_KEY_ID`
+        `npx wrangler secret put CF_TURN_API_TOKEN`
+    - **Client-Side 15-Minute In-Memory Caching**:
+      - `ensureIceServersReady()` in `zero_client/index.html` caches provisioned ICE servers for 15 minutes (`ICE_CACHE_TTL_MS = 15 * 60 * 1000`), eliminating redundant network roundtrips during rapid secondary in-room invites and mesh handshakes.
+      - Dynamic engine injection: `activeEng.setIceServers(...)` dynamically updates active WebRTC RTCPeerConnection configurations.
+    - **Adaptive Non-Trickle Candidate Gathering & Settle Timers**:
+      - `_waitForIceGatheringComplete(pc)` detects `hasTurnConfigured`.
+      - When TURN is active, arrival of a `typ relay` candidate triggers a fast 350ms settle timer, canceling pending timers and ensuring cellular relay candidates are bundled into non-trickle SDPs.
+      - If only `typ srflx` candidates arrive, a 1,200ms fallback settle timer applies, backed by an absolute 5,000ms hard ceiling.
+    - **Privacy & Cryptographic Invariant**:
+      - WebRTC SCTP DataChannels are protected by DTLS encapsulation over UDP/TCP.
+      - Application chat payloads remain end-to-end encrypted and authenticated via `WasmCryptoSession` (pairwise X25519 + ChaCha20-Poly1305 AEAD + Ed25519 signatures).
+      - Cloudflare TURN servers act strictly as blind transport relays (RFC 5766 / RFC 8656), inspecting only opaque doubly-encrypted UDP/TCP packets. Ephemeral credentials carry zero room, user, or message metadata.
+26. **WASM Size Optimization (Cargo LTO & Binaryen `wasm-opt -Oz`) & Architectural Showcase (`README.md`)**:
+    - **Whole-Program Release Profile**: `Cargo.toml` workspace declares `[profile.release]` with `opt-level = "z"`, `lto = true`, `codegen-units = 1`, `panic = "abort"`, and `strip = true`, enabling whole-program link-time dead-symbol elimination and zero stack-unwinding tables.
+    - **Binaryen Post-Pass Pipeline**: `scripts/deploy_dry_run.sh` runs `wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int` on `dist/pkg/zero_client_bg.wasm` when available, logging before/after byte sizes and falling back gracefully when absent.
+    - **Production Showcase**: Root `README.md` documents the 3-crate layout, Option B Burner Keybundle (`X25519` + `Ed25519` + `ChaCha20-Poly1305` + `ZeroizeOnDrop`), 100% blind dead-drop signaling (`sealed_sdp_answer`), self-healing mesh topology, mobile background freeze grace periods, and 3-tier TURN CGNAT traversal.
+27. **Durable Object CORS RPC Reconstruction & Non-Re-Entrant Joiner Failure Teardown**:
+    - **Durable Object RPC Boundary Reconstruction**: When the Cloudflare Worker router receives responses from `stub.fetch_with_request(req).await` in `/drop/:do_id/:invite_uuid`, subrequest responses have immutable headers (`guard: "immutable"`). Non-101 responses extract `status` and `body_text` and reconstruct a fresh mutable `worker::Response` in the outer isolate before applying `handlers::with_cors`, avoiding unhandled V8 exceptions and guaranteeing browser CORS delivery. 101 Switching Protocols responses bypass CORS mutation. Subrequest errors return structured 500 responses with CORS.
+    - **Joiner Failure Non-Re-Entrancy**: `handleJoinFailure(err)` in `zero_client/index.html` atomically checks and clears `isJoining = false` at entry before invoking `engine.close()`, neutralizing recursive callback re-entrancy triggered synchronously by RTCPeerConnection `"closed"` state events.
+    - **Unshadowed Web Crypto API**: Native `window.crypto.getRandomValues` is preserved without local variable shadowing by binding Wasm crypto session instances as `wasmCrypto`.
+28. **Cloudflare Worker Subdomain (`zero-network.workers.dev`) & Staged Scope Isolation**:
+    - Default signaling endpoints in `zero_client/index.html` target `https://network.zero-network.workers.dev` and `wss://network.zero-network.workers.dev`, matching the dedicated `zero-network` Cloudflare Workers subdomain.
+    - Dynamic staging/override support is preserved via `window.WORKER_HTTP_ORIGIN`.
+    - Cloudflare Pages static hosting remains strictly isolated under project `zero-chat` (`zero-chat.pages.dev`).
+29. **Decoupled Sibling Repositories & Modular Mesh Engine Architecture**:
+    - Core wire protocols, cryptographic primitives, and headless P2P mesh state machines are factored out into standalone sibling repository `../zero_protocol` (Cargo workspace containing `zero_protocol` and `zero_mesh`).
+    - The ephemeral signaling worker and hibernating Durable Object are factored out into standalone sibling repository `../zero_network`.
+    - `zero_chat` operates as a focused web client repository: `zero_client` consumes `zero_protocol` and `zero_mesh` from sibling path dependencies, re-exporting `WasmCryptoSession` and entrypoints for zero-npm browser delivery on Cloudflare Pages.
+    - Multi-project ecosystem sibling directory `../virtual_dog_walker` is normalized to snake_case.
+
+---
+
+## 2. Directory Layout & Subsystem Ownership
+
+```text
+<parent_dir>/
+├── zero_protocol/                      # Sibling repo: Cargo workspace (zero_protocol + zero_mesh)
+│   ├── Cargo.toml
+│   └── crates/
+│       ├── zero_protocol/              # Shared wire types, DTOs, & crypto primitives
+│       │   ├── Cargo.toml
+│       │   └── src/ (lib.rs, crypto.rs, envelope.rs)
+│       └── zero_mesh/                  # Headless P2P WebRTC mesh engine & state machine
+│           ├── Cargo.toml
+│           └── src/ (lib.rs, crypto.rs, invite.rs, mesh.rs, webrtc.rs)
+├── zero_network/                       # Sibling repo: Standalone Cloudflare Signaling Worker
+│   ├── Cargo.toml
+│   ├── wrangler.toml
+│   └── src/ (lib.rs, durable_object.rs, handlers.rs)
+├── zero_chat/                          # Primary web frontend repository
+│   ├── .agents/                        # Antigravity IDE configuration & plugins
+│   ├── .factory/                       # Factory state machine runtime (gitignored)
+│   ├── .github/workflows/              # CI/CD automation pipelines (ci.yml, deploy.yml)
+│   ├── Cargo.toml                      # Workspace declaring ["zero_client"]
+│   ├── zero_client/                    # Web client crate (consumes zero_protocol & zero_mesh)
+│   │   ├── Cargo.toml                  # Lean WASM configuration & sibling path dependencies
+│   │   ├── index.html                  # Zero-npm HTML/CSS web frontend & WebRTC orchestrator
+│   │   ├── style.css                   # Glassmorphic dark-mode styling
+│   │   ├── src/lib.rs                  # Clean public surface re-exporting zero_mesh & WasmCryptoSession
+│   │   └── tests/                      # Integration test suites
+│   ├── dist/                           # Assembled static bundle for Cloudflare Pages
+│   └── scripts/deploy_dry_run.sh       # Local dry-run build & bundle verification
+└── virtual_dog_walker/                 # Normalized multi-project sibling repo
+```
+│   ├── Cargo.toml
+│   ├── wrangler.toml               # Cloudflare configuration & DO bindings
+│   └── src/
+│       ├── lib.rs
+│       ├── durable_object.rs       # WebSocket hibernation & host attachment
+│       └── handlers.rs             # POST /drop/:do_id/:uuid & HMAC validation
+├── openspec/
+│   ├── config.yaml
+│   ├── specs/                      # Canonical architecture documentation
+│   │   └── overview.md
+│   ├── roadmaps/                   # Milestone roadmaps
+│   │   ├── serverless-p2p-chat.md
+│   │   └── archive/
+│   └── changes/                    # Task specifications
+│       └── archive/                # Archived change proposals (ticket-001..023)
+├── tests/                          # Root integration test suites
+│   ├── e2e_handshake.rs            # Full loopback handshake & chat roundtrip
+│   └── mesh_simulation_test.rs     # 3+ peer in-band mesh simulation suite
+├── docs/                           # Project guides & deployment runbooks
+│   └── deployment.md               # Production deployment & secret configuration
+├── scripts/
+│   └── deploy_dry_run.sh           # Local pre-flight WASM bundle assembly check
+├── Cargo.toml                      # Top-level Cargo workspace
+└── factory.yaml                    # Software Factory automation commands
+```
+
+---
+
+## 3. Subsystem Architecture
+
+### 3.1 Cryptographic Primitives (`crates/zero_protocol::crypto`)
+- **Key Exchange**: X25519 Diffie-Hellman (`x25519-dalek`) generating 32-byte ephemeral public/secret keypairs and deriving pairwise symmetric shared secrets ($K = \text{X25519}(sk_A, pk_B)$).
+- **Symmetric AEAD**: Pure-Rust ChaCha20-Poly1305 (`chacha20poly1305`) providing authenticated encryption with 12-byte (96-bit) nonces generated via CSPRNG `getrandom` and 16-byte Poly1305 authentication tags. Plaintext is never placed on the wire in `ChatMessage.body`; all application payloads are sealed inside `SealedFrame { nonce, ciphertext }`.
+- **Integrity & Token Sealing**: RFC 4231 constant-time HMAC-SHA256 (`hmac`, `sha2`) sealing offline room invites:
+  $$\text{Token} = \text{HMAC-SHA256}(\text{host\_secret}, \text{Invite\_UUID})$$
+- **Memory Zeroization**: Volatile memory zeroization on drop (`Zeroize`, `ZeroizeOnDrop`) ensures ephemeral keys and plaintext buffers are wiped immediately upon deallocation.
+
+### 3.2 WebRTC Engine (`zero_client::webrtc` & `zero_client/index.html`)
+- **Browser WebRTC Orchestrator (`ZeroWebRtcEngine` in `index.html`)**: Manages real browser `RTCPeerConnection` and `RTCDataChannel` lifecycles, smart non-trickle ICE candidate gathering (srflx/relay settling), STUN/TURN fallback servers, and visibility-change re-connections.
+- **Pure-Rust State Machine (`zero_client::webrtc`)**: Provides pure-Rust `PeerLifecycleState` transitions, SDP parsing/validation (`validate_sdp_offer`, `validate_sdp_answer`, `bundle_sdp_with_candidates`), and in-memory simulated channel pairs for hermetic testing.
+
+### 3.3 Hibernating Durable Object Dead-Drop (`zero_network`)
+- **WebSocket Hibernation**: Room hosts connect to `/host/:do_id` via WebSocket. The Durable Object serializes the room state (`host_secret`) using `serialize_attachment()` and hibernates immediately, billing $0 during idle waiting.
+- **Dead-Drop Endpoint (`POST /drop/:do_id/:uuid`)**: The joining peer posts its SDP answer directly to the Cloudflare Worker edge. The handler performs constant-time HMAC verification against the bearer token.
+- **Single-Use Burning**: Upon successful delivery to the hibernating host WebSocket, the UUID is permanently burned in Durable Object storage. Any replay attempt receives an immediate `410 Gone`.
+
+### 3.4 Stateless URL Fragment Signaling (`zero_client::invite` & `index.html`)
+- Alice generates an offline room invite bundle containing: `do_id`, `host_pubkey`, `invite_uuid`, `hmac_token`, and Alice's bundled SDP offer.
+- The bundle is compressed/serialized into URL fragment `#payload=<base64>` and shared out-of-band. URL fragments are never transmitted to cloud servers in HTTP headers.
+- When Bob opens the URL, the browser client automatically extracts the fragment, verifies the HMAC token offline, derives the pairwise X25519 secret, seals the SDP answer into `sealed_sdp_answer`, and dispatches the dead-drop POST request.
+- **Immediate Edge Severance**: As soon as the WebRTC DataChannel fires `onopen`, Alice and Bob explicitly close all signaling sockets.
+
+### 3.5 Ephemeral Chat UI (`zero_client/index.html`, `style.css`)
+- Glassmorphic dark-mode interface with translucent panels (`backdrop-filter: blur(16px)`), pulsing connection badges, and responsive layouts.
+- Domain URL branding in top-bar header and `<title>` (`zero-chat.pages.dev`) with embedded SVG favicon matching the static brand icon (`<span class="brand-icon">0</span>`).
+- Header controls feature fixed bounding alignment with an adaptive split badge architecture:
+  - **Disconnected State**: Standalone peer counter badge (`#peer-count`, displaying `0`) on the left and a double-width blue-dot idle capsule (`#idle-status-capsule`, 58px x 26px with centered static cyan/blue dot and non-pulsing animation) on the right.
+  - **Connected State**: The idle capsule cleanly splits into the middle connection status pill (`#peer-list` / `#status-badge`) and the right circular 26px red exit button (`#header-leave-btn`), ensuring zero horizontal layout shifting across states.
+  - **Header Add-Peer Button (`#header-add-btn`)**: Permanently omitted from the top-bar header in favor of `#input-add-peer-btn` in the footer.
+  - **Inlined Bottom-Left Add-Peer Button (`#input-add-peer-btn`)**: Nested inside `#message-form` directly left of `#message-input`. Styled with cyan accent and symmetrical 44px × 42px dimensions. Clicking generates a single invite offer and silently copies the link to the clipboard, transitioning to `.btn-waiting` with copy icon without touching or clearing drafted text in `#message-input`. If an invite is already pending, subsequent clicks re-copy the valid link without spawning duplicate WebRTC connections or cloud sessions. The pending invite clears upon peer connection. Establishes the anchor for future nested attachment flows.
+- Clean in-feed transient status messaging: Connection progress displays `"Establishing secure connection"` with an animated CSS ticking ellipsis (`.`, `..`, `...`) without timestamps, cleanly replaced in-place when permanent system messages are appended (`Joined chat`, `Peer joined chat`, or `Failed to establish connection`).
+- Direct chat creation logging: Room creation immediately outputs `"Secure chat created"` with timestamp.
+- Minimalist welcome splash with centered brand headline (`Zero accounts. Zero servers. Zero history.`), 3-step action flow (`Create Chat -> Share Link -> Talk P2P`), and 3 invariant feature cards (`Direct P2P Connection` with description `"Private channels with no intermediate relays or storage servers."`, `Secure Communications`, `Ephemeral Sessions`) displayed strictly when the chat is empty; session burn and leave return the user cleanly to this home view.
+- Unified chat bubble styling across incoming and outgoing messages with left accent borders (emerald for self, cyan/palette for peers), `[dot] [timestamp]` header layout with regular arrow cursor, and clean message bodies without bulky verification footers.
+- Message bubbles are stamped with `data-peer-id="<peer_id>"` (or `"local"` for self) for deterministic author attribution and selective burning. Distinct peer colors are assigned from `PEER_COLOR_PALETTE`.
+- Distinct Leave and Burn UI triggers:
+  - Circular red exit button (`#header-leave-btn`): triggers selective peer message purge across surviving peers (`PeerLeftAndBurn`) and resets local view to home.
+  - Session burn button (`#destroy-session-button`): triggers global room annihilation (`GlobalBurnSession`) flooding all peers and resetting everyone to home.
+- Left-aligned system messages with monospace timestamps (`[HH:MM]`).
+
+### 3.6 Decentralized In-Band Gossip Mesh & Lifecycle (`zero_client::mesh`, `envelope`)
+- **Multi-Peer Connection Pool**: `ZeroWebRtcEngine` in `zero_client/index.html` manages concurrent WebRTC peers (`Map<peerId, { pc, dc }>`), supporting broadcast messaging (`broadcast_text`) across all active DataChannels and independent connection lifecycle tracking.
+- **Opaque Bridge Relay (REQ-006.1, REQ-026.1)**: Room host acts as an in-band signaling bridge between existing peers (`Channel_AB`, `Channel_AC`). Relay frames (`RelaySdpOffer`, `RelaySdpAnswer`) contain end-to-end sealed payloads; relay nodes forward them verbatim without inspection, decrementing TTL on forwarding hops.
+- **Direct Mesh Snapping (REQ-006.2, REQ-026.2)**: Secondary peers (Bob and Charlie) exchange SDP offers/answers over Alice's bridge and snap direct WebRTC DataChannels (`Channel_BC`) with **0 cloud edge requests**. Automatic host introductions (`PeerJoined`) and lexicographical glare tie-breakers ensure deterministic channel establishment.
+- **Broadcast Flooding & Loop Suppression (REQ-006.3, REQ-006.4, REQ-026.3)**: Chat messages flood across direct links with initial TTL = 3. Network loops in cyclic/triangle topologies are suppressed using an LRU deduplication cache (`seenMessageIds`, 1000 entries), delivering messages exactly once.
+- **Selective Leave & Purge (`PeerLeftAndBurn`)**: Clean departures broadcast `PeerLeftAndBurn` across the mesh before connection severance. Remote peers update routing tables and peer counts, selectively purge all DOM bubbles matching `.message-bubble[data-peer-id="<peer_id>"]`, and log a single clean `"Peer left chat"` notice (REQ-024.1). In multi-peer rooms, when 1 of N peers leaves, the room remains active for surviving peers with a decremented counter.
+- **Global Room Annihilation (`GlobalBurnSession`)**: Triggered via `#destroy-session-button`, flooding a burn signal across all active DataChannels. All recipient nodes immediately invoke `resetToHome()`, closing connections, zeroizing memory, and wiping feeds simultaneously.
+- **Dirty Disconnect, Window Unload Purge & Controls Preservation**: Abrupt channel closures (`PeerLifecycleState::Closed` / `st === "closed"`) and `MeshTopology::remove_peer` automatically invoke `on_burn_peer_messages` to purge disconnected peer messages from the UI feed. Window `beforeunload` and `pagehide` listeners opportunistically dispatch `leave_and_burn` signals out before browser exit with deduplication guards. On peer departure, surviving nodes preserve disconnected room controls: header peer count `0`, padlock icon, and leave button remain visible (blue dot hidden), burn button remains accessible below header, and message input is disabled with `"Peer left chat"` placeholder, allowing the user to cleanly leave or burn to return to the home view (REQ-024.3, REQ-024.4).
+
+### 3.7 CI/CD Automation (`.github/workflows/`)
+- **`ci.yml`**: Triggers on pull requests and pushes to `main`. Executes `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, full workspace test suite (`cargo test --workspace`), and target-specific builds (`wasm32-unknown-unknown` for `zero_client`).
+- **`deploy.yml`**: Production CD triggering on pushes to `main`. Uses `cloudflare/wrangler-action@v3` to deploy `zero_network` Worker + Durable Object bindings and publish the assembled `zero_client` WASM bundle to Cloudflare Pages. Enforces `cancel-in-progress: false` to protect active deployments.
+
+---
+
+## 4. End-to-End Handshake & Messaging Sequence
+
+```text
+Host (Alice)                     Joiner (Bob)                 Cloudflare DO
+    |                                 |                             |
+    |-- 1. Create DO room & WS ------>|                             |
+    |   (stores host_secret)          |                             |
+    |                                 |                             |-- [DO Hibernates $0/sec]
+    |-- 2. Offline Invite Bundle ---->|                             |
+    |   (URL #payload= fragment)      |                             |
+    |                                 |-- 3. Extract & verify HMAC -|
+    |                                 |-- 4. POST /drop/:do_id/:uuid -> [Wakes DO]
+    |                                 |      (contains SDP answer)  |-- Burn UUID (410)
+    |<-- 5. Pipe Answer via WS -------------------------------------|
+    |                                 |                             |
+    |==== 6. WebRTC DataChannel Open (UDP P2P Direct) =============|
+    |                                 |                             |
+    |-- 7. Close WebSocket ---------->|                             |
+    |   [EDGE SEVERED: 0 CLOUD HITS]  |                             |
+    |                                 |                             |
+    |<=== 8. Encrypted ChaCha20-Poly1305 Chat (P2P Direct) =======>|
+```
+
+---
+
+## 5. Test & Validation Coverage (123 Rust Tests + 13 Browser Headless Tests)
+
+```text
+Unit Tests:
+  - zero_client lib (58 tests):
+    * bootstrap & auto-drop: 8 passed
+    * payload sealing & zeroization: 13 passed
+    * invite generation & fragment packing: 8 passed
+    * mesh topology & in-band relay: 11 passed (including leave and burn broadcasts, disconnect cleanup)
+    * chat UI & zero-persistence audit: 18 passed (including selective message burning, multi-peer partial departures, dynamic peer count, burn idempotency, multi-remote peer selective purge, dynamic peer counter lifecycle & symmetry)
+  - zero_network lib (3 tests):
+    * ephemeral room capacity & burn: 2 passed
+    * mock host socket attachment: 1 passed
+  - zero_protocol lib (8 tests):
+    * envelope schemas & TTL decrementation: 8 passed (including PeerLeftAndBurn, GlobalBurnSession, pre-assigned peer IDs)
+
+Integration Test Suites:
+  - tests/e2e_handshake.rs (5 tests):
+    * REQ-005.1: Ephemeral UI lifecycle & status transitions
+    * REQ-005.2: Symmetric payload sealing & packet inspection
+    * REQ-005.3: Tamper detection & security alert handling
+    * REQ-005.4: Zero persistence lifecycle audit
+    * REQ-005.5: Complete E2E handshake & encrypted chat roundtrip
+  - tests/mesh_simulation_test.rs (23 tests):
+    * REQ-006.1: Opaque bridge signaling relay
+    * REQ-006.2: Direct mesh snap zero cloud edge
+    * REQ-006.3: Mesh broadcast flooding delivery
+    * REQ-006.4: Duplicate broadcast loop suppression & bounded cache
+    * REQ-006.5: Peer disconnect & UI cleanup
+    * REQ-007.1: Leave and burn selective message purging
+    * REQ-007.2: Global burn session room annihilation
+    * REQ-007.3: Dirty disconnect automatic peer message purging
+    * REQ-028.1: Multi-node connected mesh simulation (triangular snap, 0 edge hits, broadcast flooding, loop suppression)
+    * REQ-028.2: Partial peer departure & feed survivability (selective purge, surviving channel retention)
+    * REQ-029.4: Third peer departure selective message purge
+    * REQ-029.5: Host departure pairwise channel survivability and feed continuity
+    * REQ-030.1 / REQ-030.2: Secondary inviter mesh snapping and counter synchronization across all nodes
+    * REQ-030.3 / REQ-030.4: Symmetric departure counter decrement across surviving peers and host departure survivability
+  - tests/invite_tests.rs (2 tests):
+    * REQ-004.1 through REQ-004.5
+  - tests/webrtc_tests.rs (6 tests):
+    * REQ-002.1 through REQ-002.5
+  - tests/network_tests.rs (8 tests):
+    * REQ-003.1 through REQ-003.5 + Dead-drop joiner_peer_id preservation
+    * REQ-049.1: Default STUN fallback and custom TURN parsing modes
+  - tests/protocol_tests.rs (12 tests):
+    * REQ-001.1 through REQ-001.5 + Serde backward compatibility & round-trip assertions
+
+Browser Headless Test Suite (zero_client/tests/browser/run_test.sh):
+  - 17 comprehensive multi-participant mesh, departure & UI scenarios passed:
+    * Test 1: Full mesh establishment with 3 peers (A, B, C) (K_3)
+    * Test 2: Host A departs; C broadcasts; B receives directly
+    * Test 3: C departs; B reflects 0 open peers
+    * Test 4: Idempotency check - duplicate offer/answer does not kill open link
+    * Test 5: Mesh reconciliation timer recovers dropped handshake
+    * Test 6: Send feedback - 0 peers displays clear error feedback and halts send
+    * Test 7: Truthful peer counter deriving strictly from open DataChannels
+    * Test 8: Crossed-offer glare resolution between simultaneous initiators
+    * Test 9: Watchdog cleans stalled connecting peer when zero open peers remain
+    * Test 10: Scoped clearPendingInvite protects in-flight invite from secondary peer connection
+    * Test 11: Pre-assigned peer IDs and clean host departure in 3-peer mesh (single notice deduplication)
+    * Test 12: E2E createRoomAsHost and joinRoomFromHash via signaling exchange (zero peer renaming)
+    * Test 13: In-chat add peer button 2-stage blue/cyan styling, 5s temporary notice timeout & reversion (REQ-033.1 - REQ-033.4, REQ-040.1 - REQ-040.4)
+    * Test 14: Zero input placeholder, staggered temporary notices, single ellipsis & slashed person icon (REQ-034.1 - REQ-034.4)
+    * Test 15: Enhanced Burn Behavior - 90s TTL, 70s aging fade, per-message flame button, distributed BurnMessage signaling, quiet room invariant, and reset restoration (REQ-035.1 - REQ-035.5)
+    * Test 16: Limbo State Recovery - in-room plus button, two-stage copy morphing, staggered notices, 95s TTL immunity, peer reconnection, and zero whitespace ticking dots (REQ-036.1 - REQ-036.7)
+    * Test 17: UI Architecture Refinement - Rules 1-4, minimalist badges, brand icon glyph, clean burn icon, blue vector splash icons, zero-delay failure recovery, timestamp removal, and joiner message integrity (REQ-037.1 - REQ-037.9)
+    * Test 19: UI Architecture Refinements - Transparent Panels, Relocated Burn Button & Rounded Controls (ticket-042)
+    * Test 20: Mobile Browser Web Share API, Desktop Share Bypass, Clean Share URL, Burn Offset & Compacted Layout (ticket-043, ticket-044)
+    * Test 21: Unified Connectivity Resilience - Per-Peer Roles, Grace Window & Smart ICE (REQ-045.1 - REQ-045.4)
+    * Test 22: WasmCryptoSession Browser Runtime Integration & Blind Dead-Drop - Wire Blindness, Authenticated AEAD & Ed25519 Signatures, 3-Peer Mesh Formation & Host Departure Continuity, Tamper Rejection & Fail-Closed Security, and Volatile Memory Wipe (REQ-047.1 - REQ-047.5)
+    * Test 23: Ephemeral Cloudflare Realtime TURN Relay, 15-Minute ICE Caching & Adaptive Candidate Gathering - Three-Tier ICE Endpoint, 15m Cache Expiration, 350ms Relay vs 1200ms Srflx Settle Logic, and Authenticated 3-Peer Mesh over TURN Relay (REQ-049.1 - REQ-049.4)
+    * Test 24: Joiner Failure Non-Re-Entrancy, Web Crypto De-shadowing & Error Handling (ticket-052)
+
+Unification & Multi-Application P2P Infrastructure (unification-001 through unification-008):
+  - Independent Workspace Topology:
+    * zero_protocol: Cargo workspace hosting zero_protocol wire/crypto crate and zero_mesh headless WASM engine.
+    * zero_network: Standalone Cloudflare signaling worker and hibernating Durable Object.
+    * zero_chat: Clean chat frontend compiling WASM client against sibling crates.
+    * virtual_dog_walker: Clifton Down dog-walking simulation running over zero_mesh P2P and dog_walker_core on Cloudflare Pages.
+  - Wire Envelope & State Streaming:
+    * `MeshRelaySignal::BroadcastState`: Authenticated binary/application state streaming multiplexed by topic.
+    * `MeshTopology::broadcast_state` & `send_direct_state`: Pairwise ChaCha20-Poly1305 payload encryption, cache deduplication, and multi-hop TTL relaying.
+    * `WasmMeshTopology`: Headless JavaScript/WASM bindings for browser and game engines.
+  - Dead-Drop Matchmaking & Multi-Host Signaling:
+    * `POST /stage/:do_id` & WS staging: Single-use `InvitePayload` staging with constant-time HMAC validation.
+    * `GET /match/:do_id`: Pseudo-random host selection and atomic single-use invite consumption.
+    * Multi-Host Targeted Routing: Token-matching targeted dead-drop delivery in multi-peer rooms.
+    * WebSocket Query Authentication: `GET /host/:do_id?secret=<hex>` enabling browser `new WebSocket` connections without custom HTTP headers, verified via constant-time comparison.
+    * Universal CORS & Preflight: Standard CORS headers attached across all HTTP routes with immediate 204 No Content responses on `OPTIONS` preflights.
+  - Virtual Dog Walker zero_mesh Migration & Production Hardening (unification-003, unification-005, unification-006, unification-007 & unification-008):
+    * Browser ES Module Integrity: Clean separation with zero bare JSON imports, ensuring unbundled browser module loaders evaluate `<script type="module" src="src/main.js">` cleanly.
+    * Cloudflare Static Assets Protection: Strict `.assetsignore` excluding Rust build caches (`target/`), Git history, worktrees, and test runners from Pages deployments.
+    * Seed Host Local NPC Dispatch: Instant local invocation of `onNpcSnapshot(snapshot, Date.now())` upon `initNpcSpawner()`, plus symmetric local `onNpcDespawn` and `onNpcSpawn` dispatching so the host player immediately interacts with ambient park pedestrians.
+    * Ambient NPC Nighttime Illumination: Active NPCs included in the lighting pass with radial cutouts (`pRadius = 60`) in `environment.js`, ensuring pedestrians remain visible through Dusk and Night cycles.
+    * Live Dual-Mesh Proximity WebRTC Handshake: In-band SDP offer/answer (`proximity_invite` / `proximity_drop`) negotiated over `gameMesh.send_direct_state`, with `proximityMesh.set_on_message` incoming routing and instant encrypted fallback delivery during ICE gathering.
+    * Public Matchmaking & Commons Status: Automatic connection to `clifton-commons` room via `GET /match/:do_id` with seed host fallback, multi-host staging, and green `Online` HUD badge.
+    * Real WebRTC Handshake: Joiner creates answer and seals with `seal_drop_sdp`; host authenticates WS with `?secret=${secretHex}`, signs with `compute_hmac_hex`, decrypts drop answers with `open_drop_sdp`, and replenishes staged offers.
+    * Game State P2P Replication: `ensureRemotePeer` maintaining `{ ownerInterpolator, dogInterpolator, meta }`, `startSyncLoop` (16 Hz) broadcasting `Protocol.createSyncState` { owner, dog }, and symmetric `onPeerJoin(senderId, meta)`.
+    * Deterministic P2P NPC Authority: Lowest lexicographical `peerId` coordinates ambient park NPCs, snapshots delivered to late-joiners, and empty room reseed.
+    * Dual-Mesh Proximity Chat: Completely isolated `proximityChatMesh` with 160px/200px hysteresis (`joinRadius: 160`, `leaveRadius: 200`) and 5-minute message retention.
+  - Simulation Core Port to Rust/Wasm (unification-004 through unification-008):
+    * `crates/dog_walker_core`: Deterministic Rust simulation crate compiled to `wasm32-unknown-unknown` covering circle collision pushout, world boundary clamping, spring-damper leash constraint, floppy ear springs, 3D ball ballistics with ground/obstacle bounces, static obstacle colliders, and polyline NPC path sampling.
+    * Full Map Calibration: `WasmWorldSim(3200.0, 2400.0)` calibrated to Clifton Down coordinate bounds.
+    * Entity Simulation Delegation: `CompanionDog.update()` delegates progressive spring-damper leash cushioning (65px..105px) directly to `dog_walker_core::step_leash_constraint` before 105px hard boundary clamping.
+    * Dual Wasm Build: `scripts/build_wasm.sh` compiling both `zero_mesh` (to `src/wasm/`) and `dog_walker_core` (to `src/wasm_core/`), packaged into `dist/`.
+    * Strangler-Fig Bridge: `src/engine/wasm_sim_bridge.js` delegating frame simulation ticks to `WasmWorldSim` while transparently preserving pure JS math fallbacks for headless Python test runners.
+
+Total: All repository test suites passing with zero regressions across virtual_dog_walker (all 22 suites), zero_protocol (109 tests), zero_network (19 tests), and zero_chat (36 tests).
+```
+
 
 ```
 
@@ -6328,7 +16272,7 @@ fn test_req_031_8_reconcile_higher_id_falls_back_after_grace() {
 ```
 
 ## FILE: zero_chat.code-workspace
-```
+```json
 {
 	"folders": [
 		{
@@ -6337,6 +16281,11 @@ fn test_req_031_8_reconcile_higher_id_falls_back_after_grace() {
 	],
 	"settings": {}
 }
+```
+
+## FILE: zero_client/.gitkeep
+```
+
 ```
 
 ## FILE: zero_client/Cargo.toml
@@ -22856,11 +32805,27 @@ fn test_req_031_8_reconcile_higher_id_falls_back_after_grace() {
             this.id = '';
             this.classList = new MockClassList();
             this.attributes = new Map();
-            this.style = {
+            const self = this;
+            this.style = new Proxy({
                 properties: new Map(),
-                setProperty: (k, v) => this.style.properties.set(k, v),
-                getPropertyValue: (k) => this.style.properties.get(k) || ''
-            };
+                setProperty: (k, v) => self.style.properties.set(k, v),
+                getPropertyValue: (k) => self.style.properties.get(k) || ''
+            }, {
+                get(target, prop) {
+                    if (prop in target) return target[prop];
+                    const kebab = String(prop).replace(/([A-Z])/g, '-$1').toLowerCase();
+                    return target.properties.get(kebab) || '';
+                },
+                set(target, prop, value) {
+                    if (prop in target) {
+                        target[prop] = value;
+                    } else {
+                        const kebab = String(prop).replace(/([A-Z])/g, '-$1').toLowerCase();
+                        target.properties.set(kebab, value);
+                    }
+                    return true;
+                }
+            });
             this.children = [];
             this.parentNode = null;
             this.textContent = '';
@@ -23259,6 +33224,50 @@ fn test_req_031_8_reconcile_higher_id_falls_back_after_grace() {
     assert(widget.messagesContainer.children.length === 0, "All messages must be removed on session burn");
 
     print("  PASS: Session burn button purges all messages and invokes callback.");
+
+    print("\n[Test 10] Unread Count & Peer Strip Pills/Dots (ticket unification-013)...");
+    let unreadNotified = -1;
+    widget.onUnreadCountChange = (count) => {
+        unreadNotified = count;
+    };
+
+    assert(widget.unreadCount === 0, "Initial unreadCount should be 0");
+    widget.incrementUnread();
+    assert(widget.unreadCount === 1, "incrementUnread should increase to 1");
+    assert(unreadNotified === 1, "onUnreadCountChange should be notified with 1");
+
+    widget.incrementUnread();
+    assert(widget.unreadCount === 2, "incrementUnread should increase to 2");
+    assert(unreadNotified === 2, "onUnreadCountChange should be notified with 2");
+
+    widget.clearUnread();
+    assert(widget.unreadCount === 0, "clearUnread should reset to 0");
+    assert(unreadNotified === 0, "onUnreadCountChange should be notified with 0");
+
+    // Test peer strip rendering with 2+ peers
+    widget.setPeers(['peer-1', 'peer-2'], 2, {
+        'peer-1': { name: 'Alice', color: '#10b981' },
+        'peer-2': { name: 'Bob', color: '#3b82f6' }
+    });
+    assert(widget.currentPeerCount === 2, "Peer count must be 2");
+    assert(widget.peerCountEl.textContent === '2 nearby', "Header text should be '2 nearby'");
+    assert(widget.peerStripEl.children.length === 2, "Peer strip should render 2 chips");
+
+    const chip1 = widget.peerStripEl.children[0];
+    const dot1 = chip1.children[0];
+    const label1 = chip1.children[1];
+    assert(dot1.style.properties.get('background-color') === '#10b981', "Dot 1 should have Alice's color");
+    assert(label1.textContent === 'Alice', "Label 1 should display 'Alice'");
+
+    // Test overflow with >4 peers
+    widget.setPeers(['p1', 'p2', 'p3', 'p4', 'p5'], 5, {
+        'p1': { name: 'P1' }, 'p2': { name: 'P2' }, 'p3': { name: 'P3' }, 'p4': { name: 'P4' }, 'p5': { name: 'P5' }
+    });
+    assert(widget.peerStripEl.children.length === 5, "Peer strip should render 4 chips + 1 overflow chip");
+    const overflowChip = widget.peerStripEl.children[4];
+    assert(overflowChip.textContent === '+1', "Overflow chip should be '+1'");
+
+    print("  PASS: Unread counting and peer strip pills/dots verified.");
 
     print("\n===============================================================================");
     print("ALL ZEROCATWIDGET UNIT TESTS PASSED SUCCESSFULLY!");
@@ -23676,6 +33685,47 @@ fn test_bundle_sdp_with_candidates_deduplication_and_crlf() {
 .zero-chat-widget .peer-count {
   font-size: 0.75rem;
   color: #38bdf8;
+  white-space: nowrap;
+}
+
+/* Scoped Peer Strip: colored dots & participant pills */
+.zero-chat-widget .peer-strip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+}
+
+.zero-chat-widget .peer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 0.68rem;
+  color: #e2e8f0;
+  max-width: 80px;
+}
+
+.zero-chat-widget .peer-chip-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.zero-chat-widget .peer-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zero-chat-widget .peer-chip-overflow {
+  font-weight: 700;
+  color: #38bdf8;
+  padding: 1px 4px;
 }
 
 /* Scoped Burn Header Button */
@@ -24004,6 +34054,7 @@ export class ZeroChatWidget {
       onSendMessage = null,
       onBurnMessage = null,
       onBurnSession = null,
+      onUnreadCountChange = null,
       agingMs = 70000,
       dissolveMs = 90000
     } = options;
@@ -24012,13 +34063,16 @@ export class ZeroChatWidget {
     this.onSendMessage = onSendMessage;
     this.onBurnMessage = onBurnMessage;
     this.onBurnSession = onBurnSession;
+    this.onUnreadCountChange = onUnreadCountChange;
     this.agingMs = typeof agingMs === 'number' ? agingMs : 70000;
     this.dissolveMs = typeof dissolveMs === 'number' ? dissolveMs : 90000;
 
     this.peerColorMap = new Map();
+    this.peerMetaMap = new Map(); // peerId -> { name, color }
     this.messagesMap = new Map(); // messageUuid -> record
     this.currentPeers = [];
     this.currentPeerCount = 0;
+    this.unreadCount = 0;
 
     this.container = typeof container === 'string' && typeof document !== 'undefined'
       ? document.querySelector(container)
@@ -24028,6 +34082,7 @@ export class ZeroChatWidget {
     this.header = null;
     this.statusEl = null;
     this.peerCountEl = null;
+    this.peerStripEl = null;
     this.burnHeaderBtn = null;
     this.messagesContainer = null;
     this.form = null;
@@ -24048,6 +34103,7 @@ export class ZeroChatWidget {
         <div class="peer-pill" id="proximity-chat-status">
           <span class="peer-lock-icon">🔒</span>
           <span class="peer-count" id="peer-count">0 nearby</span>
+          <span class="peer-strip" id="peer-strip"></span>
         </div>
         <button type="button" class="btn-header-burn" title="Burn all messages" aria-label="Burn all messages">🔥</button>
       </div>
@@ -24062,6 +34118,7 @@ export class ZeroChatWidget {
     this.header = widgetEl.querySelector('.zero-chat-header');
     this.statusEl = widgetEl.querySelector('#proximity-chat-status');
     this.peerCountEl = widgetEl.querySelector('#peer-count');
+    this.peerStripEl = widgetEl.querySelector('#peer-strip');
     this.burnHeaderBtn = widgetEl.querySelector('.btn-header-burn');
     this.messagesContainer = widgetEl.querySelector('#proximity-chat-messages');
     this.form = widgetEl.querySelector('#proximity-chat-form');
@@ -24347,11 +34404,38 @@ export class ZeroChatWidget {
   }
 
   /**
-   * Updates peer membership and updates the padlock badge and nearby peer counter.
+   * Sets the unread count and notifies listeners.
+   * @param {number} count
+   */
+  setUnreadCount(count) {
+    this.unreadCount = Math.max(0, count || 0);
+    if (typeof this.onUnreadCountChange === 'function') {
+      this.onUnreadCountChange(this.unreadCount);
+    }
+  }
+
+  /**
+   * Increments unread count by 1 and notifies listeners.
+   */
+  incrementUnread() {
+    this.setUnreadCount(this.unreadCount + 1);
+  }
+
+  /**
+   * Clears unread count to 0 and notifies listeners.
+   */
+  clearUnread() {
+    this.setUnreadCount(0);
+  }
+
+  /**
+   * Updates peer membership and updates the padlock badge, nearby peer counter,
+   * and renders participant name pills/peer dots when 2+ peers are present.
    * @param {Array<string>|Set<string>} peerIds
    * @param {number} [peerCount]
+   * @param {Map|Object} [peerMeta] Map or object mapping peerId -> { name, color }
    */
-  setPeers(peerIds, peerCount) {
+  setPeers(peerIds, peerCount, peerMeta) {
     let count = 0;
     if (typeof peerCount === 'number') {
       count = peerCount;
@@ -24364,6 +34448,18 @@ export class ZeroChatWidget {
     this.currentPeerCount = count;
     this.currentPeers = Array.isArray(peerIds) ? peerIds : (peerIds ? Array.from(peerIds) : []);
 
+    if (peerMeta) {
+      if (peerMeta instanceof Map) {
+        for (const [id, meta] of peerMeta.entries()) {
+          this.peerMetaMap.set(id, meta);
+        }
+      } else if (typeof peerMeta === 'object') {
+        for (const [id, meta] of Object.entries(peerMeta)) {
+          this.peerMetaMap.set(id, meta);
+        }
+      }
+    }
+
     if (this.peerCountEl) {
       this.peerCountEl.textContent = `${count} nearby`;
     }
@@ -24374,6 +34470,57 @@ export class ZeroChatWidget {
       } else {
         this.statusEl.classList.remove('active');
       }
+    }
+
+    this._renderPeerStrip();
+  }
+
+  /**
+   * Renders colored dots and truncated name tags for nearby participants.
+   * @private
+   */
+  _renderPeerStrip() {
+    if (!this.peerStripEl) return;
+
+    if (typeof document === 'undefined') return;
+
+    this.peerStripEl.innerHTML = '';
+
+    if (this.currentPeerCount <= 0 || !this.currentPeers || this.currentPeers.length === 0) {
+      return;
+    }
+
+    const maxPills = 4;
+    const peersToRender = this.currentPeers.slice(0, maxPills);
+    const overflowCount = this.currentPeers.length - maxPills;
+
+    for (const peerId of peersToRender) {
+      const meta = this.peerMetaMap.get(peerId) || {};
+      const name = meta.name || peerId;
+      const color = meta.color || this.getPeerColor(peerId);
+
+      const pill = document.createElement('span');
+      pill.className = 'peer-chip';
+      pill.setAttribute('data-peer-id', peerId);
+
+      const dot = document.createElement('span');
+      dot.className = 'peer-chip-dot';
+      dot.style.backgroundColor = color;
+
+      const label = document.createElement('span');
+      label.className = 'peer-chip-label';
+      label.textContent = name.length > 8 ? name.slice(0, 7) + '…' : name;
+
+      pill.appendChild(dot);
+      pill.appendChild(label);
+      this.peerStripEl.appendChild(pill);
+    }
+
+    if (overflowCount > 0) {
+      const overflowPill = document.createElement('span');
+      overflowPill.className = 'peer-chip peer-chip-overflow';
+      overflowPill.textContent = `+${overflowCount}`;
+      this.peerStripEl.appendChild(overflowPill);
     }
   }
 
@@ -24416,6 +34563,7 @@ export class ZeroChatWidget {
     this.sendBtn = null;
     this.statusEl = null;
     this.peerCountEl = null;
+    this.peerStripEl = null;
     this.burnHeaderBtn = null;
   }
 }
